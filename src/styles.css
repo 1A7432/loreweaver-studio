@@ -103,3 +103,137 @@ body {
 .placeholder {
   color: var(--text-dim);
 }
+
+/* ---- Play mode: connect card ---- */
+
+.play-view {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.connect-card {
+  width: min(460px, 100%);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.connect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.connect-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.connect-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.connect-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.connect-form input,
+.connect-form textarea {
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: 13px/1.4 var(--font-mono);
+  resize: vertical;
+}
+
+.connect-form input:focus,
+.connect-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.connect-form button,
+.connect-live button {
+  align-self: flex-start;
+  background: var(--accent);
+  color: #14131d;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font: 600 13px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.connect-form button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.connect-live {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.connect-live p {
+  margin: 0;
+}
+
+.connect-error {
+  margin: 0;
+  color: #f2777a;
+  font-size: 13px;
+}
+
+/* ---- Connection status pill ---- */
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6c6a80;
+}
+
+.status-online .status-dot {
+  background: #7fd1a8;
+}
+
+.status-connecting .status-dot,
+.status-reconnecting .status-dot {
+  background: #e8c66b;
+  animation: status-pulse 1s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}

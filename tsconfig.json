@@ -11,7 +11,12 @@
     "jsx": "react-jsx",
     "strict": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // @loreweaver/protocol ships TS source; its exports map points `types` at
+    // an unbuilt dist/, so resolve straight into the source instead.
+    "paths": {
+      "@loreweaver/protocol": ["./node_modules/@loreweaver/protocol/src/index.ts"]
+    }
   },
   "include": ["src", "vitest.setup.ts"]
 }

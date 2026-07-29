@@ -10,8 +10,29 @@
   "lang": {
     "label": "Language"
   },
-  "play": {
-    "placeholder": "The connection screen arrives with the transport milestone."
+  "connect": {
+    "title": "Join a table",
+    "ticket": "Server ticket",
+    "ticketPlaceholder": "endpoint…",
+    "key": "Access key",
+    "keyPlaceholder": "the key your keeper minted for you",
+    "name": "Display name (optional)",
+    "namePlaceholder": "advisory — the keystore name wins",
+    "submit": "Connect",
+    "disconnect": "Disconnect",
+    "connectedAs": "Connected to {{room}} as {{name}} ({{role}})",
+    "sessionSoon": "The table view arrives with the next milestone.",
+    "attempt": "attempt {{n}}",
+    "status": {
+      "offline": "Offline",
+      "connecting": "Connecting…",
+      "online": "Online",
+      "reconnecting": "Reconnecting…"
+    },
+    "role": {
+      "player": "Player",
+      "keeper": "Keeper"
+    }
   },
   "studio": {
     "placeholder": "The card forge workbench is under construction."

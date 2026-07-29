@@ -10,8 +10,29 @@
   "lang": {
     "label": "语言"
   },
-  "play": {
-    "placeholder": "连接界面将随传输层里程碑一起到来。"
+  "connect": {
+    "title": "加入牌桌",
+    "ticket": "服务器 Ticket",
+    "ticketPlaceholder": "endpoint…",
+    "key": "访问密钥",
+    "keyPlaceholder": "守秘人为你签发的 key",
+    "name": "显示名（可选）",
+    "namePlaceholder": "仅供参考——以密钥登记名为准",
+    "submit": "连接",
+    "disconnect": "断开",
+    "connectedAs": "已连接房间 {{room}}，身份 {{name}}（{{role}}）",
+    "sessionSoon": "牌桌界面将在下一个里程碑到来。",
+    "attempt": "第 {{n}} 次",
+    "status": {
+      "offline": "离线",
+      "connecting": "连接中…",
+      "online": "在线",
+      "reconnecting": "重连中…"
+    },
+    "role": {
+      "player": "玩家",
+      "keeper": "守秘人"
+    }
   },
   "studio": {
     "placeholder": "制卡工作台正在建设中。"

@@ -18,7 +18,7 @@ describe("App shell", () => {
   it("starts in play mode and switches to studio mode", async () => {
     const user = userEvent.setup()
     render(<App />)
-    expect(screen.getByText(/connection screen/i)).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Join a table" })).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Studio" }))
     expect(screen.getByText(/card forge workbench/i)).toBeInTheDocument()
   })

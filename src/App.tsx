@@ -1,5 +1,9 @@
+import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
+import PlayView from "./features/play/PlayView"
+import { isTauri, onTransportEvent } from "./lib/transport"
 import { useAppStore, type AppMode } from "./store/app"
+import { useConnectionStore } from "./store/connection"
 
 const MODES: AppMode[] = ["play", "studio"]
 
@@ -7,6 +11,14 @@ export default function App() {
   const { t, i18n } = useTranslation()
   const mode = useAppStore((s) => s.mode)
   const setMode = useAppStore((s) => s.setMode)
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const unlisten = onTransportEvent((event) => useConnectionStore.getState().handleEvent(event))
+    return () => {
+      void unlisten.then((dispose) => dispose())
+    }
+  }, [])
 
   return (
     <div className="app">
@@ -36,11 +48,7 @@ export default function App() {
         </select>
       </header>
       <main className="app-main">
-        {mode === "play" ? (
-          <p className="placeholder">{t("play.placeholder")}</p>
-        ) : (
-          <p className="placeholder">{t("studio.placeholder")}</p>
-        )}
+        {mode === "play" ? <PlayView /> : <p className="placeholder">{t("studio.placeholder")}</p>}
       </main>
     </div>
   )
