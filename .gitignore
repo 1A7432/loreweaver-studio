@@ -1,0 +1,11 @@
+# Dependencies / build output
+node_modules/
+dist/
+target/
+
+# Tauri generated schemas (regenerated on every build)
+src-tauri/gen/schemas/
+
+# Local files
+.DS_Store
+*.local

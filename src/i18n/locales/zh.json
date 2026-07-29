@@ -1,0 +1,19 @@
+{
+  "app": {
+    "title": "Loreweaver 工作台"
+  },
+  "nav": {
+    "label": "模式",
+    "play": "跑团",
+    "studio": "制卡"
+  },
+  "lang": {
+    "label": "语言"
+  },
+  "play": {
+    "placeholder": "连接界面将随传输层里程碑一起到来。"
+  },
+  "studio": {
+    "placeholder": "制卡工作台正在建设中。"
+  }
+}

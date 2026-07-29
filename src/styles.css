@@ -1,0 +1,105 @@
+:root {
+  color-scheme: dark;
+  --bg: #14131d;
+  --bg-raised: #1c1b28;
+  --bg-inset: #100f17;
+  --border: #2c2a3c;
+  --text: #e6e3f0;
+  --text-dim: #8d89a3;
+  --accent: #8b7ff5;
+  --accent-strong: #a89dff;
+  --font-ui:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.app-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.mode-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.mode-tab {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.mode-tab:hover {
+  color: var(--text);
+}
+
+.mode-tab.active {
+  color: var(--accent-strong);
+  border-color: var(--border);
+  background: var(--bg-inset);
+}
+
+.header-spacer {
+  flex: 1;
+}
+
+.lang-select {
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.placeholder {
+  color: var(--text-dim);
+}

@@ -1,0 +1,19 @@
+{
+  "app": {
+    "title": "Loreweaver Studio"
+  },
+  "nav": {
+    "label": "Mode",
+    "play": "Play",
+    "studio": "Studio"
+  },
+  "lang": {
+    "label": "Language"
+  },
+  "play": {
+    "placeholder": "The connection screen arrives with the transport milestone."
+  },
+  "studio": {
+    "placeholder": "The card forge workbench is under construction."
+  }
+}
