@@ -1,0 +1,464 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0D75FD2C082A05A1B97A8A47 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C15FC39601B619F529104B42 /* MetalKit.framework */; };
+		32864E9D06A7F1B8DD741367 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E3A8BDE84F95699AADAAD2D4 /* Assets.xcassets */; };
+		3D24B365C46D48A6C0CB2EF9 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DF9A4A437ADE69FF95EE116A /* WebKit.framework */; };
+		421CC1C0568073211A3ACBC1 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5BAD63D177445B97D38CCE1E /* libapp.a */; };
+		462510A063CB8D92A019AEEF /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ABBB13DED01BDC3FC7DE1D61 /* Metal.framework */; };
+		513429718A8A70C621D96163 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 38B41A162216C95BAD9071BF /* assets */; };
+		5ABE093D4F71E45A3039D5F1 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 027E94FBC0D6365C8D2D1828 /* QuartzCore.framework */; };
+		5CB2FD3FF6A46F35B2229734 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 107989F11D117AAFE51C6AD9 /* main.mm */; };
+		7A77495801A5ED2023B8258A /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 15B37B80BA2626BA99505AF1 /* LaunchScreen.storyboard */; };
+		9ADD8B946ECD4F86F7C1CB6F /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D1A7A5CF7DB739D4F9100DF /* UIKit.framework */; };
+		B5AB56AA0D3B4F00B0F2A198 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 30AD5AFC066358BE8CCD5372 /* Security.framework */; };
+		E5221CB408CC9583EDBEFD4F /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 056D0B5FC7D4D3FB64C5F0C7 /* CoreGraphics.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		027E94FBC0D6365C8D2D1828 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		056D0B5FC7D4D3FB64C5F0C7 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		0C4F0F04C7F3E2DE00FDE876 /* loreweaver-studio_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "loreweaver-studio_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		107989F11D117AAFE51C6AD9 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		15B37B80BA2626BA99505AF1 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		1AED32DF1FCCFA5BDC122ED0 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		21B9A3E3486C2991550A3DEB /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		30AD5AFC066358BE8CCD5372 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		34732C3B9D35105E39446F4C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		38B41A162216C95BAD9071BF /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		3D1A7A5CF7DB739D4F9100DF /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		5BAD63D177445B97D38CCE1E /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		662C65AB04AF81C754FD4C39 /* loreweaver-studio_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "loreweaver-studio_iOS.entitlements"; sourceTree = "<group>"; };
+		7B5F608C6A73630697D79EF0 /* transport_bridge.rs */ = {isa = PBXFileReference; path = transport_bridge.rs; sourceTree = "<group>"; };
+		92EF78BFE9E90E649363ECE7 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		ABBB13DED01BDC3FC7DE1D61 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		C15FC39601B619F529104B42 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		D1FFDE9DC5C35E1EAD3BD9C2 /* files.rs */ = {isa = PBXFileReference; path = files.rs; sourceTree = "<group>"; };
+		DF9A4A437ADE69FF95EE116A /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		E3A8BDE84F95699AADAAD2D4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C5FE4AB6221FD18AEC22BF61 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				421CC1C0568073211A3ACBC1 /* libapp.a in Frameworks */,
+				E5221CB408CC9583EDBEFD4F /* CoreGraphics.framework in Frameworks */,
+				462510A063CB8D92A019AEEF /* Metal.framework in Frameworks */,
+				0D75FD2C082A05A1B97A8A47 /* MetalKit.framework in Frameworks */,
+				5ABE093D4F71E45A3039D5F1 /* QuartzCore.framework in Frameworks */,
+				B5AB56AA0D3B4F00B0F2A198 /* Security.framework in Frameworks */,
+				9ADD8B946ECD4F86F7C1CB6F /* UIKit.framework in Frameworks */,
+				3D24B365C46D48A6C0CB2EF9 /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1BD39BD98EB76CB094752DDC /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				52809239DB2DFB0152089F8B /* loreweaver-studio */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		2ADFE39D053AA2F96D25E291 = {
+			isa = PBXGroup;
+			children = (
+				38B41A162216C95BAD9071BF /* assets */,
+				E3A8BDE84F95699AADAAD2D4 /* Assets.xcassets */,
+				15B37B80BA2626BA99505AF1 /* LaunchScreen.storyboard */,
+				2F7F53A2DAEB158C5F4297ED /* Externals */,
+				9DDED232BF743615420CAAE3 /* loreweaver-studio_iOS */,
+				1BD39BD98EB76CB094752DDC /* Sources */,
+				6B6ED7EFE8089EBC6EF2B3AD /* src */,
+				E1149635C4F8B514015CA814 /* Frameworks */,
+				4A24BA21359EA5E0839ACDE0 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		2F7F53A2DAEB158C5F4297ED /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		4A24BA21359EA5E0839ACDE0 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0C4F0F04C7F3E2DE00FDE876 /* loreweaver-studio_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		52809239DB2DFB0152089F8B /* loreweaver-studio */ = {
+			isa = PBXGroup;
+			children = (
+				107989F11D117AAFE51C6AD9 /* main.mm */,
+				A676F445238506DD553FBEF8 /* bindings */,
+			);
+			path = "loreweaver-studio";
+			sourceTree = "<group>";
+		};
+		6B6ED7EFE8089EBC6EF2B3AD /* src */ = {
+			isa = PBXGroup;
+			children = (
+				D1FFDE9DC5C35E1EAD3BD9C2 /* files.rs */,
+				92EF78BFE9E90E649363ECE7 /* lib.rs */,
+				21B9A3E3486C2991550A3DEB /* main.rs */,
+				7B5F608C6A73630697D79EF0 /* transport_bridge.rs */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+		9DDED232BF743615420CAAE3 /* loreweaver-studio_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				34732C3B9D35105E39446F4C /* Info.plist */,
+				662C65AB04AF81C754FD4C39 /* loreweaver-studio_iOS.entitlements */,
+			);
+			path = "loreweaver-studio_iOS";
+			sourceTree = "<group>";
+		};
+		A676F445238506DD553FBEF8 /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				1AED32DF1FCCFA5BDC122ED0 /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		E1149635C4F8B514015CA814 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				056D0B5FC7D4D3FB64C5F0C7 /* CoreGraphics.framework */,
+				5BAD63D177445B97D38CCE1E /* libapp.a */,
+				ABBB13DED01BDC3FC7DE1D61 /* Metal.framework */,
+				C15FC39601B619F529104B42 /* MetalKit.framework */,
+				027E94FBC0D6365C8D2D1828 /* QuartzCore.framework */,
+				30AD5AFC066358BE8CCD5372 /* Security.framework */,
+				3D1A7A5CF7DB739D4F9100DF /* UIKit.framework */,
+				DF9A4A437ADE69FF95EE116A /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4A55E84DCA4ED907A5E8076E /* loreweaver-studio_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA504F5DFBDE09F60624CFA5 /* Build configuration list for PBXNativeTarget "loreweaver-studio_iOS" */;
+			buildPhases = (
+				AC2DFE5E179B53147DC0D11A /* Build Rust Code */,
+				ABB7E03382F81F91D17D74AF /* Sources */,
+				F492A6EB20020E48E3AF261B /* Resources */,
+				C5FE4AB6221FD18AEC22BF61 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "loreweaver-studio_iOS";
+			packageProductDependencies = (
+			);
+			productName = "loreweaver-studio_iOS";
+			productReference = 0C4F0F04C7F3E2DE00FDE876 /* loreweaver-studio_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		33A367905E69012782E869E4 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 9C0DE520246FFAB9A77B4865 /* Build configuration list for PBXProject "loreweaver-studio" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 2ADFE39D053AA2F96D25E291;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 4A24BA21359EA5E0839ACDE0 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4A55E84DCA4ED907A5E8076E /* loreweaver-studio_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F492A6EB20020E48E3AF261B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				32864E9D06A7F1B8DD741367 /* Assets.xcassets in Resources */,
+				7A77495801A5ED2023B8258A /* LaunchScreen.storyboard in Resources */,
+				513429718A8A70C621D96163 /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AC2DFE5E179B53147DC0D11A /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bun tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		ABB7E03382F81F91D17D74AF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5CB2FD3FF6A46F35B2229734 /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		09F33CA9FCEB70CCFE6D972C /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		2E2E5B9BEE2FA8458DB769BD /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "loreweaver-studio_iOS/loreweaver-studio_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "loreweaver-studio_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.loreweaver.studio;
+				PRODUCT_NAME = "Loreweaver Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+		650B00F98D81B36A7193A010 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "loreweaver-studio_iOS/loreweaver-studio_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "loreweaver-studio_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.loreweaver.studio;
+				PRODUCT_NAME = "Loreweaver Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
+		F754CA8C484405806D88DF66 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9C0DE520246FFAB9A77B4865 /* Build configuration list for PBXProject "loreweaver-studio" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				09F33CA9FCEB70CCFE6D972C /* debug */,
+				F754CA8C484405806D88DF66 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		EA504F5DFBDE09F60624CFA5 /* Build configuration list for PBXNativeTarget "loreweaver-studio_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2E2E5B9BEE2FA8458DB769BD /* debug */,
+				650B00F98D81B36A7193A010 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 33A367905E69012782E869E4 /* Project object */;
+}

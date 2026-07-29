@@ -27,6 +27,20 @@ Two modes, one app:
   [`@loreweaver/protocol`](https://github.com/1A7432/loreweaver/tree/main/clients/protocol),
   consumed as a `file:` dependency until that package is published to npm.
 
+## Status
+
+- **Desktop (macOS)**: verified — release build + `.app` bundle succeed (`bun tauri build`;
+  the final DMG script needs a GUI session).
+- **Windows / Linux**: CI compiles and tests the full workspace on Linux; no bundles built yet.
+- **iOS**: `src-tauri/gen/apple` is generated (Tauri 2 + CocoaPods). Compiling for the
+  `aarch64-apple-ios` target currently requires accepting the Xcode license
+  (`sudo xcodebuild -license accept`) on this machine; signing needs a development team.
+- **Android**: blocked on local tooling — the SDK lacks `cmdline-tools` and an NDK
+  (`sdkmanager "ndk;…"`); `tauri android init` bails until they exist.
+- **Card forge**: local authoring + dual export ([formats](docs/FORMATS.md)); server-side
+  forge integration awaits upstream M14.
+- Protocol feedback for upstream lives in [PROTOCOL_NOTES.md](PROTOCOL_NOTES.md).
+
 ## Development
 
 Prerequisites: Rust stable, [Bun](https://bun.sh), and a sibling checkout of the main
