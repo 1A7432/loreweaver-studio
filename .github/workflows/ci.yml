@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Clone loreweaver main repo (file: dependency for @loreweaver/protocol)
+      - name: Clone the loreweaver main repo for the @loreweaver/protocol file dependency
         run: git clone --depth 1 https://github.com/1A7432/loreweaver.git ../trpg_kp
       - uses: oven-sh/setup-bun@v2
       - run: bun install
