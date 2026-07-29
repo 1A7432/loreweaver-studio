@@ -20,6 +20,6 @@ describe("App shell", () => {
     render(<App />)
     expect(screen.getByRole("heading", { name: "Join a table" })).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Studio" }))
-    expect(screen.getByText(/card forge workbench/i)).toBeInTheDocument()
+    expect(screen.getByText(/start forging/i)).toBeInTheDocument()
   })
 })

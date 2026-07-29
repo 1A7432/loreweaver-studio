@@ -19,3 +19,4 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 loreweaver-transport = { path = "../crates/transport" }
+tauri-plugin-dialog = "2"

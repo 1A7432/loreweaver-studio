@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import PlayView from "./features/play/PlayView"
+import StudioView from "./features/studio/StudioView"
 import { isTauri, onTransportEvent } from "./lib/transport"
 import { useAppStore, type AppMode } from "./store/app"
 import { useConnectionStore } from "./store/connection"
@@ -47,9 +48,7 @@ export default function App() {
           <option value="zh">中文</option>
         </select>
       </header>
-      <main className="app-main">
-        {mode === "play" ? <PlayView /> : <p className="placeholder">{t("studio.placeholder")}</p>}
-      </main>
+      <main className="app-main">{mode === "play" ? <PlayView /> : <StudioView />}</main>
     </div>
   )
 }

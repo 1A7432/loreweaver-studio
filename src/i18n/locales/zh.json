@@ -52,6 +52,116 @@
     "system": "系统"
   },
   "studio": {
-    "placeholder": "制卡工作台正在建设中。"
+    "project": "项目",
+    "noProjects": "还没有项目",
+    "untitled": "未命名卡片",
+    "newProject": "新建卡片",
+    "deleteProject": "删除",
+    "deleteConfirm": "删除「{{name}}」？此操作不可撤销。",
+    "exportNative": "导出 Loreweaver 包",
+    "exportSt": "导出 SillyTavern 卡",
+    "emptyHint": "新建一张卡开始锻造：类型化变量、世界书条目和 hooks。",
+    "tabsLabel": "制卡分区",
+    "clean": "✓ 校验通过",
+    "issues": "{{n}} 个问题",
+    "remove": "移除",
+    "save": {
+      "saved": "已导出。",
+      "copied": "已复制到剪贴板（此环境没有保存对话框）。",
+      "cancelled": "已取消导出。"
+    },
+    "tabs": {
+      "card": "卡面",
+      "variables": "变量",
+      "worldbook": "世界书",
+      "hooks": "Hooks"
+    },
+    "card": {
+      "name": "名称",
+      "tags": "标签",
+      "tagsPlaceholder": "逗号分隔",
+      "description": "描述",
+      "personality": "性格",
+      "scenario": "场景",
+      "firstMes": "开场白",
+      "mesExample": "对话示例",
+      "creatorNotes": "作者备注"
+    },
+    "vars": {
+      "hint": "类型化模组变量会成为引擎校验的状态量——kind、边界、可见性在写入时强制校验。keeper 专属变量不会到达玩家，也不会进入 SillyTavern 导出。",
+      "add": "添加变量",
+      "id": "Id",
+      "kind": "类型",
+      "visibility": "可见性",
+      "labelEn": "标签（英文）",
+      "labelZh": "标签（中文）",
+      "min": "下限",
+      "max": "上限",
+      "default": "默认值",
+      "options": "选项（每行一个）",
+      "optionsPlaceholder": "平静\n警觉\n狩猎",
+      "kinds": {
+        "number": "number",
+        "bool": "bool",
+        "text": "text",
+        "enum": "enum"
+      },
+      "visibilities": {
+        "player": "玩家可见",
+        "keeper": "仅守秘人"
+      }
+    },
+    "wb": {
+      "addEntry": "添加条目",
+      "deleteEntry": "删除条目",
+      "untitledEntry": "（未命名）",
+      "noEntries": "还没有条目。条目按关键词、条件和 ST 式计时器触发。",
+      "pickEntry": "在左侧选择一个条目，或添加一个。",
+      "title": "标题",
+      "keys": "触发关键词",
+      "keysPlaceholder": "逗号或换行分隔",
+      "content": "内容",
+      "condition": "条件（失败即关闭）",
+      "enabled": "启用",
+      "constant": "常驻",
+      "secret": "仅守秘人",
+      "caseSensitive": "区分大小写",
+      "wholeWords": "全词匹配",
+      "secondaryKeys": "次级关键词",
+      "logic": "逻辑",
+      "position": "位置",
+      "priority": "优先级",
+      "probability": "概率 %",
+      "scanDepth": "扫描深度",
+      "sticky": "延续",
+      "cooldown": "冷却",
+      "delay": "延迟",
+      "logics": {
+        "and_any": "AND 任一",
+        "and_all": "AND 全部",
+        "not_any": "NOT 任一",
+        "not_all": "NOT 全部"
+      },
+      "positions": {
+        "none": "默认",
+        "before": "前置",
+        "after": "后置"
+      }
+    },
+    "hooks": {
+      "hint": "沙箱化房间 hooks（服务端 QuickJS 执行）。事件：turn_start、reply_ready、dice_rolled、variables_changed。效果：inject、narrate、rewriteReply、emitUI、log、setvar/getvar。"
+    },
+    "err": {
+      "idInvalid": "Id 须为 1-64 个 a-z、0-9、_ 字符（空格/连字符会转为 _）。",
+      "idDuplicate": "Id「{{id}}」重复。",
+      "boundNotInt": "上下限必须是整数。",
+      "boundsOrder": "下限必须 ≤ 上限。",
+      "optionsRequired": "enum 至少需要一个选项。",
+      "defaultInvalid": "默认值与类型/选项不符。",
+      "nameRequired": "卡片需要一个名称。",
+      "tooManyVariables": "最多 {{max}} 个变量。",
+      "entryEmpty": "条目既无标题也无内容。",
+      "conditionTooLong": "条件超过 {{max}} 个字符。"
+    }
   }
 }

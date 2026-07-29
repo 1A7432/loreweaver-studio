@@ -52,6 +52,116 @@
     "system": "System"
   },
   "studio": {
-    "placeholder": "The card forge workbench is under construction."
+    "project": "Project",
+    "noProjects": "No projects yet",
+    "untitled": "Untitled card",
+    "newProject": "New card",
+    "deleteProject": "Delete",
+    "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone.",
+    "exportNative": "Export Loreweaver bundle",
+    "exportSt": "Export SillyTavern card",
+    "emptyHint": "Create a card to start forging: typed variables, worldbook lore, and hooks.",
+    "tabsLabel": "Forge sections",
+    "clean": "✓ valid",
+    "issues": "{{n}} issue(s)",
+    "remove": "Remove",
+    "save": {
+      "saved": "Exported.",
+      "copied": "Copied to the clipboard (no save dialog here).",
+      "cancelled": "Export cancelled."
+    },
+    "tabs": {
+      "card": "Card",
+      "variables": "Variables",
+      "worldbook": "Worldbook",
+      "hooks": "Hooks"
+    },
+    "card": {
+      "name": "Name",
+      "tags": "Tags",
+      "tagsPlaceholder": "comma-separated",
+      "description": "Description",
+      "personality": "Personality",
+      "scenario": "Scenario",
+      "firstMes": "First message",
+      "mesExample": "Example dialogue",
+      "creatorNotes": "Creator notes"
+    },
+    "vars": {
+      "hint": "Typed module variables become validated engine trackers — kind, bounds, and visibility are enforced on write. Keeper-only variables never reach players and are excluded from SillyTavern exports.",
+      "add": "Add variable",
+      "id": "Id",
+      "kind": "Kind",
+      "visibility": "Visibility",
+      "labelEn": "Label (en)",
+      "labelZh": "Label (zh)",
+      "min": "Min",
+      "max": "Max",
+      "default": "Default",
+      "options": "Options (one per line)",
+      "optionsPlaceholder": "calm\nalerted\nhunting",
+      "kinds": {
+        "number": "number",
+        "bool": "bool",
+        "text": "text",
+        "enum": "enum"
+      },
+      "visibilities": {
+        "player": "player",
+        "keeper": "keeper"
+      }
+    },
+    "wb": {
+      "addEntry": "Add entry",
+      "deleteEntry": "Delete entry",
+      "untitledEntry": "(untitled)",
+      "noEntries": "No lore yet. Entries trigger on keywords, conditions, and ST-style timers.",
+      "pickEntry": "Pick an entry on the left, or add one.",
+      "title": "Title",
+      "keys": "Trigger keywords",
+      "keysPlaceholder": "comma or newline separated",
+      "content": "Content",
+      "condition": "Condition (fails closed)",
+      "enabled": "Enabled",
+      "constant": "Constant",
+      "secret": "Keeper-only",
+      "caseSensitive": "Case sensitive",
+      "wholeWords": "Whole words",
+      "secondaryKeys": "Secondary keys",
+      "logic": "Logic",
+      "position": "Position",
+      "priority": "Priority",
+      "probability": "Probability %",
+      "scanDepth": "Scan depth",
+      "sticky": "Sticky",
+      "cooldown": "Cooldown",
+      "delay": "Delay",
+      "logics": {
+        "and_any": "AND any",
+        "and_all": "AND all",
+        "not_any": "NOT any",
+        "not_all": "NOT all"
+      },
+      "positions": {
+        "none": "default",
+        "before": "before",
+        "after": "after"
+      }
+    },
+    "hooks": {
+      "hint": "Sandboxed room hooks (QuickJS server-side). Events: turn_start, reply_ready, dice_rolled, variables_changed. Effects: inject, narrate, rewriteReply, emitUI, log, setvar/getvar."
+    },
+    "err": {
+      "idInvalid": "Id must be 1-64 chars of a-z, 0-9, _ (spaces/hyphens become _).",
+      "idDuplicate": "Duplicate id \"{{id}}\".",
+      "boundNotInt": "Bounds must be integers.",
+      "boundsOrder": "Min must be ≤ max.",
+      "optionsRequired": "Enum needs at least one option.",
+      "defaultInvalid": "Default does not fit the kind/options.",
+      "nameRequired": "The card needs a name.",
+      "tooManyVariables": "At most {{max}} variables.",
+      "entryEmpty": "Entry has neither title nor content.",
+      "conditionTooLong": "Condition exceeds {{max}} characters."
+    }
   }
 }
