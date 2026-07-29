@@ -20,8 +20,6 @@
     "namePlaceholder": "仅供参考——以密钥登记名为准",
     "submit": "连接",
     "disconnect": "断开",
-    "connectedAs": "已连接房间 {{room}}，身份 {{name}}（{{role}}）",
-    "sessionSoon": "牌桌界面将在下一个里程碑到来。",
     "attempt": "第 {{n}} 次",
     "status": {
       "offline": "离线",
@@ -33,6 +31,24 @@
       "player": "玩家",
       "keeper": "守秘人"
     }
+  },
+  "session": {
+    "empty": "编年史还是空白。说点什么，让故事开始。",
+    "inputPlaceholder": "发言、行动，或输入指令…",
+    "send": "发送",
+    "turnBusy": "正在结算 {{actor}} 的行动…",
+    "character": "角色",
+    "party": "队伍",
+    "scene": "场景",
+    "clock": "时钟",
+    "round": "第 {{n}} 轮",
+    "initiative": "先攻",
+    "presence": "在座",
+    "online": "{{n}} 人在线",
+    "context": "上下文"
+  },
+  "log": {
+    "system": "系统"
   },
   "studio": {
     "placeholder": "制卡工作台正在建设中。"

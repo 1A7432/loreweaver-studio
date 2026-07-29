@@ -8,6 +8,7 @@ import {
   type TransportEvent,
   type TransportStatus,
 } from "../lib/transport"
+import { useSessionStore } from "./session"
 
 interface ConnectionState {
   status: TransportStatus
@@ -32,6 +33,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
       return
     }
     set({ status: "connecting", attempt: 0, lastError: null, welcome: null })
+    useSessionStore.getState().clear()
     try {
       await transportConnect(params)
     } catch (err) {
@@ -64,7 +66,8 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
     if (!isServerFrame(frame)) return
     if (frame.type === "welcome") {
       set({ welcome: frame })
+      return
     }
-    // Later milestones fan the remaining frames out to the session store.
+    useSessionStore.getState().ingest(frame)
   },
 }))

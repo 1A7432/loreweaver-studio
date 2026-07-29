@@ -20,8 +20,6 @@
     "namePlaceholder": "advisory — the keystore name wins",
     "submit": "Connect",
     "disconnect": "Disconnect",
-    "connectedAs": "Connected to {{room}} as {{name}} ({{role}})",
-    "sessionSoon": "The table view arrives with the next milestone.",
     "attempt": "attempt {{n}}",
     "status": {
       "offline": "Offline",
@@ -33,6 +31,24 @@
       "player": "Player",
       "keeper": "Keeper"
     }
+  },
+  "session": {
+    "empty": "The chronicle is empty. Say something to begin.",
+    "inputPlaceholder": "Speak, act, or type a command…",
+    "send": "Send",
+    "turnBusy": "Resolving {{actor}}'s action…",
+    "character": "Character",
+    "party": "Party",
+    "scene": "Scene",
+    "clock": "Clock",
+    "round": "round {{n}}",
+    "initiative": "Initiative",
+    "presence": "At the table",
+    "online": "{{n}} online",
+    "context": "Context"
+  },
+  "log": {
+    "system": "System"
   },
   "studio": {
     "placeholder": "The card forge workbench is under construction."
