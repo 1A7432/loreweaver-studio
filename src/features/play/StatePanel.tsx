@@ -1,31 +1,13 @@
 import { useTranslation } from "react-i18next"
-import { stripControlChars, type CharacterState, type StateFrame } from "@loreweaver/protocol"
+import {
+  stripControlChars,
+  type CharacterState,
+  type ModuleVariable,
+  type StateFrame,
+} from "@loreweaver/protocol"
 import { useSessionStore } from "../../store/session"
-
-function Meter({
-  label,
-  value,
-  max,
-  tone,
-}: {
-  label: string
-  value: number
-  max: number
-  tone: "hp" | "mp" | "san" | "context"
-}) {
-  const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0
-  return (
-    <div className={`meter meter-${tone}`}>
-      <span className="meter-label">{label}</span>
-      <span className="meter-track" role="presentation">
-        <span className="meter-fill" style={{ width: `${ratio * 100}%` }} />
-      </span>
-      <span className="meter-value">
-        {value}/{max}
-      </span>
-    </div>
-  )
-}
+import Meter from "./Meter"
+import UiBlocks from "./UiBlocks"
 
 function CharacterCard({ character }: { character: CharacterState }) {
   const { t } = useTranslation()
@@ -51,6 +33,74 @@ function CharacterCard({ character }: { character: CharacterState }) {
       ) : null}
       <span className="visually-hidden">{t("session.character")}</span>
     </section>
+  )
+}
+
+/**
+ * v1.6 module variables ("trackers"), rendered by kind in definition order:
+ * bounded numbers become meters, unbounded numbers stat rows, bools badges,
+ * text/enum values plain chips. Labels arrive pre-localized to the room locale.
+ */
+function VariableRow({ variable }: { variable: ModuleVariable }) {
+  const label = stripControlChars(variable.label)
+  if (variable.kind === "number") {
+    const value = Number(variable.value)
+    if (typeof variable.min === "number" && typeof variable.max === "number") {
+      return <Meter label={label} value={value} min={variable.min} max={variable.max} />
+    }
+    return (
+      <div className="var-row" data-kind="number">
+        <span className="var-label">{label}</span>
+        <span className="var-value">{value}</span>
+      </div>
+    )
+  }
+  if (variable.kind === "bool") {
+    const on = variable.value === true
+    return (
+      <div className="var-row" data-kind="bool">
+        <span className="var-label">{label}</span>
+        <span className={`chip ${on ? "chip-on" : "chip-off"}`}>{on ? "●" : "○"}</span>
+      </div>
+    )
+  }
+  // "text" and "enum" both carry an opaque current value. The state frame has
+  // no enum options list, so there is nothing selectable to render (see
+  // PROTOCOL_NOTES.md).
+  return (
+    <div className="var-row" data-kind={variable.kind}>
+      <span className="var-label">{label}</span>
+      <span className="var-value">{stripControlChars(String(variable.value))}</span>
+    </div>
+  )
+}
+
+function VariablesCard({ game }: { game: StateFrame }) {
+  const { t } = useTranslation()
+  if (!game.variables || game.variables.length === 0) return null
+  return (
+    <section className="desk-card">
+      <header className="desk-title">{t("session.trackers")}</header>
+      <div className="var-list">
+        {game.variables.map((variable) => (
+          <VariableRow key={variable.id} variable={variable} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/** Persistent sidebar regions fed by hook-emitted `ui` frames. */
+function UiPanelCards() {
+  const panels = useSessionStore((s) => s.uiPanels)
+  return (
+    <>
+      {panels.map((panel) => (
+        <section key={panel.key} className="desk-card ui-panel" data-panel-id={panel.key}>
+          <UiBlocks frame={panel.frame} />
+        </section>
+      ))}
+    </>
   )
 }
 
@@ -165,7 +215,9 @@ export default function StatePanel() {
   const game = useSessionStore((s) => s.game)
   return (
     <div className="desk-stack">
+      <UiPanelCards />
       {game?.character ? <CharacterCard character={game.character} /> : null}
+      {game ? <VariablesCard game={game} /> : null}
       {game ? <PartyCard game={game} /> : null}
       {game ? <SceneCard game={game} /> : null}
       {game ? <InitiativeCard game={game} /> : null}

@@ -842,6 +842,129 @@ body {
   color: var(--ink-dim);
 }
 
+/* ---- Hook-emitted ui frames + module variables ---- */
+
+.log-ui {
+  width: 100%;
+  max-width: 72ch;
+  margin-inline: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.ui-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ui-stat,
+.var-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.ui-stat-label,
+.var-label {
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-stat-value,
+.var-value {
+  font: 12px/1.4 var(--font-mono);
+}
+
+.var-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.badge-info {
+  color: var(--rank-extreme);
+  border-color: rgba(100, 169, 217, 0.4);
+}
+
+.badge-warn {
+  color: var(--warn);
+  border-color: rgba(224, 180, 92, 0.4);
+}
+
+.badge-danger {
+  color: var(--danger);
+  border-color: rgba(224, 87, 79, 0.4);
+}
+
+.chip-on {
+  color: var(--ok);
+  border-color: rgba(127, 209, 168, 0.4);
+}
+
+.chip-off {
+  color: var(--ink-faint);
+}
+
+.ui-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.ui-text.is-quote {
+  font: italic 14px/1.6 var(--font-story);
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  color: var(--ink-dim);
+}
+
+.ui-text.is-warning {
+  color: var(--warn);
+}
+
+.ui-divider {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 2px 0;
+}
+
+.ui-prompt {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.choice-button {
+  background: var(--bg-inset);
+  color: var(--accent-strong);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: 13px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.choice-button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.choice-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ---- Small screens: desk drops below the chronicle ---- */
 
 @media (max-width: 760px) {

@@ -43,6 +43,7 @@
     "clock": "Clock",
     "round": "round {{n}}",
     "initiative": "Initiative",
+    "trackers": "Trackers",
     "presence": "At the table",
     "online": "{{n}} online",
     "context": "Context"

@@ -87,3 +87,54 @@ describe("session store", () => {
     expect(useSessionStore.getState().entries).toHaveLength(0)
   })
 })
+
+describe("session store — ui frames (v1.7)", () => {
+  beforeEach(() => useSessionStore.getState().clear())
+
+  const uiFrame = (extra: Record<string, unknown>): ServerFrame =>
+    ({
+      type: "ui",
+      blocks: [{ kind: "badge", label: "omen" }],
+      panel: "inline",
+      ...extra,
+    }) as ServerFrame
+
+  it("appends inline ui frames to the chronicle", () => {
+    ingest(uiFrame({}))
+    ingest(uiFrame({}))
+    expect(useSessionStore.getState().entries.map((e) => e.kind)).toEqual(["ui", "ui"])
+  })
+
+  it("updates an inline ui frame in place when replace + id match", () => {
+    ingest(uiFrame({ id: "hud" }))
+    ingest(uiFrame({ id: "hud", replace: true, blocks: [{ kind: "stat", label: "Doom", value: 2 }] }))
+    const { entries } = useSessionStore.getState()
+    expect(entries).toHaveLength(1)
+    const entry = entries[0]
+    if (entry.kind !== "ui") throw new Error("expected ui entry")
+    expect(entry.frame.blocks[0]).toMatchObject({ kind: "stat", label: "Doom" })
+  })
+
+  it("appends when replace has no prior inline frame to update", () => {
+    ingest(uiFrame({ id: "hud", replace: true }))
+    expect(useSessionStore.getState().entries).toHaveLength(1)
+  })
+
+  it("keys sidebar regions by id and replaces them on re-emit", () => {
+    ingest(uiFrame({ panel: "sidebar", id: "hud" }))
+    ingest(uiFrame({ panel: "sidebar", id: "map" }))
+    ingest(uiFrame({ panel: "sidebar", id: "hud", blocks: [{ kind: "stat", label: "Doom", value: 9 }] }))
+    const { uiPanels, entries } = useSessionStore.getState()
+    expect(entries).toHaveLength(0)
+    expect(uiPanels.map((p) => p.key)).toEqual(["hud", "map"])
+    expect(uiPanels[0].frame.blocks[0]).toMatchObject({ kind: "stat" })
+  })
+
+  it("treats id-less sidebar frames as one anonymous region", () => {
+    ingest(uiFrame({ panel: "sidebar" }))
+    ingest(uiFrame({ panel: "sidebar", blocks: [{ kind: "divider" }] }))
+    const { uiPanels } = useSessionStore.getState()
+    expect(uiPanels).toHaveLength(1)
+    expect(uiPanels[0].frame.blocks[0]).toMatchObject({ kind: "divider" })
+  })
+})

@@ -60,3 +60,42 @@ describe("StatePanel", () => {
     expect(container.querySelectorAll(".desk-card")).toHaveLength(0)
   })
 })
+
+describe("StatePanel — module variables (v1.6)", () => {
+  beforeEach(() => useSessionStore.getState().clear())
+
+  it("renders each variable kind as its widget", () => {
+    useSessionStore.getState().ingest({
+      type: "state",
+      party: [],
+      initiative: [],
+      online: 1,
+      variables: [
+        { id: "suspicion", label: "Suspicion", kind: "number", value: 7, min: 0, max: 10 },
+        { id: "doom", label: "Doom", kind: "number", value: 42 },
+        { id: "alerted", label: "Alerted", kind: "bool", value: true },
+        { id: "calm", label: "Calm", kind: "bool", value: false },
+        { id: "phase", label: "Phase", kind: "enum", value: "night" },
+        { id: "motto", label: "Motto", kind: "text", value: "trust no one" },
+      ],
+    })
+    const { container } = render(<StatePanel />)
+    expect(screen.getByText("7/10")).toBeInTheDocument()
+    expect(screen.getByText("42")).toBeInTheDocument()
+    expect(container.querySelector('[data-kind="bool"] .chip-on')).not.toBeNull()
+    expect(container.querySelectorAll('[data-kind="bool"] .chip-off')).toHaveLength(1)
+    expect(screen.getByText("night")).toBeInTheDocument()
+    expect(screen.getByText("trust no one")).toBeInTheDocument()
+  })
+
+  it("renders hook-emitted sidebar ui panels", () => {
+    useSessionStore.getState().ingest({
+      type: "ui",
+      panel: "sidebar",
+      id: "hud",
+      blocks: [{ kind: "badge", label: "omen", tone: "warn" }],
+    })
+    render(<StatePanel />)
+    expect(screen.getByText("omen")).toHaveClass("badge-warn")
+  })
+})

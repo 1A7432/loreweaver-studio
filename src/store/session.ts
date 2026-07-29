@@ -6,6 +6,7 @@ import type {
   ServerFrame,
   StateFrame,
   SystemFrame,
+  UiFrame,
 } from "@loreweaver/protocol"
 
 /** Scrollback cap, mirroring the reference TUI client. */
@@ -19,6 +20,13 @@ export type LogEntry =
   | { seq: number; kind: "narrative"; frame: NarrativeFrame }
   | { seq: number; kind: "dice"; frame: DiceFrame }
   | { seq: number; kind: "system"; frame: SystemFrame }
+  | { seq: number; kind: "ui"; frame: UiFrame }
+
+/** One named sidebar region fed by `ui` frames (later same-key frames replace it). */
+export interface UiPanelRegion {
+  key: string
+  frame: UiFrame
+}
 
 export interface TurnState {
   busy: boolean
@@ -32,6 +40,7 @@ interface SessionState {
   game: StateFrame | null
   presence: PresenceFrame | null
   turn: TurnState
+  uiPanels: UiPanelRegion[]
   /** Feed one validated server frame into the session. */
   ingest: (frame: ServerFrame, now?: number) => void
   /** Clear a stale busy indicator once the safety timeout has elapsed. */
@@ -73,14 +82,49 @@ function ingestNarrative(entries: LogEntry[], frame: NarrativeFrame): LogEntry[]
   return pushEntry(entries, { kind: "narrative", frame })
 }
 
+/**
+ * Inline `ui` frames land in the chronicle. With `replace:true` and a matching
+ * `id`, the latest frame updates the prior inline entry in place (the protocol
+ * lets clients without in-place updates simply append).
+ */
+function ingestInlineUi(entries: LogEntry[], frame: UiFrame): LogEntry[] {
+  if (frame.replace && frame.id) {
+    const index = entries.findIndex((e) => e.kind === "ui" && e.frame.id === frame.id)
+    if (index !== -1) {
+      const next = [...entries]
+      next[index] = { seq: next[index].seq, kind: "ui", frame }
+      return next
+    }
+  }
+  return pushEntry(entries, { kind: "ui", frame })
+}
+
+/** A later sidebar frame with the same id replaces that region; no id = one anonymous region. */
+function upsertUiPanel(panels: UiPanelRegion[], frame: UiFrame): UiPanelRegion[] {
+  const key = frame.id ?? ""
+  const index = panels.findIndex((p) => p.key === key)
+  if (index === -1) return [...panels, { key, frame }]
+  const next = [...panels]
+  next[index] = { key, frame }
+  return next
+}
+
 export const useSessionStore = create<SessionState>((set) => ({
   entries: [],
   game: null,
   presence: null,
   turn: IDLE_TURN,
+  uiPanels: [],
 
   ingest: (frame, now = Date.now()) => {
     switch (frame.type) {
+      case "ui":
+        if (frame.panel === "sidebar") {
+          set((s) => ({ uiPanels: upsertUiPanel(s.uiPanels, frame) }))
+        } else {
+          set((s) => ({ entries: ingestInlineUi(s.entries, frame) }))
+        }
+        return
       case "narrative":
         set((s) => ({ entries: ingestNarrative(s.entries, frame) }))
         return
@@ -106,8 +150,8 @@ export const useSessionStore = create<SessionState>((set) => ({
         )
         return
       default:
-        // Media, audio, admin, ui (rendered from the next milestone on), pong…
-        // are no-ops here; unknown frame types are ignored by design.
+        // Media, audio, admin, pong… are no-ops here; unknown frame types
+        // are ignored by design (additive protocol).
         return
     }
   },
@@ -116,5 +160,5 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((s) => (s.turn.busy && now - s.turn.since >= TURN_BUSY_TIMEOUT_MS ? { turn: IDLE_TURN } : s))
   },
 
-  clear: () => set({ entries: [], game: null, presence: null, turn: IDLE_TURN }),
+  clear: () => set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [] }),
 }))

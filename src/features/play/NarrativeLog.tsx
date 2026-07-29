@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm"
 import { stripControlChars, type NarrativeFrame, type SystemFrame } from "@loreweaver/protocol"
 import { useSessionStore, type LogEntry } from "../../store/session"
 import DiceLine from "./DiceLine"
+import UiBlocks from "./UiBlocks"
 
 function speakerLabel(frame: NarrativeFrame, systemLabel: string): string {
   if (frame.speaker === "kp") return "KP"
@@ -49,6 +50,12 @@ function Entry({ entry }: { entry: LogEntry }) {
       return <DiceLine frame={entry.frame} />
     case "system":
       return <SystemEntry frame={entry.frame} />
+    case "ui":
+      return (
+        <div className="log-ui">
+          <UiBlocks frame={entry.frame} />
+        </div>
+      )
   }
 }
 

@@ -43,6 +43,7 @@
     "clock": "时钟",
     "round": "第 {{n}} 轮",
     "initiative": "先攻",
+    "trackers": "状态量",
     "presence": "在座",
     "online": "{{n}} 人在线",
     "context": "上下文"
