@@ -93,3 +93,35 @@ Loreweaver through its ST importer (M12/M13):
 Not yet implemented (planned): PNG embedding (`chara` tEXt for V2 + `ccv3`
 tEXt for V3 written together), alternate greetings, and a token-count readout —
 the table-stakes features of community editors (AICharED, Chub, RisuAI).
+
+## 3. Card split (拆卡) — what the studio detects and emits
+
+The split view and the pack wizard mirror the engine's `core/card_split.py`
+detection exactly (same regexes, same entry test, same stripping):
+
+- **World payloads** = `extensions.loreweaver_hooks` scripts + variable
+  declaration entries (`[InitVar]` / `[InitialVariables]` titles, or an
+  `@@initial_variables` decorator) + `<% … %>` EJS spans (a dangling `<%`
+  strips to end-of-text, fail closed).
+- **Character half** (player-safe): prose fields EJS-stripped, declaration
+  entries removed, hooks extension dropped. Exported as `*.clean.st.json`
+  (the original envelope with cleaned fields written back) or as a native
+  bundle / forge project.
+- **World half**: the ORIGINAL card, verbatim, declared `kind: world` in
+  `pack.yaml` — because the keeper's world import reads the full card. The
+  studio never rewrites world machinery; it only PROMOTES a copy of the
+  InitVar tree into typed VarSpecs (author-confirmed, `buildSpec`-validated)
+  and suggests `.var expose <prefix>` lines for the card's install notes.
+
+## 4. `.lwpack` source trees — planned here, built by the engine
+
+`buildPackSourcePlan` lays out `pack.yaml` + `cards/` + `lorebooks/` +
+`skills/<slug>/{SKILL.md,hooks.js}` + `rulepacks/*.yaml`, mirroring
+`core/pack.py`'s manifest schema (localized `name`/`description`, card
+entries as bare paths or `{path, kind, notes}` mappings, no hand-written
+`trust` block). Validation and the byte-deterministic zip are the ENGINE's
+job — the wizard shells out to `loreweaver-server --pack <dir> --out <file>`
+(or `python -m app --pack …`) and shows its output; the studio deliberately
+contains no zip writer. Card `kind` labels are enforced against structural
+detection on BOTH sides: the wizard locks machinery-carrying cards to
+`kind: world` before the engine re-checks the same rule at build and install.

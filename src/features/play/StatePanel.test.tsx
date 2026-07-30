@@ -88,6 +88,25 @@ describe("StatePanel — module variables (v1.6)", () => {
     expect(screen.getByText("trust no one")).toBeInTheDocument()
   })
 
+  it("dims and locks keeper-view hidden variables (v1.7 additive hidden:true)", () => {
+    useSessionStore.getState().ingest({
+      type: "state",
+      party: [],
+      initiative: [],
+      online: 1,
+      variables: [
+        { id: "public", label: "Public", kind: "number", value: 1 },
+        // The shared package hasn't typed `hidden` yet; the wire sends it.
+        { id: "plot", label: "Plot flag", kind: "bool", value: true, hidden: true } as never,
+      ],
+    })
+    const { container } = render(<StatePanel />)
+    const hiddenRow = container.querySelector(".var-hidden-row")
+    expect(hiddenRow).not.toBeNull()
+    expect(hiddenRow?.textContent).toContain("Plot flag")
+    expect(container.querySelectorAll(".var-hidden-row")).toHaveLength(1)
+  })
+
   it("renders hook-emitted sidebar ui panels", () => {
     useSessionStore.getState().ingest({
       type: "ui",

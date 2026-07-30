@@ -36,6 +36,13 @@ function CharacterCard({ character }: { character: CharacterState }) {
   )
 }
 
+/** v1.7-additive optional field the shared package has not typed yet (see
+ * PROTOCOL_NOTES.md): on a KEEPER connection, unexposed variables arrive
+ * flagged `hidden:true` instead of being filtered out. */
+function isHidden(variable: ModuleVariable): boolean {
+  return (variable as ModuleVariable & { hidden?: boolean }).hidden === true
+}
+
 /**
  * v1.6 module variables ("trackers"), rendered by kind in definition order:
  * bounded numbers become meters, unbounded numbers stat rows, bools badges,
@@ -82,9 +89,18 @@ function VariablesCard({ game }: { game: StateFrame }) {
     <section className="desk-card">
       <header className="desk-title">{t("session.trackers")}</header>
       <div className="var-list">
-        {game.variables.map((variable) => (
-          <VariableRow key={variable.id} variable={variable} />
-        ))}
+        {game.variables.map((variable) =>
+          isHidden(variable) ? (
+            <div key={variable.id} className="var-hidden-row" title={t("session.hiddenVar")}>
+              <span className="var-lock" aria-label={t("session.hiddenVar")}>
+                🔒
+              </span>
+              <VariableRow variable={variable} />
+            </div>
+          ) : (
+            <VariableRow key={variable.id} variable={variable} />
+          ),
+        )}
       </div>
     </section>
   )
