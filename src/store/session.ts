@@ -8,6 +8,7 @@ import type {
   SystemFrame,
   UiFrame,
 } from "@loreweaver/protocol"
+import { usePanelsStore } from "./panels"
 
 /** Scrollback cap, mirroring the reference TUI client. */
 export const MAX_LOG_ENTRIES = 200
@@ -142,6 +143,14 @@ export const useSessionStore = create<SessionState>((set) => ({
       case "presence":
         set({ presence: frame })
         return
+      // v1.8 module panels live in their own store; the session store stays
+      // the single ingest chokepoint.
+      case "ui_manifest":
+        usePanelsStore.getState().applyManifest(frame.panels)
+        return
+      case "panel_event":
+        usePanelsStore.getState().deliverEvent(frame.panel, frame.payload)
+        return
       case "turn_status":
         set(
           frame.status === "busy"
@@ -160,5 +169,8 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((s) => (s.turn.busy && now - s.turn.since >= TURN_BUSY_TIMEOUT_MS ? { turn: IDLE_TURN } : s))
   },
 
-  clear: () => set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [] }),
+  clear: () => {
+    usePanelsStore.getState().resetSession()
+    set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [] })
+  },
 }))

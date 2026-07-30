@@ -1,9 +1,22 @@
-import { stripControlChars, type UiBlock, type UiFrame } from "@loreweaver/protocol"
+import { stripControlChars, type UiBlock, type UiChoiceOption, type UiFrame } from "@loreweaver/protocol"
 import { transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import Meter from "./Meter"
 
-function Block({ block, online }: { block: UiBlock; online: boolean }) {
+/**
+ * One concrete v1.7 block. `onChoose` overrides what picking a choices option
+ * sends: hook-emitted `ui` frames send a plain `input` (the default), while
+ * tier-1 panel templates send a `panel_intent` (see panels/Tier1Blocks).
+ */
+export function Block({
+  block,
+  online,
+  onChoose,
+}: {
+  block: UiBlock
+  online: boolean
+  onChoose?: (option: UiChoiceOption) => void
+}) {
   switch (block.kind) {
     case "meter":
       return (
@@ -37,7 +50,11 @@ function Block({ block, online }: { block: UiBlock; online: boolean }) {
                 disabled={!online}
                 // Picking a choice sends its `input` back verbatim as a NORMAL
                 // input frame — there is no dedicated choice frame type.
-                onClick={() => void transportSend({ type: "input", text: option.input }).catch(() => {})}
+                onClick={() =>
+                  onChoose
+                    ? onChoose(option)
+                    : void transportSend({ type: "input", text: option.input }).catch(() => {})
+                }
               >
                 {stripControlChars(option.label)}
               </button>

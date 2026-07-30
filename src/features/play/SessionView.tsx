@@ -2,6 +2,10 @@ import { useTranslation } from "react-i18next"
 import { useConnectionStore } from "../../store/connection"
 import InputBox from "./InputBox"
 import NarrativeLog from "./NarrativeLog"
+import { PanelSidebar, PanelTray } from "./panels/PanelDeck"
+import PanelMenu from "./panels/PanelMenu"
+import PanelModalHost from "./panels/PanelModalHost"
+import PanelNotice from "./panels/PanelNotice"
 import StatePanel from "./StatePanel"
 import TurnStatus from "./TurnStatus"
 
@@ -28,18 +32,23 @@ export default function SessionView() {
       <div className="chronicle-pane">
         <header className="session-head">
           <span className="session-room">{welcome ? `${welcome.room} · ${welcome.you.name}` : "…"}</span>
+          <PanelMenu />
           <StatusPill />
           <button type="button" className="ghost-button" onClick={() => void disconnect()}>
             {t("connect.disconnect")}
           </button>
         </header>
+        <PanelNotice />
         <TurnStatus />
         <NarrativeLog />
+        <PanelTray />
         <InputBox />
       </div>
       <aside className="desk-pane">
+        <PanelSidebar />
         <StatePanel />
       </aside>
+      <PanelModalHost />
     </div>
   )
 }

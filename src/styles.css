@@ -1745,3 +1745,220 @@ body {
   font-size: 11px;
   flex-shrink: 0;
 }
+
+/* ---- Module UI panels (protocol v1.8, spec S-UI) ---- */
+
+/* Panel cards share the desk-card look; the deck sits above the state panel. */
+
+.panel-deck {
+  margin-bottom: 12px;
+}
+
+.panel-card-head {
+  gap: 6px;
+}
+
+.panel-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-card-actions {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.icon-button {
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  font: 12px/1 var(--font-ui);
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  color: var(--ink);
+  background: var(--bg-inset);
+}
+
+/* Tray slot: a horizontal strip pinned between the log and the input line.
+   It scrolls sideways and never grows past a third of the pane. */
+
+.panel-tray {
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-soft);
+  overflow-x: auto;
+  max-height: 34%;
+  flex-shrink: 0;
+}
+
+.panel-tray .panel-card {
+  width: 280px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+/* Tier-2 iframe: the sandboxed document owns its own visuals. */
+
+.panel-frame {
+  width: 100%;
+  min-height: 220px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--bg-inset);
+}
+
+.panel-frame-loading {
+  font: 12px/1.5 var(--font-ui);
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+.panel-frame-error-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: 12px/1.5 var(--font-ui);
+  color: var(--warn);
+  margin: 0;
+}
+
+.panel-fallback-null {
+  font: italic 12px/1.5 var(--font-ui);
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+/* Consent notice: one line under the session header. */
+
+.panel-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  font: 12px/1.4 var(--font-ui);
+  color: var(--ink-dim);
+}
+
+.panel-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Panels menu in the session header. */
+
+.panel-menu {
+  position: relative;
+}
+
+.panel-menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 300px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+.panel-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.panel-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 12px/1.4 var(--font-ui);
+  color: var(--ink);
+}
+
+.panel-menu-slot {
+  font-size: 10px;
+  color: var(--ink-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+.panel-menu-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-menu-setting {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  font: 12px/1.4 var(--font-ui);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.panel-menu-hint {
+  display: block;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+/* Modal slot: shell-owned overlay; Esc / × / backdrop close it. */
+
+.panel-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.panel-modal {
+  width: min(720px, 100%);
+  max-height: min(80vh, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.panel-modal-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.panel-modal .panel-frame {
+  min-height: 50vh;
+}
