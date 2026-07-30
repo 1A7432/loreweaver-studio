@@ -22,7 +22,7 @@ arrive only via packs the keeper enables — the 拆卡 rule extended to UI).
 ## The three tiers
 
 - **Tier 0 — declarative blocks** (SHIPPED, protocol v1.7): `meter/stat/badge/text/
-  divider/choices` emitted by hooks via `emitUI`. Every client renders natively, TUI
+divider/choices` emitted by hooks via `emitUI`. Every client renders natively, TUI
   included. Grows by adding block kinds, never required to write JS.
 - **Tier 1 — declarative panels** (this spec): a pack declares named panels — layouts of
   Tier-0 blocks with live variable bindings — in `ui/panels.yaml`. Pure data; renders on
@@ -35,11 +35,11 @@ arrive only via packs the keeper enables — the 拆卡 rule extended to UI).
 
 Panels mount ONLY into the play surface, in fixed slots the client shell owns:
 
-| slot | studio | TUI |
-|---|---|---|
-| `sidebar` | right column, stacked, collapsible | sidebar sections (Tier 1 / fallback) |
-| `tray` | bottom strip | folded into sidebar |
-| `modal` | on-demand overlay (player opens from a panel menu) | folded into sidebar |
+| slot      | studio                                             | TUI                                  |
+| --------- | -------------------------------------------------- | ------------------------------------ |
+| `sidebar` | right column, stacked, collapsible                 | sidebar sections (Tier 1 / fallback) |
+| `tray`    | bottom strip                                       | folded into sidebar                  |
+| `modal`   | on-demand overlay (player opens from a panel menu) | folded into sidebar                  |
 
 The player can always collapse/close any panel. The shell never yields the narrative log,
 input line, or any chrome.
@@ -63,26 +63,26 @@ contents:
 ```yaml
 # ui/panels.yaml
 panels:
-  - id: case-board                 # slug, unique in pack; wire id = "<packId>/<id>"
-    title: {en: Case Board, zh: 案情板}
-    slot: sidebar                  # sidebar | tray | modal
-    audience: all                  # all | player | keeper — filtered SERVER-side
-    blocks:                        # Tier 1: template blocks (see below)
-      - {kind: meter, label: {en: Fear, zh: 恐慌}, value: {$var: town_fear}, min: 0, max: 10}
+  - id: case-board # slug, unique in pack; wire id = "<packId>/<id>"
+    title: { en: Case Board, zh: 案情板 }
+    slot: sidebar # sidebar | tray | modal
+    audience: all # all | player | keeper — filtered SERVER-side
+    blocks: # Tier 1: template blocks (see below)
+      - { kind: meter, label: { en: Fear, zh: 恐慌 }, value: { $var: town_fear }, min: 0, max: 10 }
       - repeat:
           prefix: "mvu.线索."
-          block: {kind: badge, label: {$leaf: label}, value: {$leaf: value}}
+          block: { kind: badge, label: { $leaf: label }, value: { $leaf: value } }
   - id: manor-map
-    title: {en: Manor Map, zh: 庄园地图}
+    title: { en: Manor Map, zh: 庄园地图 }
     slot: modal
     audience: all
     entry: ui/manor-map/index.html # Tier 2: presence of `entry` makes it tier 2
-    assets:                        # explicit list; build fails on missing/undeclared
+    assets: # explicit list; build fails on missing/undeclared
       - ui/manor-map/index.html
       - ui/manor-map/app.js
       - ui/manor-map/map.webp
-    fallback:                      # REQUIRED for tier 2 (or `fallback: null` explicitly)
-      - {kind: text, text: {en: "Map available in the rich client.", zh: "地图请在富客户端查看。"}}
+    fallback: # REQUIRED for tier 2 (or `fallback: null` explicitly)
+      - { kind: text, text: { en: "Map available in the rich client.", zh: "地图请在富客户端查看。" } }
 ```
 
 Build/install validation (`core/pack.py`): schema; slug/slot/audience enums; tier-2
@@ -151,19 +151,19 @@ no panels.
    control frame** (the earlier draft's `asset_request` is dropped — a server-initiated
    push would invert the media channel's client-pull direction on both carriers for no
    gain). The client fetches each hash its manifest names with the same `{op:"get",
-   hash}` request media uses (new bidi stream on Iroh / binary message on WS); the
+hash}` request media uses (new bidi stream on Iroh / binary message on WS); the
    server resolves the hash first against the caller's room media, then against
    installed-pack assets of packs enabled in the caller's room (no arbitrary blob
    oracle), and replies with the same `{op:"get", hash, size, mime, name}` header +
    bytes. Client verifies sha256 before caching (disk cache keyed by hash, immutable).
 
 3. **`panel_event`** (server→client): `{"type": "panel_event", "panel": "<wire id>",
-   "payload": <JSON ≤ 32 KB>}` — produced by the new hook emitter
+"payload": <JSON ≤ 32 KB>}` — produced by the new hook emitter
    **`emitPanel(panelId, payload)`**; delivered only to viewers whose manifest contains
    that panel; ≤ 20 per turn (excess dropped + logged, same style as other hook caps).
 
 4. **`panel_intent`** (client→server): `{"type": "panel_intent", "panel": "<wire id>",
-   "kind": "choice" | "input" | "roll", "value": "<string ≤ 2000>"}`.
+"kind": "choice" | "input" | "roll", "value": "<string ≤ 2000>"}`.
    Server checks the panel is in THAT member's manifest, then routes exactly as if the
    member typed it: `choice` → the existing choice-answer path; `input` → a normal player
    input line; `roll` → a public `.r <value>` as that player (dice engine validates the
@@ -193,8 +193,9 @@ window.loreweaver = {
 }
 ```
 
-  `onState` delivers the SAME per-viewer-filtered shapes the protocol `state` frame
-  carries — no second data path.
+`onState` delivers the SAME per-viewer-filtered shapes the protocol `state` frame
+carries — no second data path.
+
 - **Player consent:** first join to a room with panels shows a one-line notice ("this
   room draws its own interface — N panels, X MB"); a client setting `blocks-only mode`
   renders every Tier-2 panel's fallback instead. Default: render (the sandbox is what
