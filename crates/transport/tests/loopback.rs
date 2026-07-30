@@ -281,3 +281,97 @@ async fn reconnects_with_rejoin_after_connection_loss() {
     assert!(rx.recv().await.is_none());
     server.await.expect("server task");
 }
+
+/// One media-channel GET helper for the fake server: read the request header
+/// line off a fresh bidirectional stream, hand back the parsed frame.
+async fn read_blob_request(recv: &mut RecvStream) -> Value {
+    let mut decoder = LineDecoder::new();
+    loop {
+        let mut buf = vec![0u8; 64 * 1024];
+        let n = recv
+            .read(&mut buf)
+            .await
+            .expect("blob stream read")
+            .expect("request header before EOF");
+        let mut frames = decoder.push(&buf[..n]).expect("decode blob request");
+        if let Some(frame) = frames.pop() {
+            return frame;
+        }
+    }
+}
+
+#[tokio::test]
+async fn fetch_blob_roundtrip_and_error_reply() {
+    let (endpoint, ticket) = bind_server().await;
+    let body: &[u8] = b"panel entry bytes";
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let join = conn.read_frame().await;
+        assert_eq!(join["type"], "join");
+        conn.write_frame(&welcome_frame("1.8")).await;
+
+        // First GET: header + body split across two writes.
+        let (mut bsend, mut brecv) = conn.conn.accept_bi().await.expect("blob stream");
+        let request = read_blob_request(&mut brecv).await;
+        assert_eq!(request["op"], "get");
+        assert_eq!(request["hash"], "cafe01");
+        bsend
+            .write_all(&encode_line(&json!({
+                "op": "get",
+                "hash": "cafe01",
+                "size": body.len(),
+                "mime": "text/html",
+                "name": "index.html",
+            })))
+            .await
+            .expect("blob header write");
+        bsend
+            .write_all(&body[..7])
+            .await
+            .expect("blob body write 1");
+        bsend
+            .write_all(&body[7..])
+            .await
+            .expect("blob body write 2");
+        let _ = bsend.finish();
+
+        // Second GET: an error line with no body.
+        let (mut esend, mut erecv) = conn.conn.accept_bi().await.expect("blob stream 2");
+        let request = read_blob_request(&mut erecv).await;
+        assert_eq!(request["hash"], "unknown");
+        esend
+            .write_all(&encode_line(&json!({
+                "type": "error",
+                "code": "media_not_found",
+                "message": "no such blob",
+            })))
+            .await
+            .expect("error header write");
+        let _ = esend.finish();
+
+        conn.conn.closed().await;
+    });
+
+    let (handle, mut rx) = connect(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+
+    let blob = tokio::time::timeout(STEP, handle.fetch_blob("cafe01".to_owned()))
+        .await
+        .expect("fetch inside the deadline")
+        .expect("blob fetch succeeds");
+    assert_eq!(blob.bytes, body);
+    assert_eq!(blob.mime, "text/html");
+    assert_eq!(blob.name, "index.html");
+
+    let err = tokio::time::timeout(STEP, handle.fetch_blob("unknown".to_owned()))
+        .await
+        .expect("fetch inside the deadline")
+        .expect_err("a server error line fails the fetch");
+    assert!(err.contains("media_not_found"), "unexpected error: {err}");
+
+    handle.close();
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.await.expect("server task");
+}

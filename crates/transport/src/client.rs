@@ -8,18 +8,25 @@
 
 use std::time::Duration;
 
-use serde_json::Value;
-use tokio::sync::mpsc;
+use serde_json::{json, Value};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use crate::backoff::Backoff;
-use crate::codec::{encode_line, LineDecoder};
+use crate::codec::{encode_line, LineDecoder, MAX_LINE_BYTES};
 use crate::frames::{self, ALPN};
 
 /// How long we wait for `welcome` (or `error`) after sending `join`. The
 /// server's own handshake timeout defaults to 10s; ours is slightly larger so
 /// the server-side verdict usually arrives first.
 pub const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Upper bound on one fetched blob (protocol media caps top out at 128 MiB for
+/// audio; panel assets are far smaller — this is a defensive ceiling, not a quota).
+pub const MAX_BLOB_BYTES: u64 = 64 * 1024 * 1024;
+
+/// End-to-end deadline for one blob fetch, header and body included.
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 const READ_CHUNK: usize = 64 * 1024;
 
@@ -70,9 +77,24 @@ pub enum ConnStatus {
     Offline,
 }
 
+/// One content-addressed blob pulled over the media byte channel
+/// (`{op:"get", hash}` on a fresh bidirectional stream — protocol v1.2+, and
+/// the v1.8 panel-asset path). The caller must verify the sha256 itself before
+/// trusting the bytes; the transport only moves them.
+#[derive(Debug, Clone)]
+pub struct FetchedBlob {
+    pub bytes: Vec<u8>,
+    pub mime: String,
+    pub name: String,
+}
+
 #[derive(Debug)]
 enum Command {
     Send(Value),
+    FetchBlob {
+        hash: String,
+        reply: oneshot::Sender<Result<FetchedBlob, String>>,
+    },
     Close,
 }
 
@@ -91,6 +113,16 @@ impl ClientHandle {
         self.cmd
             .send(Command::Send(frame))
             .map_err(|_| TransportClosed)
+    }
+
+    /// Pull one blob by sha256 over a fresh media stream on the live
+    /// connection. Fails fast while the transport is offline or closed.
+    pub async fn fetch_blob(&self, hash: String) -> Result<FetchedBlob, String> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd
+            .send(Command::FetchBlob { hash, reply })
+            .map_err(|_| "transport is closed".to_owned())?;
+        rx.await.map_err(|_| "transport is closed".to_owned())?
     }
 
     /// Ask the actor to close and stop redialing. Idempotent.
@@ -197,6 +229,11 @@ async fn run(
                                 return;
                             }
                             Some(Command::Send(_)) => continue,
+                            // No live connection to open a stream on: fail the
+                            // fetch instead of queueing it into the redial.
+                            Some(Command::FetchBlob { reply, .. }) => {
+                                let _ = reply.send(Err("transport offline".to_owned()));
+                            }
                         },
                     }
                 }
@@ -275,6 +312,24 @@ async fn session(
                         return SessionOutcome::Lost { settled };
                     }
                 }
+                Some(Command::FetchBlob { hash, reply }) => {
+                    // Each fetch rides its own bidirectional stream so the
+                    // control loop never blocks on bulk bytes. A connection
+                    // loss simply errors the in-flight fetches.
+                    let conn = conn.clone();
+                    tokio::spawn(async move {
+                        let result = match tokio::time::timeout(
+                            FETCH_TIMEOUT,
+                            fetch_blob_on(&conn, &hash),
+                        )
+                        .await
+                        {
+                            Ok(result) => result,
+                            Err(_) => Err("blob fetch timed out".to_owned()),
+                        };
+                        let _ = reply.send(result);
+                    });
+                }
             },
             read = recv.read(&mut buf) => {
                 let n = match read {
@@ -341,4 +396,96 @@ async fn session(
             }
         }
     }
+}
+
+/// One media-channel GET: write the `{op:"get", hash}` header line on a fresh
+/// bidirectional stream, read one newline-terminated JSON reply header —
+/// `{op:"get", hash, size, mime, name}` on success, `{type:"error", code,
+/// message}` with no body on rejection — then exactly `size` raw bytes.
+async fn fetch_blob_on(
+    conn: &iroh::endpoint::Connection,
+    hash: &str,
+) -> Result<FetchedBlob, String> {
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .map_err(|err| format!("media stream open failed: {err}"))?;
+    let request = json!({ "op": "get", "hash": hash });
+    send.write_all(&encode_line(&request))
+        .await
+        .map_err(|err| format!("media request write failed: {err}"))?;
+    // The GET request is the header line alone; close our side so the server
+    // never waits for more.
+    let _ = send.finish();
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; READ_CHUNK];
+    let header = loop {
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            let line = &line[..line.len() - 1];
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            break serde_json::from_slice::<Value>(line)
+                .map_err(|err| format!("bad media reply header: {err}"))?;
+        }
+        if buf.len() > MAX_LINE_BYTES {
+            return Err("media reply header exceeds the line cap".to_owned());
+        }
+        match recv.read(&mut chunk).await {
+            Ok(Some(n)) => buf.extend_from_slice(&chunk[..n]),
+            Ok(None) => return Err("media stream closed before a reply header".to_owned()),
+            Err(err) => return Err(format!("media stream read failed: {err}")),
+        }
+    };
+
+    if header.get("type").and_then(Value::as_str) == Some("error") {
+        let code = header
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("error");
+        let message = header.get("message").and_then(Value::as_str).unwrap_or("");
+        return Err(format!("{code}: {message}"));
+    }
+    if header.get("op").and_then(Value::as_str) != Some("get") {
+        return Err("unexpected media reply header".to_owned());
+    }
+    let size = header
+        .get("size")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "media reply header missing size".to_owned())?;
+    if size > MAX_BLOB_BYTES {
+        return Err(format!("blob exceeds the {MAX_BLOB_BYTES}-byte cap"));
+    }
+    let mime = header
+        .get("mime")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream")
+        .to_owned();
+    let name = header
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+
+    // `buf` already holds whatever body bytes rode in with the header chunk.
+    let size = size as usize;
+    let mut body = buf;
+    while body.len() < size {
+        match recv.read(&mut chunk).await {
+            Ok(Some(n)) => body.extend_from_slice(&chunk[..n]),
+            Ok(None) => break,
+            Err(err) => return Err(format!("media body read failed: {err}")),
+        }
+    }
+    if body.len() != size {
+        return Err(format!(
+            "media body size mismatch: expected {size}, got {}",
+            body.len()
+        ));
+    }
+    Ok(FetchedBlob {
+        bytes: body,
+        mime,
+        name,
+    })
 }
