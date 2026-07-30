@@ -40,3 +40,10 @@ without them and get better when they land.
    `data_dir/packs/<id>@<version>/`; the keeper still types the full server-side path to
    world-import one. A `.import pack:<id>/<card>` shorthand would make the
    "install → world import → claim" demo one obvious step shorter.
+
+7. **M15 bridge doc says `StateVariable`; the package type is `ModuleVariable`.** The
+   Tier-2 bridge signature in `docs/specs/M15-ui-panels.md` (and the studio snapshot)
+   types `onState` as `(s: {variables: StateVariable[], …})`, but no such export exists
+   in `loreweaver-protocol` — the state-frame variable list is `ModuleVariable[]`, and
+   that is what the studio's bridge forwards. One-word spec amendment keeps the next
+   panel author from hunting for a phantom type.
