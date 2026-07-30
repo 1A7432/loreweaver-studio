@@ -32,6 +32,7 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
     lorebooks: [],
     skills: [],
     rulepacks: [],
+    assets: [],
     ...overrides,
   }
 }
@@ -169,6 +170,14 @@ describe("buildSkillMd / buildPackSourcePlan", () => {
     const hooksJs = plan.files.find((file) => file.path.endsWith("hooks.js"))
     expect(hooksJs?.contents).toContain("// --- hook 1 ---")
     expect(hooksJs?.contents).toContain("two()")
+  })
+
+  it("declares assets by path only and ships their bytes as binaries", () => {
+    const plan = buildPackSourcePlan(draft({ assets: [{ fileName: "map.png", base64: "aGk=" }] }))
+    const manifest = parse(plan.files[0].contents) as { assets?: unknown }
+    // Integrity fields are the engine's to fill at build time.
+    expect(manifest.assets).toEqual([{ path: "assets/map.png" }])
+    expect(plan.binaries).toContainEqual({ path: "assets/map.png", base64: "aGk=" })
   })
 
   it("routes PNG cards through the binary list", () => {

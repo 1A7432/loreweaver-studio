@@ -46,6 +46,13 @@ export interface PackLorebookDraft {
   jsonText: string
 }
 
+/** One media asset. The author side only declares the path — sha256/mime/size
+ * are filled in by the engine at build time. */
+export interface PackAssetDraft {
+  fileName: string
+  base64: string
+}
+
 export interface WorldPackDraft {
   id: string
   version: string
@@ -59,6 +66,7 @@ export interface WorldPackDraft {
   lorebooks: PackLorebookDraft[]
   skills: PackSkillDraft[]
   rulepacks: PackRulepackDraft[]
+  assets: PackAssetDraft[]
 }
 
 export interface PackTextFile {
@@ -134,6 +142,11 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
     if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
     seenFiles.add(path)
   }
+  for (const asset of draft.assets) {
+    const path = `assets/${asset.fileName}`
+    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
+    seenFiles.add(path)
+  }
   return issues
 }
 
@@ -175,6 +188,10 @@ export function buildManifestYaml(draft: WorldPackDraft): string {
     authors: draft.authors.map((author) => author.trim()).filter((author) => author.length > 0),
     license: draft.license.trim(),
     contents,
+  }
+  if (draft.assets.length > 0) {
+    // Integrity fields (sha256/mime/size) are the engine's to fill at build.
+    manifest.assets = draft.assets.map((asset) => ({ path: `assets/${asset.fileName}` }))
   }
   return stringify(manifest, { lineWidth: 0 })
 }
@@ -223,6 +240,9 @@ export function buildPackSourcePlan(draft: WorldPackDraft): PackSourcePlan {
   }
   for (const rulepack of draft.rulepacks) {
     files.push({ path: `rulepacks/${rulepack.id}.yaml`, contents: rulepack.yamlText })
+  }
+  for (const asset of draft.assets) {
+    binaries.push({ path: `assets/${asset.fileName}`, base64: asset.base64 })
   }
 
   return { dirName: draft.id, files, binaries }

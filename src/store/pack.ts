@@ -398,6 +398,9 @@ export function buildDraftFromState(items: PackItem[], metadata: PackMetadataFor
       .map((item) => ({ fileName: item.fileName, jsonText: item.jsonText ?? "" })),
     skills,
     rulepacks,
+    assets: items
+      .filter((item) => item.kind === "asset")
+      .map((item) => ({ fileName: item.fileName, base64: item.base64 })),
   }
 }
 

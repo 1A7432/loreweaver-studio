@@ -110,4 +110,22 @@ describe("pack store pipeline", () => {
     // 理.好感度 is player-guessed; secret_flag is keeper-guessed by name.
     expect(packExposeLines(usePackStore.getState().items)).toEqual([".var expose 理"])
   })
+
+  it("carries asset items into the draft instead of dropping them silently", async () => {
+    await usePackStore.getState().addFiles([file("cover art.png", "not a png at all")])
+    const items = usePackStore.getState().items
+    expect(items[0].kind).toBe("asset")
+    const draft = buildDraftFromState(items, {
+      id: "p",
+      version: "0.1.0",
+      nameEn: "P",
+      nameZh: "",
+      descriptionEn: "d",
+      descriptionZh: "",
+      authors: "a",
+      license: "MIT",
+      rulepackPatch: "",
+    })
+    expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64 }])
+  })
 })
