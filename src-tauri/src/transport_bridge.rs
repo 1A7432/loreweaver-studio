@@ -15,6 +15,14 @@ pub const TRANSPORT_EVENT: &str = "loreweaver://transport";
 #[derive(Default)]
 pub struct TransportState(Mutex<Option<ClientHandle>>);
 
+impl TransportState {
+    /// A clone of the live connection handle, if any (for sibling modules —
+    /// the asset cache pulls blobs over the same authenticated connection).
+    pub async fn handle(&self) -> Option<ClientHandle> {
+        self.0.lock().await.clone()
+    }
+}
+
 #[tauri::command]
 pub async fn transport_connect(
     app: AppHandle,

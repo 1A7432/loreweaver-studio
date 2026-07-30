@@ -25,3 +25,8 @@ base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 # LLM requests go out from Rust (CSP stays strict, no CORS, key stays native-side).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Panel assets are content-addressed; bytes are verified against their sha256
+# before they may enter the cache or be served to a panel iframe.
+sha2 = "0.10"
+# Decode percent-encoded panel:// request paths (author asset names may be non-ASCII).
+percent-encoding = "2"
