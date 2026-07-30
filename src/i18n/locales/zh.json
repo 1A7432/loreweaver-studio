@@ -49,6 +49,28 @@
     "context": "上下文",
     "hiddenVar": "尚未对玩家公开（守秘人视图）——`.var expose <前缀>` 可将其放上队伍面板。"
   },
+  "panels": {
+    "menu": "面板({{n}})",
+    "menuAria": "模组面板菜单",
+    "notice": "本房间自带界面——{{n}} 个面板,共 {{mb}} MB。",
+    "noticeOk": "知道了",
+    "blocksOnly": "仅积木模式",
+    "blocksOnlyHint": "所有 Tier-2 面板不运行代码,一律降级为积木渲染",
+    "richOnly": "此面板请在富客户端查看。",
+    "loading": "面板加载中…",
+    "assetError": "面板资源加载失败。",
+    "retry": "重试",
+    "collapse": "折叠面板",
+    "expand": "展开面板",
+    "close": "关闭",
+    "open": "打开",
+    "reopen": "重新打开",
+    "slot": {
+      "sidebar": "侧栏",
+      "tray": "底栏",
+      "modal": "弹层"
+    }
+  },
   "log": {
     "system": "系统"
   },

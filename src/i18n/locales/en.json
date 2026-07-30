@@ -49,6 +49,28 @@
     "context": "Context",
     "hiddenVar": "Not exposed to players yet (Keeper view) — `.var expose <prefix>` puts it on the party panel."
   },
+  "panels": {
+    "menu": "Panels ({{n}})",
+    "menuAria": "Module panels menu",
+    "notice": "This room draws its own interface — {{n}} panels, {{mb}} MB.",
+    "noticeOk": "Got it",
+    "blocksOnly": "Blocks-only mode",
+    "blocksOnlyHint": "Render every Tier-2 panel as plain blocks instead of running its code",
+    "richOnly": "This panel is available in the rich client.",
+    "loading": "Loading panel…",
+    "assetError": "Panel assets failed to load.",
+    "retry": "Retry",
+    "collapse": "Collapse panel",
+    "expand": "Expand panel",
+    "close": "Close",
+    "open": "Open",
+    "reopen": "Reopen",
+    "slot": {
+      "sidebar": "Sidebar",
+      "tray": "Tray",
+      "modal": "Overlay"
+    }
+  },
   "log": {
     "system": "System"
   },
