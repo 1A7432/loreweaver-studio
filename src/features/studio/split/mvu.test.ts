@@ -44,6 +44,67 @@ describe("parseInitvar (JSON5-lite)", () => {
   })
 })
 
+describe("parseInitvar (YAML fallback — the 2026-era wire shape)", () => {
+  // Mirrors the engine's YAML_INITVAR_TEXT fixture in tests/core/test_mvu_compat.py:
+  // block mapping, CJK keys, inline flow maps/lists, underscore keys, a comment, and a
+  // ValueWithDescription leaf riding a flow list.
+  const YAML_TEXT = `世界:
+  日: 1
+  时段: 上午  # 注释与数据同行
+  今日访客配额: 3
+  监控录像: ""
+  声望: { 圣哺: 20, 残堇: 20 }
+  已登记访客: []
+玩家资源:
+  精力: { 当前值: 8, 训练经验: 0 }
+  _小憩日: -1
+  保护准备: false
+结局标记: [进行中, "本周目状态"]
+`
+
+  it("parses a YAML block mapping", () => {
+    expect(parseInitvar(YAML_TEXT)).toEqual({
+      世界: {
+        日: 1,
+        时段: "上午",
+        今日访客配额: 3,
+        监控录像: "",
+        声望: { 圣哺: 20, 残堇: 20 },
+        已登记访客: [],
+      },
+      玩家资源: { 精力: { 当前值: 8, 训练经验: 0 }, _小憩日: -1, 保护准备: false },
+      结局标记: ["进行中", "本周目状态"],
+    })
+  })
+
+  it("survives a bare apostrophe that wrecks the JSON5 route", () => {
+    expect(parseInitvar("提示: today's visitor knocks\n计数: 2\n")).toEqual({
+      提示: "today's visitor knocks",
+      计数: 2,
+    })
+  })
+
+  it("rejects aliases, non-mappings, and tab indentation", () => {
+    expect(parseInitvar("a: &x [1, 2]\nb: *x\n")).toBeNull() // alias-bomb class rejected outright
+    expect(parseInitvar("- 1\n- 2\n")).toBeNull()
+    expect(parseInitvar("just prose\n")).toBeNull()
+    expect(parseInitvar("a:\n\tb: 1\n")).toBeNull()
+  })
+
+  it("pins YAML 1.1 semantics to match the engine (PyYAML)", () => {
+    // `yes`/`no` are booleans, duplicate keys last-win — keep in sync with the engine's
+    // test_parse_initvar_yaml_11_semantics_are_pinned.
+    expect(parseInitvar("开关: yes\n开关: no\n")).toEqual({ 开关: false })
+  })
+
+  it("re-coerces auto-typed dates to ISO strings", () => {
+    expect(parseInitvar("下次检查: 2026-08-04\n嵌套: { 时刻: [2026-08-04, 备注] }\n")).toEqual({
+      下次检查: "2026-08-04",
+      嵌套: { 时刻: ["2026-08-04", "备注"] },
+    })
+  })
+})
+
 describe("ValueWithDescription", () => {
   it("recognizes exactly the two-element [value, string] shape", () => {
     expect(isValueWithDesc([1, "desc"])).toBe(true)

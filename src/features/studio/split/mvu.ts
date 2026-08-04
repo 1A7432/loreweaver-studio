@@ -1,7 +1,10 @@
 // MVU (MagVarUpdate) InitVar compatibility — a TypeScript mirror of the
-// detection + tolerant JSON5-lite parsing in the engine's `core/mvu_compat.py`,
+// detection + tolerant parsing in the engine's `core/mvu_compat.py` (the original
+// JSON5-lite object shape first, then the 2026-era YAML block-mapping shape),
 // plus a description-preserving leaf flattener (the engine's `flatten_leaves`
 // drops descriptions; the promotion table needs them for label inference).
+
+import { parseDocument, visit } from "yaml"
 
 export const MAX_FLAT_LEAVES = 200
 
@@ -164,22 +167,65 @@ function quoteBareKeys(text: string): string {
   return out.join("")
 }
 
-/** Parse an InitVar entry's JSON5-lite content into an object; null when
- * unrecoverable or the top level isn't an object. CJK passes through. */
+/** Parse an InitVar entry's content into an object; null when unrecoverable or the
+ * top level isn't an object. Real cards ship two wire shapes, tried in order: the
+ * original JSON5-lite object, then the 2026-era YAML block mapping of the same tree.
+ * CJK passes through. */
 export function parseInitvar(text: string): Record<string, unknown> | null {
   if (typeof text !== "string" || !text.trim()) return null
   const stripped = stripCommentsNormalizeQuotes(text)
-  if (stripped === null) return null
-  const normalized = quoteBareKeys(dropTrailingCommas(stripped))
+  if (stripped !== null) {
+    const normalized = quoteBareKeys(dropTrailingCommas(stripped))
+    try {
+      const data: unknown = JSON.parse(normalized)
+      if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+        return data as Record<string, unknown>
+      }
+    } catch {
+      // fall through to the YAML route
+    }
+  }
+  return parseInitvarYaml(text)
+}
+
+/** The YAML route of `parseInitvar`. The `yaml-1.1` schema pins engine parity with
+ * PyYAML: `yes`/`no` load as booleans, duplicate keys last-win (`uniqueKeys: false`).
+ * Imported cards are untrusted input, so anchor/alias documents are rejected outright
+ * (never expanded), mirroring the engine's no-alias loader; auto-typed timestamps are
+ * re-coerced to ISO strings (date-only stays `YYYY-MM-DD`, matching PyYAML's date). */
+function parseInitvarYaml(text: string): Record<string, unknown> | null {
   let data: unknown
   try {
-    data = JSON.parse(normalized)
+    const doc = parseDocument(text, { schema: "yaml-1.1", uniqueKeys: false })
+    if (doc.errors.length > 0) return null
+    let hasAlias = false
+    visit(doc, {
+      Alias: () => {
+        hasAlias = true
+        return visit.BREAK
+      },
+    })
+    if (hasAlias) return null
+    data = doc.toJS()
   } catch {
     return null
   }
-  return typeof data === "object" && data !== null && !Array.isArray(data)
-    ? (data as Record<string, unknown>)
-    : null
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return null
+  return stringifyYamlDates(data) as Record<string, unknown>
+}
+
+/** Recursively replace auto-typed `Date` leaves with ISO strings; every other node
+ * passes through untouched. A date-only stamp (UTC midnight) shortens to `YYYY-MM-DD`. */
+function stringifyYamlDates(node: unknown): unknown {
+  if (node instanceof Date) {
+    const iso = node.toISOString()
+    return iso.endsWith("T00:00:00.000Z") ? iso.slice(0, 10) : iso
+  }
+  if (Array.isArray(node)) return node.map(stringifyYamlDates)
+  if (typeof node === "object" && node !== null) {
+    return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, stringifyYamlDates(value)]))
+  }
+  return node
 }
 
 /** One flattened leaf; `description` is "" unless the leaf used the
