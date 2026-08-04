@@ -108,7 +108,10 @@
       "scenario": "场景",
       "firstMes": "开场白",
       "mesExample": "对话示例",
-      "creatorNotes": "作者备注"
+      "creatorNotes": "作者备注",
+      "altGreetings": "备选开场白",
+      "altGreetingN": "备选开场白 {{n}}",
+      "addAltGreeting": "添加备选开场白"
     },
     "vars": {
       "hint": "类型化模组变量会成为引擎校验的状态量——kind、边界、可见性在写入时强制校验。keeper 专属变量不会到达玩家，也不会进入 SillyTavern 导出。",
@@ -189,8 +192,226 @@
     "viewsLabel": "制卡分区",
     "views": {
       "forge": "锻造台",
+      "wizard": "共创向导",
       "split": "拆卡",
       "pack": "打包"
+    },
+    "wizard": {
+      "startTitle": "阶段化共创向导",
+      "startHint": "十个引导阶段，外加 Loreweaver 特有的变量阶段。每阶段：引导提问 → 你作答 → AI 整理成结构化草稿 → 你确认 → 落入卡片。AI 负责整理，灵魂必须手写。",
+      "nsfwToggle": "启用 NSFW 调色盘阶段",
+      "nsfwHint": "默认关闭。开启后按你所写如实整理（写「为什么」而非「做什么」），不做内容降级；核心动机仍然只能手写。",
+      "startNew": "新建卡片开始",
+      "startCurrent": "在「{{name}}」上开始",
+      "navLabel": "向导阶段",
+      "endSession": "结束向导",
+      "endConfirm": "结束这次向导？已确认落卡的内容全部保留，只丢弃向导的笔记与草稿。",
+      "skippedMark": "已跳过",
+      "staleHint": "上游阶段在此之后重新确认过——建议回来复核。",
+      "auditMissing": "有 {{n}} 处向导落卡的内容被手动删除。重新确认对应阶段可再生成；若卡片已转为手工维护，可结束向导。",
+      "auditStale": "上游有改动，建议复核：{{stages}}",
+      "questionsHead": "引导问题",
+      "guidanceHead": "AI 追问（它只问，你来写）",
+      "exampleBadge": "示例 · 来自另一个角色",
+      "answerLabel": "你的回答（自由书写，结构交给下一步）",
+      "structure": "AI：整理我的回答",
+      "askGuidance": "AI：帮我提问",
+      "startBlank": "从空白草稿开始",
+      "manualBadge": "必须手写",
+      "manualNotice": "本阶段含「必须手写」栏：AI 只提供引导问题和至多一个外来示例——提示词、校验层、界面三层都保证它绝不代写这里的内容。",
+      "manualPlaceholder": "这里只能由你来写，AI 不会代填。",
+      "rejected": "草稿未通过阶段校验——以下问题已回填重试：",
+      "confirm": "确认并落入卡片",
+      "reconfirm": "重新确认（增量重生成本阶段产物）",
+      "skip": "跳过此阶段",
+      "confirmedBadge": "已确认",
+      "optionalBadge": "可选",
+      "pathLabel": "世界观路径",
+      "paths": {
+        "real": "A · 真实背景（只写自定义偏差）",
+        "small": "B · 小世界（迭代补全）",
+        "large": "C · 大世界（常驻核心＋触发细节）"
+      },
+      "tokensTitle": "token 估算",
+      "tokensStage": "本阶段将落地 ≈{{n}} 常驻 token",
+      "tokensProject": "卡片常驻层 ≈{{n}} / 预算 {{budget}}",
+      "overBudget": "常驻层超预算——降层建议（从最大条目开始）：",
+      "demoteLine": "「{{title}}」≈{{tokens}} tk · 降为触发后剩 {{after}}",
+      "yamlPreview": "结构化草稿（YAML 预览）",
+      "layer": {
+        "constant": "常驻 · 蓝灯",
+        "triggered": "触发 · 绿灯"
+      },
+      "entry": {
+        "title": "标题",
+        "layer": "层级",
+        "add": "添加条目"
+      },
+      "palette": {
+        "base": "底色",
+        "main": "主色调 {{n}}",
+        "accent": "点缀",
+        "name": "性格",
+        "detail": "外显（可观察的行为）",
+        "derivation": "衍生闭环：具体场景 → 行为 → 台词"
+      },
+      "facet": {
+        "name": "面的名字",
+        "trigger": "触发（什么切换到这一面）",
+        "energy": "能量（驱动它的内核）",
+        "voice": "语料（语域＋一句示例台词）",
+        "body": "身体模式",
+        "role": "功能（这一面替角色做什么）",
+        "bleed": "渗透（其他面如何漏进来）",
+        "add": "添加一面"
+      },
+      "npc": {
+        "name": "名字",
+        "role": "与主角的关系",
+        "add": "添加 NPC"
+      },
+      "opening": {
+        "mesExampleHint": "锁定语感的 1-2 段对话示例——先一行 <START>，之后 user:/char: 交替各行。可留空。",
+        "alternate": "备选开场白 {{n}}",
+        "addAlternate": "添加备选开场白"
+      },
+      "nsfw": {
+        "motivation": "核心动机——写「为什么」，作为性格事实"
+      },
+      "vars": {
+        "yaml": "[InitVar] YAML（初始状态）",
+        "rules": "更新规则（一行一条，落为 hooks 草稿）",
+        "preview": "{{n}} 个可提升的类型化变量",
+        "bounds": "范围 / 选项",
+        "parseFailed": "YAML 无法解析——修好才能确认。"
+      },
+      "lint": {
+        "head": "反模式 lint（AI 文本）——命中片段：",
+        "manualHead": "仅提示：你手写的文本中的命中（去留由你，绝不自动重写）：",
+        "rewrite": "AI：重写命中片段",
+        "rules": {
+          "vagueWord": "模糊词",
+          "cheapMetaphor": "劣质比喻",
+          "microExpression": "微表情套话",
+          "notButPattern": "「不是…而是…」句式",
+          "innerMonologue": "内心独白标记",
+          "enFiller": "英文八股",
+          "genericLooks": "万能模板词（默认值，删掉不损失信息）"
+        }
+      },
+      "finish": {
+        "title": "全部阶段已确认——导出",
+        "summary": "{{lore}} 条世界书 · {{vars}} 个类型化变量 · 常驻 ≈{{tokens}} token",
+        "exportSt": "导出酒馆卡（发布版）",
+        "exportPng": "导出 PNG 酒馆卡（选底图）…",
+        "exportNative": "导出 Loreweaver 包",
+        "toPack": "打开打包器",
+        "pngInvalid": "选中的底图不是可用的 PNG。",
+        "stHint": "酒馆发布版：守秘人条目保留、[InitVar] YAML 原文直通（层级与隐藏叶子都在）、更新规则落为世界书条目——这张卡在原生 SillyTavern 里即可独立运行。Loreweaver 机制仍随 extensions 携带，可无损拆回。"
+      },
+      "block": {
+        "noDraft": "先整理回答或从空白草稿开始。",
+        "nameRequired": "角色需要一个名字。",
+        "entriesRequired": "这里至少需要一条内容。",
+        "derivationRequired": "每个主色调都必须有手写的衍生闭环。",
+        "exegesisRequired": "二次解释必须手写——写完才能确认。",
+        "motivationRequired": "NSFW 动机必须手写——写完才能确认。",
+        "contentRequired": "内容不能为空。",
+        "yamlUnparseable": "[InitVar] YAML 无法解析。"
+      },
+      "stages": {
+        "worldview": {
+          "title": "1 · 世界观",
+          "intro": "三条路径：A 真实背景只补自定义设定；B 小世界迭代补全；C 大世界拆成常驻核心＋触发细节两层。常驻条目每轮都烧 token，触发条目按关键词点亮。",
+          "placeholder": "路径 C。三十年大雾不散的港镇；敲钟传讯；灯塔只亮半边（守秘人秘密）…",
+          "q1": "这张卡适合哪条路径：A 真实背景 / B 小世界 / C 大世界？",
+          "q2": "这里有什么「永远为真」、但模型会猜错的事？（那就是你的常驻核心）",
+          "q3": "哪些地点、势力、名字值得单开触发条目？各用什么关键词？",
+          "q4": "哪些真相是只有守秘人知道的秘密？"
+        },
+        "basics": {
+          "title": "2 · 角色基础",
+          "intro": "差异化原则：只写偏离模型默认认知的特征。「日本女生黑发」等于没写——染金的头发、一道疤、不合身份的口音才值得落笔。",
+          "placeholder": "阿理，码头船工，24 岁。疤从左眉切到颧骨，笑起来会歪。说话带码头黑话…",
+          "q1": "名字、大致年龄、职业或身份？",
+          "q2": "哪些特征偏离了模型的默认想象？只有这些才值得写。",
+          "q3": "陌生人三秒内会注意到什么（疤、步态、口音、小动作）？",
+          "q4": "哪一件过往，最直接地驱动着今天的行为？"
+        },
+        "palette": {
+          "title": "3 · 性格调色盘",
+          "intro": "底色打底，1-2 个主色调示人，一点点缀提味。每个主色调都要配手写「衍生」——场景 → 行为 → 台词的闭环。无逻辑却成立的性格组合，只有活人写得出来。",
+          "placeholder": "底色：自卑（从不先开口）。主色调：好胜（输了当晚加练到手抽筋，嘴上说「正好活动」）…",
+          "q1": "底色——压在一切之下的那个性格是什么？",
+          "q2": "日常真正示人的 1-2 个主色调是什么？",
+          "q3": "一个小小的点缀性格？",
+          "q4": "为每个主色调手写衍生闭环：一个具体场景 → 她做了什么 → 她说了哪句话。"
+        },
+        "facets": {
+          "title": "4 · 三面性（可选）",
+          "intro": "同一台发动机的不同档位，不是三种性格。每一面＝触发＋能量＋语料＋身体模式＋功能，面与面之间互相渗透。简单角色可以跳过。",
+          "placeholder": "白日船工（有外人）：短句，手不停。夜里守望（独自在码头）：…",
+          "q1": "什么让角色在面与面之间切换——场合、在场的人、威胁？",
+          "q2": "每一面靠什么能量驱动？声音听起来什么样（给一句示例台词）？",
+          "q3": "每一面替角色「做」什么——它的功能？",
+          "q4": "其他面如何从这一面里渗出来？"
+        },
+        "exegesis": {
+          "title": "5 · 二次解释",
+          "intro": "作者的终极注释——防止模型用自己资料库里的俗套补完你的角色。全程手写；AI 只能向你提问。",
+          "placeholder": "她不是傲娇模板：嘴硬只对强者，对弱者从来直接。永远不要写她脸红。",
+          "q1": "这个角色「不是」什么——哪种一眼的解读是错的？",
+          "q2": "模型最可能用哪些俗套错误地自动补完？",
+          "q3": "无论剧情走到哪里，什么是不变的？"
+        },
+        "wardrobe": {
+          "title": "6 · 衣柜与随身物",
+          "intro": "触发层条目，用衣物词和角色名做关键词。每件东西背后都要有故事——一只打不着火的打火机，胜过一整页服装清单。",
+          "placeholder": "工装外套袖口磨破，左袋里缝了刀鞘。总带着母亲那只裂了的罗盘…",
+          "q1": "日常穿着——以及其中「不对劲」的那一处细节？",
+          "q2": "随身总带着什么？每件东西背后是什么故事？",
+          "q3": "这些条目用什么关键词触发？"
+        },
+        "nsfw": {
+          "title": "7 · NSFW 调色盘（可选）",
+          "intro": "写「为什么」而非「做什么」：把驱动、关系动态和边界写成性格事实。核心动机只能手写。条目落卡为守秘人可见。按你所写如实整理，不做降级。",
+          "placeholder": "亲密是她唯一肯卸下值更的方式——这就是那个「为什么」…",
+          "q1": "为什么亲密对这个角色重要——对她意味着什么？（手写）",
+          "q2": "从她的性格出发，会推导出哪些动态与偏好？请写成事实。",
+          "q3": "硬边界在哪里？"
+        },
+        "npcs": {
+          "title": "8 · NPC",
+          "intro": "每个 NPC 一条触发条目，以名字为关键词。一人一个具体的记忆点——NPC 存在是为了被认出来，不是被概括。",
+          "placeholder": "老陈，船工头，欠她一条命，总想用鱼来还…",
+          "q1": "谁围绕在角色身边——最多两到四个人？",
+          "q2": "每个 NPC 一个具体的、能记住的细节？",
+          "q3": "各用什么关键词触发（通常就是名字）？"
+        },
+        "overview": {
+          "title": "9 · 角色速览",
+          "intro": "常驻速览卡：模型永远不该忘的 8-15 行。它随每一轮提示词出场——每一行都要值回它的 token。",
+          "placeholder": "阿理 / 船工 / 疤：左眉→颧骨 / 底色自卑·主色好胜 / 正在追查灯塔那晚…",
+          "q1": "哪 8-15 行是模型永远不该忘的？",
+          "q2": "故事开场时，她正处在什么局面里？"
+        },
+        "opening": {
+          "title": "10 · 开场白",
+          "intro": "开场白决定模型接下来模仿的文风。把玩家放进场景，给角色一个具体动作和真实台词，结在一个玩家能接的钩子上。反模式 lint 在这里全力生效。",
+          "placeholder": "钟敲了四下。阿理把缆绳绕上桩，头也不抬：「你站的地方，昨晚死过人。」",
+          "q1": "场景在哪里展开？角色正在「做」什么？",
+          "q2": "她开口的第一句话是什么？",
+          "q3": "玩家能立刻接住的钩子是什么？"
+        },
+        "variables": {
+          "title": "11 · 变量与状态",
+          "intro": "Loreweaver 特有的收尾阶段：[InitVar] YAML 生成初始状态——标量叶子自动提升为类型化、可校验的变量；自然语言更新规则落为 hooks 草稿。",
+          "placeholder": "信任 0..10 起始 0；灯塔线索 0..5；是否见过雾（旗标）…",
+          "q1": "故事真正会「读回」哪些状态——数值、阶段、旗标？",
+          "q2": "每个变量的范围和初始值？",
+          "q3": "每个变量什么时候变、怎么变（一行一条规则）？"
+        }
+      }
     },
     "split": {
       "emptyHint": "打开任意 SillyTavern 卡（JSON 或 PNG）。它会被拆成两半：任何玩家都能导入的人物半，和只有守秘人才能带进房间的世界机制半。",
@@ -283,7 +504,66 @@
       "startOver": "重新开始",
       "rejected": "草案经 {{n}} 次尝试仍未通过确定性校验，未保存任何内容。",
       "summary": "{{vars}} 个类型化变量 · {{lore}} 条世界书条目 · {{hooks}} 段 hooks",
-      "apply": "加入我的项目"
+      "apply": "加入我的项目",
+      "providerPreset": "服务商预设",
+      "providerPresets": {
+        "deepseek": "DeepSeek",
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "custom": "自定义"
+      },
+      "deepseekProTempWarning": "deepseek-v4-pro 思考模式下设置 temperature 会劣化推理——建议从预设中移除 temperature，或换用其他模型。",
+      "promptPreset": "提示词预设",
+      "builtinPrompts": "内置提示词",
+      "managePresets": "管理…",
+      "presetInUse": "预设「{{name}}」：{{segments}} 段提示词 + {{slots}} 个已填充槽位置于系统提示词前部；内置 JSON 输出契约仍然生效。",
+      "presets": {
+        "open": "提示词预设",
+        "title": "提示词预设（SillyTavern 导入）",
+        "import": "导入 ST 预设…",
+        "parseFailed": "无法解析该预设：{{detail}}",
+        "saved": "预设已保存。",
+        "exported": "已导出。",
+        "exportCopied": "已复制到剪贴板（此环境无保存对话框）。",
+        "empty": "还没有预设。导入 SillyTavern completion 预设（JSON）——提示词、双层启用矩阵、采样参数与 ST 扩展全部随附，零丢弃。",
+        "stats": "{{total}} 条 prompt · {{enabled}} 条生效 · {{kb}} KB",
+        "activeBadge": "使用中",
+        "setActive": "制卡使用",
+        "deactivate": "停用预设（回到内置提示词）",
+        "export": "导出 JSON",
+        "deleteConfirm": "删除预设「{{name}}」？此操作不可撤销。",
+        "back": "← 返回",
+        "name": "预设名称",
+        "discard": "放弃",
+        "save": "保存为本地预设",
+        "sampling": "采样参数",
+        "samplingUnsentHint": "灰色的参数会随资产保留但不会下发：它们是 ST 专有旋钮（或随机种子），最大 token 数以 studio 自身设置为准。",
+        "macros": "宏报告",
+        "noMacros": "该预设未使用 ST 宏。",
+        "macroHint": "共 {{total}} 处宏调用、{{kinds}} 种宏名；当前运行时可展开 {{supported}} 种——其余原样传给模型。",
+        "extensions": "ST 扩展（未启用）",
+        "extensionsHint": "ST 专有机制（正则脚本、tavern helper 等）随预设保留，但 studio 绝不执行。",
+        "warnings": "导入提示（{{n}}）",
+        "moreWarnings": "还有 {{n}} 条",
+        "groupSlots": "注入槽位",
+        "groupEnabled": "生效",
+        "groupDisabled": "禁用",
+        "notInOrder": "不在 order 列表",
+        "slotChip": "槽位",
+        "chars": "{{n}} 字符",
+        "malformedKept": "{{n}} 条无法归一化的条目已原样保留在资产中（未在上方显示）。",
+        "packHint": "对局用（keeper 风格预设）：导出 JSON 并作为 pack 资产分发——如何映射进引擎单提示词的六个 section 由引擎侧决定，studio 不承诺注入行为。",
+        "slots": {
+          "personaDescription": "玩家人设描述（槽位）",
+          "charDescription": "角色描述（槽位）",
+          "charPersonality": "角色性格（槽位）",
+          "scenario": "场景（槽位）",
+          "worldInfoBefore": "世界书·前（槽位）",
+          "worldInfoAfter": "世界书·后（槽位）",
+          "dialogueExamples": "对话示例（槽位）",
+          "chatHistory": "对话历史（槽位）"
+        }
+      }
     },
     "pack": {
       "stepsLabel": "流水线步骤",

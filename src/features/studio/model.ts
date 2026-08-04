@@ -63,6 +63,9 @@ export interface ForgeProject {
   scenario: string
   firstMes: string
   mesExample: string
+  /** Alternate opening scenes (ST `alternate_greetings`). Projects persisted
+   * before this field existed lack it — always read through `?? []`. */
+  alternateGreetings: string[]
   creatorNotes: string
   tags: string
   variables: ForgeVariable[]
@@ -336,6 +339,7 @@ export function newProject(name: string): ForgeProject {
     scenario: "",
     firstMes: "",
     mesExample: "",
+    alternateGreetings: [],
     creatorNotes: "",
     tags: "",
     variables: [],

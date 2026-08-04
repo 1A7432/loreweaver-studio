@@ -108,7 +108,10 @@
       "scenario": "Scenario",
       "firstMes": "First message",
       "mesExample": "Example dialogue",
-      "creatorNotes": "Creator notes"
+      "creatorNotes": "Creator notes",
+      "altGreetings": "Alternate greetings",
+      "altGreetingN": "Alternate greeting {{n}}",
+      "addAltGreeting": "Add alternate greeting"
     },
     "vars": {
       "hint": "Typed module variables become validated engine trackers — kind, bounds, and visibility are enforced on write. Keeper-only variables never reach players and are excluded from SillyTavern exports.",
@@ -189,8 +192,226 @@
     "viewsLabel": "Studio views",
     "views": {
       "forge": "Forge",
+      "wizard": "Co-create",
       "split": "Card split",
       "pack": "Pack"
+    },
+    "wizard": {
+      "startTitle": "Staged co-creation wizard",
+      "startHint": "Ten guided stages plus a Loreweaver variables stage. Each stage: guided questions → your answers → AI structures them → you confirm → it lands in the card. The AI organizes; the soul stays handwritten.",
+      "nsfwToggle": "Enable the NSFW palette stage",
+      "nsfwHint": "Off by default. When enabled, the stage organizes exactly what you write (the WHY, not the WHAT) with no watering down; the core motivation stays handwritten-only.",
+      "startNew": "Start on a new card",
+      "startCurrent": "Start on “{{name}}”",
+      "navLabel": "Wizard stages",
+      "endSession": "End wizard",
+      "endConfirm": "End this wizard session? The card keeps everything already confirmed; only the wizard's notes and drafts are discarded.",
+      "skippedMark": "skipped",
+      "staleHint": "An earlier stage was re-confirmed after this one — review it.",
+      "auditMissing": "{{n}} wizard-tracked piece(s) were deleted from the card by hand. Re-confirm the owning stage to regenerate them, or end the wizard if the card is now hand-managed.",
+      "auditStale": "Upstream changed — review suggested: {{stages}}",
+      "questionsHead": "Guided questions",
+      "guidanceHead": "AI guiding questions (it asks — you write)",
+      "exampleBadge": "example · different character",
+      "answerLabel": "Your answers (free-form; write plainly, structure comes later)",
+      "structure": "AI: structure my answers",
+      "askGuidance": "AI: interview me",
+      "startBlank": "Start from a blank draft",
+      "manualBadge": "HANDWRITTEN ONLY",
+      "manualNotice": "This stage carries a handwritten-only slot. The AI offers guiding questions and at most one foreign example — it never writes this content, by prompt, by schema, and by this UI.",
+      "manualPlaceholder": "Only you write here. The AI will not fill this in.",
+      "rejected": "The draft failed the stage gate — problems sent back for retry:",
+      "confirm": "Confirm & land in card",
+      "reconfirm": "Re-confirm (regenerates this stage's pieces)",
+      "skip": "Skip this stage",
+      "confirmedBadge": "confirmed",
+      "optionalBadge": "optional",
+      "pathLabel": "World path",
+      "paths": {
+        "real": "A · real-world backdrop (write only the deviations)",
+        "small": "B · small world (iterate it complete)",
+        "large": "C · big world (constant core + triggered detail)"
+      },
+      "tokensTitle": "estimated tokens",
+      "tokensStage": "this stage lands ≈{{n}} always-on tokens",
+      "tokensProject": "card constant layer ≈{{n}} / budget {{budget}}",
+      "overBudget": "Constant layer over budget — demotion suggestions, largest first:",
+      "demoteLine": "“{{title}}” ≈{{tokens}} tk · after demoting to triggered: {{after}}",
+      "yamlPreview": "Structured draft (YAML preview)",
+      "layer": {
+        "constant": "constant · blue",
+        "triggered": "triggered · green"
+      },
+      "entry": {
+        "title": "Title",
+        "layer": "Layer",
+        "add": "Add entry"
+      },
+      "palette": {
+        "base": "Base coat",
+        "main": "Main color {{n}}",
+        "accent": "Accent",
+        "name": "Trait",
+        "detail": "How it shows (observable behavior)",
+        "derivation": "Derivation loops: concrete scene → behavior → spoken line"
+      },
+      "facet": {
+        "name": "Facet name",
+        "trigger": "Trigger (what shifts into this facet)",
+        "energy": "Energy (the drive running it)",
+        "voice": "Voice (register + a sample line)",
+        "body": "Body (physical mode)",
+        "role": "Function (what it does for them)",
+        "bleed": "Bleed-through (how other facets leak in)",
+        "add": "Add facet"
+      },
+      "npc": {
+        "name": "Name",
+        "role": "Relation to the character",
+        "add": "Add NPC"
+      },
+      "opening": {
+        "mesExampleHint": "1-2 short exchanges that lock the voice — a <START> line, then alternating user:/char: lines. Optional.",
+        "alternate": "Alternate greeting {{n}}",
+        "addAlternate": "Add alternate greeting"
+      },
+      "nsfw": {
+        "motivation": "Core motivation — the WHY, as personality truth"
+      },
+      "vars": {
+        "yaml": "[InitVar] YAML (initial state)",
+        "rules": "Update rules (one per line — becomes a hooks draft)",
+        "preview": "{{n}} promotable typed variable(s)",
+        "bounds": "Bounds / options",
+        "parseFailed": "The YAML does not parse — fix it before confirming."
+      },
+      "lint": {
+        "head": "Anti-pattern lint (AI text) — flagged spans:",
+        "manualHead": "Advisory: hits in your handwritten text (yours to keep or change; never auto-rewritten):",
+        "rewrite": "AI: rewrite the flagged spans",
+        "rules": {
+          "vagueWord": "vague hedge",
+          "cheapMetaphor": "cheap metaphor",
+          "microExpression": "micro-expression boilerplate",
+          "notButPattern": "“not X but Y” pattern",
+          "innerMonologue": "inner-monologue marker",
+          "enFiller": "stock English filler",
+          "genericLooks": "generic template descriptor (default value — deleting it loses nothing)"
+        }
+      },
+      "finish": {
+        "title": "All stages confirmed — export",
+        "summary": "{{lore}} worldbook entrie(s) · {{vars}} typed variable(s) · ≈{{tokens}} constant tokens",
+        "exportSt": "Export SillyTavern card (release)",
+        "exportPng": "Export PNG tavern card (pick a base image)…",
+        "exportNative": "Export Loreweaver bundle",
+        "toPack": "Open the pack wizard",
+        "pngInvalid": "That base image is not a usable PNG.",
+        "stHint": "Tavern release flavor: keeper-only entries stay in, the [InitVar] YAML rides verbatim (hierarchy and hidden leaves included), and the update rules land as a worldbook entry — the card stands on its own in stock SillyTavern. Loreweaver machinery still rides in extensions, so the card re-imports losslessly."
+      },
+      "block": {
+        "noDraft": "Structure your answers or start a blank draft first.",
+        "nameRequired": "The character needs a name.",
+        "entriesRequired": "At least one entry is required here.",
+        "derivationRequired": "Every main color needs its handwritten derivation loops.",
+        "exegesisRequired": "The exegesis is handwritten — write it before confirming.",
+        "motivationRequired": "The NSFW motivation is handwritten — write it before confirming.",
+        "contentRequired": "Content is required.",
+        "yamlUnparseable": "The [InitVar] YAML does not parse."
+      },
+      "stages": {
+        "worldview": {
+          "title": "1 · Worldview",
+          "intro": "Three paths: A real-world backdrop (only write custom deviations), B small world (iterate complete), C big world (split into a constant core plus triggered detail). Constant entries burn tokens in every prompt; triggered ones light up on keywords.",
+          "placeholder": "Path C. A harbor town under thirty years of fog; bells carry news; the lighthouse lights only half its lamp (keeper secret)…",
+          "q1": "Which path fits this card: A real backdrop, B small world, or C big world?",
+          "q2": "What is ALWAYS true here that a model would guess wrong? (that is your constant core)",
+          "q3": "Which places, factions or names deserve their own triggered entry, under which keywords?",
+          "q4": "Which truths are keeper-only secrets?"
+        },
+        "basics": {
+          "title": "2 · Character basics",
+          "intro": "The differentiation principle: write ONLY what deviates from the model's default assumption. “A Japanese girl with black hair” says nothing — blonde dye, a scar, a wrong accent make the cut.",
+          "placeholder": "Ali, deckhand, 24. Scar from left brow to cheekbone — her smile pulls sideways. Speaks in dock shorthand…",
+          "q1": "Name, rough age, occupation or identity?",
+          "q2": "Which traits DEVIATE from what a model would assume by default? Only those are worth ink.",
+          "q3": "What would a stranger notice within three seconds (scar, gait, accent, habit)?",
+          "q4": "Which single background fact drives how they act today?"
+        },
+        "palette": {
+          "title": "3 · Personality palette",
+          "intro": "A base coat under everything, 1-2 main colors people actually see, one accent as seasoning. Every main color needs handwritten derivation loops — scene → behavior → spoken line. Illogical-but-alive combinations are what only a person can write.",
+          "placeholder": "Base: inferiority (never speaks first). Main: competitive (loses, then drills all night claiming it's “just exercise”)…",
+          "q1": "The base coat — the trait lying under everything?",
+          "q2": "The 1-2 main colors people actually see day to day?",
+          "q3": "One small accent trait as seasoning?",
+          "q4": "For EACH main color, handwrite derivation loops: a concrete scene → what they do → one spoken line."
+        },
+        "facets": {
+          "title": "4 · Three facets (optional)",
+          "intro": "Gears of ONE engine, not three personalities. Each facet = trigger + energy + voice + body + function, and the other facets bleed through it. Skip this for simple characters.",
+          "placeholder": "Day-shift deckhand (strangers present): short sentences, hands never idle. Night watcher (alone on the pier): …",
+          "q1": "What flips the character between facets — place, audience, threat?",
+          "q2": "For each facet: what energy runs it, and what does the voice sound like (give a sample line)?",
+          "q3": "What does each facet DO for them — its function?",
+          "q4": "How do the other facets bleed through each one?"
+        },
+        "exegesis": {
+          "title": "5 · Second exegesis",
+          "intro": "The author's final margin notes — what stops the model from completing your character out of its own training data. Entirely handwritten; the AI may only ask you questions.",
+          "placeholder": "She is NOT a tsundere template: her sharp tongue targets only the strong; with the weak she is plainly direct. Never write her blushing.",
+          "q1": "What is this character NOT — which obvious reading is wrong?",
+          "q2": "What would a model wrongly auto-complete from its stock tropes?",
+          "q3": "What stays fixed no matter where the story goes?"
+        },
+        "wardrobe": {
+          "title": "6 · Wardrobe & carried items",
+          "intro": "Triggered-layer entries keyed on outfit words and the character's name. Every item should hold a story — a lighter that no longer lights beats a catalog of clothes.",
+          "placeholder": "Work jacket, cuffs frayed, a knife sheath sewn into the left pocket. Carries her mother's cracked compass…",
+          "q1": "Daily outfit — and the one detail that is off or wrong about it?",
+          "q2": "What do they always carry, and what story does each item hold?",
+          "q3": "Which keywords should trigger these entries?"
+        },
+        "nsfw": {
+          "title": "7 · NSFW palette (optional)",
+          "intro": "Write the WHY, not the WHAT: drives, dynamics and boundaries as personality facts. The core motivation is handwritten-only. Entries land keeper-only. What you write is organized faithfully — no watering down.",
+          "placeholder": "Intimacy is the only way she ever goes off-watch — that is the why…",
+          "q1": "WHY does intimacy matter to this character — what does it mean to them? (handwritten)",
+          "q2": "Which dynamics and preferences follow from their personality, stated as facts?",
+          "q3": "Where are the hard boundaries?"
+        },
+        "npcs": {
+          "title": "8 · NPCs",
+          "intro": "One triggered entry per NPC, keyed on the name. One concrete, memorable detail each — an NPC exists to be recognized, not summarized.",
+          "placeholder": "Old Chen, foreman, owes her his life and keeps trying to repay it in fish…",
+          "q1": "Who orbits this character — two to four people at most?",
+          "q2": "One concrete distinguishing detail per NPC?",
+          "q3": "Which keywords trigger each entry (usually the name)?"
+        },
+        "overview": {
+          "title": "9 · Quick reference",
+          "intro": "The always-on index card: 8-15 terse lines the model must never lose sight of. It rides in every prompt — every line must earn its tokens.",
+          "placeholder": "Ali / deckhand / scar brow→cheek / base: inferiority, main: competitive / investigating the lighthouse night…",
+          "q1": "Which 8-15 lines must the model never lose sight of?",
+          "q2": "What is the current situation as the story opens?"
+        },
+        "opening": {
+          "title": "10 · Opening message",
+          "intro": "The opening sets the register the model will imitate. Place the player, give the character one concrete action and real dialogue, end on a hook. The anti-pattern lint applies at full force.",
+          "placeholder": "The bell struck four. Ali looped the mooring line without looking up: “You're standing where a man died last night.”",
+          "q1": "Where does the scene open, and what is the character DOING?",
+          "q2": "What is their first spoken line?",
+          "q3": "What hook can the player immediately act on?"
+        },
+        "variables": {
+          "title": "11 · Variables & state",
+          "intro": "Loreweaver-native closing stage: [InitVar] YAML for initial state — scalar leaves auto-promote to typed, validated variables — plus plain-language update rules that land as a hooks draft.",
+          "placeholder": "Trust 0..10 starting 0; lighthouse clues 0..5; has-seen-the-fog flag…",
+          "q1": "Which state does the STORY actually read back — meters, stages, flags?",
+          "q2": "Ranges and starting values for each?",
+          "q3": "When does each variable move, and by how much (one rule per line)?"
+        }
+      }
     },
     "split": {
       "emptyHint": "Open any SillyTavern card (JSON or PNG). It splits into a character half any player may import, and the world machinery only the Keeper brings in.",
@@ -283,7 +504,66 @@
       "startOver": "Start over",
       "rejected": "The draft failed deterministic validation after {{n}} attempt(s). Nothing was saved.",
       "summary": "{{vars}} typed variable(s) · {{lore}} worldbook entrie(s) · {{hooks}} hook script(s)",
-      "apply": "Add to my projects"
+      "apply": "Add to my projects",
+      "providerPreset": "Provider preset",
+      "providerPresets": {
+        "deepseek": "DeepSeek",
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "custom": "Custom"
+      },
+      "deepseekProTempWarning": "deepseek-v4-pro degrades its thinking mode when temperature is set — remove temperature from the preset (or switch models) for best reasoning.",
+      "promptPreset": "Prompt preset",
+      "builtinPrompts": "Built-in prompts",
+      "managePresets": "Manage…",
+      "presetInUse": "Preset \"{{name}}\": {{segments}} prompt segment(s) + {{slots}} filled slot(s) lead the system prompt; the built-in JSON contract still applies.",
+      "presets": {
+        "open": "Prompt presets",
+        "title": "Prompt presets (SillyTavern import)",
+        "import": "Import ST preset…",
+        "parseFailed": "Could not parse that preset: {{detail}}",
+        "saved": "Preset saved.",
+        "exported": "Exported.",
+        "exportCopied": "Copied to the clipboard (no save dialog here).",
+        "empty": "No presets yet. Import a SillyTavern completion preset (JSON) — prompts, the two-layer enable matrix, sampling parameters and ST extensions all come along, nothing dropped.",
+        "stats": "{{total}} prompts · {{enabled}} effective · {{kb}} KB",
+        "activeBadge": "in use",
+        "setActive": "Use in forge",
+        "deactivate": "Stop using a preset (built-in prompts)",
+        "export": "Export JSON",
+        "deleteConfirm": "Delete preset \"{{name}}\"? This cannot be undone.",
+        "back": "← Back",
+        "name": "Preset name",
+        "discard": "Discard",
+        "save": "Save as local preset",
+        "sampling": "Sampling parameters",
+        "samplingUnsentHint": "Dimmed values are carried but not sent: ST-only knobs (or a random seed), and the studio's own max-tokens setting wins.",
+        "macros": "Macro report",
+        "noMacros": "No ST macros in this preset.",
+        "macroHint": "{{total}} macro use(s) across {{kinds}} name(s); {{supported}} expanded by this runtime — everything else reaches the model verbatim.",
+        "extensions": "ST extensions (inactive)",
+        "extensionsHint": "ST-only machinery (regex scripts, tavern helper, …) is carried with the preset but never executed by the studio.",
+        "warnings": "Import notes ({{n}})",
+        "moreWarnings": "+{{n}} more",
+        "groupSlots": "Injection slots",
+        "groupEnabled": "Effective",
+        "groupDisabled": "Disabled",
+        "notInOrder": "not in order list",
+        "slotChip": "slot",
+        "chars": "{{n}} chars",
+        "malformedKept": "{{n}} unparseable entrie(s) kept verbatim in the asset (not shown above).",
+        "packHint": "For play (keeper-style presets): export the JSON and ship it inside a pack — the engine's single-prompt architecture decides how (and whether) it maps into the six sections; the studio makes no injection promises.",
+        "slots": {
+          "personaDescription": "Persona description (slot)",
+          "charDescription": "Character description (slot)",
+          "charPersonality": "Character personality (slot)",
+          "scenario": "Scenario (slot)",
+          "worldInfoBefore": "World info · before (slot)",
+          "worldInfoAfter": "World info · after (slot)",
+          "dialogueExamples": "Dialogue examples (slot)",
+          "chatHistory": "Chat history (slot)"
+        }
+      }
     },
     "pack": {
       "stepsLabel": "Pipeline steps",

@@ -4,14 +4,37 @@
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { aiAvailable, pickDirectory } from "../../../lib/native"
+import { useActivePreset } from "./presetStore"
 import { useAiStore } from "./provider"
+import {
+  deepseekProTemperatureConflict,
+  matchProviderPreset,
+  PROVIDER_PRESETS,
+  type ProviderPresetId,
+} from "./providerPresets"
 
 export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const settings = useAiStore()
+  const activePreset = useActivePreset()
   const [keyInput, setKeyInput] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const providerPresetId = matchProviderPreset(settings.baseUrl, settings.kind)
+  const modelSuggestions = PROVIDER_PRESETS.find((preset) => preset.id === providerPresetId)?.models ?? []
+  const deepseekWarning = deepseekProTemperatureConflict(settings.model, activePreset?.sampling)
+
+  const applyProviderPreset = (id: ProviderPresetId) => {
+    const preset = PROVIDER_PRESETS.find((candidate) => candidate.id === id)
+    if (preset === undefined || preset.id === "custom") return
+    settings.setConfig({
+      kind: preset.kind,
+      baseUrl: preset.baseUrl,
+      // Keep a hand-typed model; only fill the blank.
+      ...(settings.model.trim() === "" && preset.models.length > 0 ? { model: preset.models[0] } : {}),
+    })
+  }
 
   useEffect(() => {
     void settings.probeKey()
@@ -61,6 +84,19 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
         {!aiAvailable() ? <p className="studio-notice">{t("studio.ai.desktopOnly")}</p> : null}
 
         <label className="field">
+          {t("studio.ai.providerPreset")}
+          <select
+            value={providerPresetId}
+            onChange={(e) => applyProviderPreset(e.target.value as ProviderPresetId)}
+          >
+            {PROVIDER_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {t(`studio.ai.providerPresets.${preset.id}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
           {t("studio.ai.kind")}
           <select
             value={settings.kind}
@@ -88,7 +124,18 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             onChange={(e) => settings.setConfig({ model: e.target.value })}
             placeholder={settings.kind === "openai" ? "gpt-4o" : "claude-sonnet-5"}
             spellCheck={false}
+            list="ai-model-suggestions"
           />
+          <datalist id="ai-model-suggestions">
+            {modelSuggestions.map((model) => (
+              <option key={model} value={model} />
+            ))}
+          </datalist>
+          {deepseekWarning ? (
+            <p className="studio-notice" role="alert">
+              {t("studio.ai.deepseekProTempWarning")}
+            </p>
+          ) : null}
         </label>
         <label className="field">
           {t("studio.ai.maxTokens")}

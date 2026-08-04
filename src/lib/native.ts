@@ -70,6 +70,32 @@ export async function pickCardFile(): Promise<PickedFile | null> {
   return pickViaBrowser(".json,.png,application/json,image/png")
 }
 
+/** Pick + read one JSON file (SillyTavern preset import). */
+export async function pickJsonFile(): Promise<PickedFile | null> {
+  if (isTauri()) {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    })
+    if (typeof path !== "string") return null
+    return readFileByPath(path)
+  }
+  return pickViaBrowser(".json,application/json")
+}
+
+/** Pick + read one PNG (the base/avatar image for the PNG-card export). */
+export async function pickPngFile(): Promise<PickedFile | null> {
+  if (isTauri()) {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "PNG", extensions: ["png"] }],
+    })
+    if (typeof path !== "string") return null
+    return readFileByPath(path)
+  }
+  return pickViaBrowser(".png,image/png")
+}
+
 /** Pick a directory (native only — the browser has no useful equivalent). */
 export async function pickDirectory(): Promise<string | null> {
   if (!isTauri()) return null
@@ -159,12 +185,26 @@ export async function secretDelete(account: string): Promise<void> {
 
 // --- LLM proxy ---
 
+/** Optional sampling knobs forwarded to the provider. Every field is optional
+ * and omitted from the wire payload when unset; the Rust side additionally
+ * drops the keys a given API shape does not accept (seed/penalties are
+ * OpenAI-only, topK is Anthropic-only). */
+export interface LlmSamplingParams {
+  temperature?: number
+  topP?: number
+  topK?: number
+  frequencyPenalty?: number
+  presencePenalty?: number
+  seed?: number
+}
+
 export interface LlmProviderConfig {
   kind: "openai" | "anthropic"
   baseUrl: string
   model: string
   secretAccount: string
   maxTokens?: number
+  sampling?: LlmSamplingParams
 }
 
 export interface LlmMessage {

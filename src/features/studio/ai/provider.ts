@@ -12,6 +12,7 @@ import {
   secretSet,
   type LlmMessage,
   type LlmProviderConfig,
+  type LlmSamplingParams,
 } from "../../../lib/native"
 import { extractJsonBlock } from "./schemas"
 
@@ -81,7 +82,7 @@ export function aiReady(state: Pick<AiSettingsState, "baseUrl" | "model" | "keyS
   return aiAvailable() && state.baseUrl.trim() !== "" && state.model.trim() !== "" && state.keyStored
 }
 
-function currentConfig(): LlmProviderConfig {
+function currentConfig(sampling?: LlmSamplingParams): LlmProviderConfig {
   const state = useAiStore.getState()
   return {
     kind: state.kind,
@@ -89,11 +90,16 @@ function currentConfig(): LlmProviderConfig {
     model: state.model.trim(),
     secretAccount: SECRET_ACCOUNT,
     maxTokens: state.maxTokens,
+    sampling,
   }
 }
 
-export async function chatOnce(system: string, messages: LlmMessage[]): Promise<string> {
-  return llmChat(currentConfig(), system, messages)
+export async function chatOnce(
+  system: string,
+  messages: LlmMessage[],
+  sampling?: LlmSamplingParams,
+): Promise<string> {
+  return llmChat(currentConfig(sampling), system, messages)
 }
 
 export interface DraftLoopResult<T> {
@@ -112,12 +118,13 @@ export async function draftWithRetries<T>(
   history: LlmMessage[],
   gate: (parsed: unknown) => { value: T | null; problems: string[] },
   maxAttempts = 3,
+  sampling?: LlmSamplingParams,
 ): Promise<DraftLoopResult<T>> {
   const messages: LlmMessage[] = [...history]
   let problems: string[] = []
   let reply = ""
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    reply = await chatOnce(system, messages)
+    reply = await chatOnce(system, messages, sampling)
     const parsed = extractJsonBlock(reply)
     const gated =
       parsed === null

@@ -131,6 +131,66 @@ describe("SillyTavern V3 export", () => {
   })
 })
 
+describe("alternate greetings", () => {
+  it("rides in both flavors, dropping blank entries", () => {
+    const p = project()
+    p.alternateGreetings = ["涨潮那晚。", "   "]
+    const { specs } = validateProject(p)
+    const native = exportNativeBundle(p, specs) as { alternate_greetings: string[] }
+    expect(native.alternate_greetings).toEqual(["涨潮那晚。"])
+    const st = exportSillyTavernCard(p, specs) as { data: { alternate_greetings: string[] } }
+    expect(st.data.alternate_greetings).toEqual(["涨潮那晚。"])
+  })
+
+  it("tolerates projects persisted before the field existed", () => {
+    const p = project()
+    const legacy = { ...p } as Record<string, unknown>
+    delete legacy.alternateGreetings
+    const { specs } = validateProject(p)
+    const st = exportSillyTavernCard(legacy as unknown as typeof p, specs) as {
+      data: { alternate_greetings: string[] }
+    }
+    expect(st.data.alternate_greetings).toEqual([])
+  })
+})
+
+describe("SillyTavern tavern-release options", () => {
+  it("keeps secret lore when includeSecret is on", () => {
+    const p = project()
+    const { specs } = validateProject(p)
+    const card = exportSillyTavernCard(p, specs, { includeSecret: true })
+    const flat = JSON.stringify(card)
+    expect(flat).toContain("The priest did it")
+    const book = (card as { data: { character_book: { entries: { comment: string }[] } } }).data
+      .character_book
+    expect(book.entries.map((e) => e.comment)).toEqual(["[InitVar]", "The Well", "Keeper truth"])
+  })
+
+  it("rides the wizard's [InitVar] YAML verbatim instead of the flat synthesis", () => {
+    const p = project()
+    const { specs } = validateProject(p)
+    const yaml = "理:\n  好感度: [0, '好感 [0,100]']\n  暗线: [0, '守秘人侧']\n"
+    const card = exportSillyTavernCard(p, specs, { initvarSource: yaml }) as {
+      data: { character_book: { entries: { comment: string; content: string }[] } }
+    }
+    const initvar = card.data.character_book.entries[0]
+    expect(initvar.comment).toBe("[InitVar]")
+    // Verbatim: hierarchy, CJK keys and keeper-side leaves all ride.
+    expect(initvar.content).toBe(yaml)
+  })
+
+  it("lands update rules as the conventional constant entry after [InitVar]", () => {
+    const p = project()
+    const { specs } = validateProject(p)
+    const card = exportSillyTavernCard(p, specs, { updateRules: "好感度:实质帮助 +1" }) as {
+      data: { character_book: { entries: { comment: string; content: string; constant: boolean }[] } }
+    }
+    const [initvar, rules] = card.data.character_book.entries
+    expect(initvar.comment).toBe("[InitVar]")
+    expect(rules).toMatchObject({ comment: "变量更新规则", content: "好感度:实质帮助 +1", constant: true })
+  })
+})
+
 describe("export file names", () => {
   it("sanitizes the project name per flavor", () => {
     const p = project()

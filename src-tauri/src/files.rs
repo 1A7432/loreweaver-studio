@@ -18,6 +18,18 @@ pub async fn write_text_file(path: String, contents: String) -> Result<(), Strin
         .map_err(|err| format!("writing {path} failed: {err}"))
 }
 
+/// Binary counterpart of `write_text_file` (base64 over the bridge) — the
+/// PNG-card exporter's write path.
+#[tauri::command]
+pub async fn write_binary_file(path: String, base64: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|err| format!("decoding payload for {path} failed: {err}"))?;
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(|err| format!("writing {path} failed: {err}"))
+}
+
 #[derive(Serialize)]
 pub struct ReadFileResult {
     pub name: String,

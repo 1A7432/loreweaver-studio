@@ -11,8 +11,9 @@ import {
 
 export type StudioTab = "card" | "variables" | "worldbook" | "hooks"
 
-/** Studio sub-views: the forge editor, the card splitter, the pack wizard. */
-export type StudioViewName = "forge" | "split" | "pack"
+/** Studio sub-views: the forge editor, the co-creation wizard, the card
+ * splitter, the pack wizard. */
+export type StudioViewName = "forge" | "wizard" | "split" | "pack"
 
 interface StudioState {
   projects: ForgeProject[]
@@ -26,6 +27,8 @@ interface StudioState {
   createProject: (name: string) => void
   /** Land an externally built project (card split / AI draft) and focus it. */
   importProject: (project: ForgeProject) => void
+  /** Replace a project wholesale by uid (the wizard's confirm write-through). */
+  replaceProject: (project: ForgeProject) => void
   deleteProject: (uid: string) => void
   selectProject: (uid: string) => void
   updateProject: (patch: Partial<Omit<ForgeProject, "uid" | "variables" | "lorebook">>) => void
@@ -84,6 +87,11 @@ export const useStudioStore = create<StudioState>()(
             tab: "card",
             view: "forge",
             selectedEntryUid: null,
+          })),
+
+        replaceProject: (project) =>
+          set((s) => ({
+            projects: s.projects.map((p) => (p.uid === project.uid ? touch(project) : p)),
           })),
 
         deleteProject: (uid) =>

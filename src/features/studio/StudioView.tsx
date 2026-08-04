@@ -4,6 +4,7 @@ import { saveTextFile } from "../../lib/files"
 import { useActiveProject, useStudioStore, type StudioTab, type StudioViewName } from "../../store/studio"
 import AiPanel from "./ai/AiPanel"
 import AiSettingsDialog from "./ai/AiSettingsDialog"
+import PresetManagerDialog from "./ai/PresetManagerDialog"
 import { aiReady, useAiStore } from "./ai/provider"
 import CardTab from "./CardTab"
 import { exportFileName, exportNativeBundle, exportSillyTavernCard } from "./exporters"
@@ -12,10 +13,11 @@ import { validateProject } from "./model"
 import PackWizard from "./pack/PackWizard"
 import SplitView from "./split/SplitView"
 import VariablesTab from "./VariablesTab"
+import WizardView from "./wizard/WizardView"
 import WorldbookTab from "./WorldbookTab"
 
 const TABS: StudioTab[] = ["card", "variables", "worldbook", "hooks"]
-const VIEWS: StudioViewName[] = ["forge", "split", "pack"]
+const VIEWS: StudioViewName[] = ["forge", "wizard", "split", "pack"]
 
 export default function StudioView() {
   const { t } = useTranslation()
@@ -32,6 +34,7 @@ export default function StudioView() {
   const [notice, setNotice] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [presetsOpen, setPresetsOpen] = useState(false)
 
   const validation = project ? validateProject(project) : null
 
@@ -70,11 +73,15 @@ export default function StudioView() {
         >
           {t("studio.ai.open")}
         </button>
+        <button type="button" className="ghost-button" onClick={() => setPresetsOpen(true)}>
+          {t("studio.ai.presets.open")}
+        </button>
         <button type="button" className="ghost-button" onClick={() => setSettingsOpen(true)}>
           {t("studio.ai.settings")}
         </button>
       </div>
 
+      {view === "wizard" ? <WizardView /> : null}
       {view === "split" ? <SplitView /> : null}
       {view === "pack" ? <PackWizard /> : null}
 
@@ -177,9 +184,14 @@ export default function StudioView() {
       ) : null}
 
       {aiOpen ? (
-        <AiPanel onClose={() => setAiOpen(false)} onOpenSettings={() => setSettingsOpen(true)} />
+        <AiPanel
+          onClose={() => setAiOpen(false)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenPresets={() => setPresetsOpen(true)}
+        />
       ) : null}
       {settingsOpen ? <AiSettingsDialog onClose={() => setSettingsOpen(false)} /> : null}
+      {presetsOpen ? <PresetManagerDialog onClose={() => setPresetsOpen(false)} /> : null}
     </div>
   )
 }

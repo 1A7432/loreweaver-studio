@@ -47,3 +47,13 @@ without them and get better when they land.
    in `loreweaver-protocol` — the state-frame variable list is `ModuleVariable[]`, and
    that is what the studio's bridge forwards. One-word spec amendment keeps the next
    panel author from hunting for a phantom type.
+
+8. **Keeper-style prompt presets as pack assets.** The studio now imports SillyTavern
+   completion presets as local assets (prompt pool + two-layer enable matrix + sampling
+   - inert `extensions`, zero-loss) and can export the normalized JSON for distribution
+     inside a pack. The engine's single-prompt architecture (6 sections) is the iron rule,
+     so the studio deliberately makes NO injection promises for play: whether/how a shipped
+     preset maps into those sections (and which ST macros, if any, get expanded) is an
+     engine-side decision. Needed from upstream: a documented pack-asset convention (path +
+     manifest flag) and a section-mapping contract before any client can advertise
+     "preset-aware" play.

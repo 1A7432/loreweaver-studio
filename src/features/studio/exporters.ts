@@ -62,6 +62,7 @@ export function exportNativeBundle(project: ForgeProject, specs: ModvarSpec[]): 
     scenario: project.scenario,
     first_mes: project.firstMes,
     mes_example: project.mesExample,
+    alternate_greetings: (project.alternateGreetings ?? []).filter((g) => g.trim().length > 0),
     creator_notes: project.creatorNotes,
     tags: splitKeys(project.tags),
     variables: specs,
@@ -94,6 +95,23 @@ export function buildInitVarContent(specs: ModvarSpec[]): string {
     tree[spec.id] = [spec.default, specDescription(spec)]
   }
   return JSON.stringify(tree, null, 2)
+}
+
+/** Options for the "tavern release" flavor of the ST export — the wizard's
+ * one-click path where the ST card is a first-class deliverable, not a lossy
+ * side export. All default OFF so the forge-toolbar export keeps its shape. */
+export interface StExportOptions {
+  /** Keep keeper-only (secret) lore in the card. In the release flavor that
+   * content IS the card — the author's exegesis and the NSFW core would
+   * otherwise be stripped and the tavern card would ship hollow. */
+  includeSecret?: boolean
+  /** Verbatim [InitVar] source (the wizard's YAML). When set it replaces the
+   * specs-synthesized flat tree, so hierarchy, CJK keys and keeper-side leaves
+   * ride exactly as authored — the shape the MVU ecosystem expects. */
+  initvarSource?: string
+  /** Plain-language variable update rules → one constant worldbook entry
+   * ("变量更新规则"), the MVU-card convention; carried verbatim. */
+  updateRules?: string
 }
 
 function loreToStEntry(entry: ForgeLoreEntry, index: number): Record<string, unknown> {
@@ -131,31 +149,45 @@ function loreToStEntry(entry: ForgeLoreEntry, index: number): Record<string, unk
   }
 }
 
-export function exportSillyTavernCard(project: ForgeProject, specs: ModvarSpec[]): Record<string, unknown> {
+function plainStEntry(index: number, comment: string, content: string): Record<string, unknown> {
+  return {
+    id: index,
+    keys: [],
+    secondary_keys: [],
+    comment,
+    content,
+    constant: true,
+    selective: false,
+    insertion_order: 0,
+    enabled: true,
+    position: "before_char",
+    use_regex: false,
+    extensions: { display_index: index, probability: 100, useProbability: true, selectiveLogic: 0 },
+  }
+}
+
+export function exportSillyTavernCard(
+  project: ForgeProject,
+  specs: ModvarSpec[],
+  options: StExportOptions = {},
+): Record<string, unknown> {
   const entries: Record<string, unknown>[] = []
   let index = 0
-  const initVar = buildInitVarContent(specs)
+  // The wizard's YAML source wins over the specs-synthesized flat tree.
+  const initVar = options.initvarSource?.trim() ? options.initvarSource : buildInitVarContent(specs)
   if (initVar !== "{}") {
-    entries.push({
-      id: index,
-      keys: [],
-      secondary_keys: [],
-      comment: "[InitVar]",
-      content: initVar,
-      constant: true,
-      selective: false,
-      insertion_order: 0,
-      enabled: true,
-      position: "before_char",
-      use_regex: false,
-      extensions: { display_index: index, probability: 100, useProbability: true, selectiveLogic: 0 },
-    })
+    entries.push(plainStEntry(index, "[InitVar]", initVar))
+    index += 1
+  }
+  if (options.updateRules?.trim()) {
+    entries.push(plainStEntry(index, "变量更新规则", options.updateRules))
     index += 1
   }
   for (const entry of project.lorebook) {
     // Secret lore has no safe SillyTavern representation (everything in an ST
-    // card is player-visible); it stays native-only.
-    if (entry.secret) continue
+    // card is player-visible); it stays native-only — unless the release
+    // flavor deliberately opts it in.
+    if (entry.secret && options.includeSecret !== true) continue
     entries.push(loreToStEntry(entry, index))
     index += 1
   }
@@ -173,7 +205,7 @@ export function exportSillyTavernCard(project: ForgeProject, specs: ModvarSpec[]
       creator_notes: project.creatorNotes,
       system_prompt: "",
       post_history_instructions: "",
-      alternate_greetings: [],
+      alternate_greetings: (project.alternateGreetings ?? []).filter((g) => g.trim().length > 0),
       tags: splitKeys(project.tags),
       creator: "",
       character_version: "",

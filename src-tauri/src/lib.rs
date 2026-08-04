@@ -22,6 +22,7 @@ pub fn run() {
             transport_bridge::transport_send,
             transport_bridge::transport_disconnect,
             files::write_text_file,
+            files::write_binary_file,
             files::read_file_base64,
             files::write_pack_source,
             engine::probe_engine_cli,

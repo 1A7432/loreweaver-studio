@@ -39,6 +39,47 @@ export default function CardTab({ project }: { project: ForgeProject }) {
           />
         </label>
       ))}
+      <AlternateGreetings project={project} />
+    </div>
+  )
+}
+
+/** ST `alternate_greetings`: standalone alternate opening scenes. */
+function AlternateGreetings({ project }: { project: ForgeProject }) {
+  const { t } = useTranslation()
+  const updateProject = useStudioStore((s) => s.updateProject)
+  const greetings = project.alternateGreetings ?? []
+  return (
+    <div className="card-alt-greetings">
+      <span className="field-label">{t("studio.card.altGreetings")}</span>
+      {greetings.map((greeting, index) => (
+        <div key={index} className="card-alt-greeting">
+          <textarea
+            rows={4}
+            value={greeting}
+            aria-label={t("studio.card.altGreetingN", { n: index + 1 })}
+            onChange={(e) =>
+              updateProject({
+                alternateGreetings: greetings.map((g, i) => (i === index ? e.target.value : g)),
+              })
+            }
+          />
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => updateProject({ alternateGreetings: greetings.filter((_, i) => i !== index) })}
+          >
+            {t("studio.remove")}
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="ghost-button"
+        onClick={() => updateProject({ alternateGreetings: [...greetings, ""] })}
+      >
+        {t("studio.card.addAltGreeting")}
+      </button>
     </div>
   )
 }
