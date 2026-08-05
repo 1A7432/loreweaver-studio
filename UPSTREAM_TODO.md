@@ -63,3 +63,22 @@ undercount that edge). Decide upstream whether typed specs alone should force wo
    a pack-asset convention (path + manifest flag) so a pack can SHIP a preset through
    `--install`, and the finer marker→section mapping contract if v0's single-fold
    proves too coarse in play.
+
+10. **A world card's PROSE has nowhere to go.** `.import <card> world`
+    (`agent/kp_tools_charcard.py::import_world_card`) consumes the worldbook, the
+    typed specs, the hooks and the persona-derived pregen sheet — and drops
+    `description` / `personality` / `scenario` / `first_mes` / `alternate_greetings`
+    on the floor. For a MODULE card those four fields are the pitch, the keeper's
+    voice, the opening situation and the alternate openings; authors are forced to
+    duplicate all of it into `constant: true` worldbook entries (found the hard way:
+    without that duplication the KP told players "模组文档还没有上传到这场游戏里").
+    Ask: seed a module brief from the world card's prose at import (or document the
+    rule loudly in `docs/cards.md` + the card-forge templates).
+
+11. **`.var` has no keeper-side write.** The surface is `list|expose|hide`, so a
+    keeper cannot move a module variable without asking the KP to call its tool.
+    That makes module-shipped keeper UI (M15 `audience: keeper` panels) unable to
+    offer deterministic state controls — panel `choices` have to send prose the
+    model may or may not honor. Ask: a keeper-gated `.var set <id> <value>` /
+    `.var add <id> <delta>` going through the same `core.modvars` validation the
+    tool path uses.
