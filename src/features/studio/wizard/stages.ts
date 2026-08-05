@@ -189,6 +189,44 @@ export function draftProseFields(draft: StageDraft): {
   return { ai, manual }
 }
 
+/** An empty, editable draft for a stage — the hand-first path. EVERY stage has
+ * one, so the wizard never dead-ends when no AI provider is configured; the
+ * confirm gate below still holds each draft to its stage's requirements. */
+export function blankDraft(stage: StageId, path: WorldPath): StageDraft {
+  switch (stage) {
+    case "worldview":
+      return { stage, path, entries: [] }
+    case "basics":
+      return { stage, name: "", tags: [], description: "" }
+    case "palette":
+      return {
+        stage,
+        base: { name: "", detail: "", derivation: "" },
+        mains: [{ name: "", detail: "", derivation: "" }],
+        accent: null,
+      }
+    case "facets":
+      return {
+        stage,
+        facets: [{ name: "", trigger: "", energy: "", voice: "", body: "", role: "", bleed: "" }],
+      }
+    case "exegesis":
+      return { stage, text: "" }
+    case "wardrobe":
+      return { stage, entries: [] }
+    case "nsfw":
+      return { stage, motivation: "", entries: [] }
+    case "npcs":
+      return { stage, npcs: [] }
+    case "overview":
+      return { stage, content: "" }
+    case "opening":
+      return { stage, firstMes: "", mesExample: "", alternateGreetings: [] }
+    case "variables":
+      return { stage, initvarYaml: "", updateRules: "" }
+  }
+}
+
 /** Why a confirm is refused — i18n keys under studio.wizard.block.*. */
 export type ConfirmBlock =
   | "noDraft"

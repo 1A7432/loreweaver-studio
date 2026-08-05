@@ -71,11 +71,12 @@ export const useStudioStore = create<StudioState>()(
 
         createProject: (name) => {
           const project = newProject(name)
+          // No `view` change on purpose: the forge button already sits in the
+          // forge view, and the wizard's start page must stay in the wizard.
           set((s) => ({
             projects: [...s.projects, project],
             activeUid: project.uid,
             tab: "card",
-            view: "forge",
             selectedEntryUid: null,
           }))
         },

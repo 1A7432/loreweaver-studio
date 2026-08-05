@@ -207,7 +207,7 @@ export default function WizardView() {
         {audit !== null && audit.staleStages.length > 0 ? (
           <p className="studio-notice" role="status">
             {t("studio.wizard.auditStale", {
-              stages: audit.staleStages.map((id) => t(`studio.wizard.stages.${id}.title`)).join(" · "),
+              stages: audit.staleStages.map((id) => t(`studio.wizard.stages.${id}.title`)).join(" / "),
             })}
           </p>
         ) : null}

@@ -21,10 +21,10 @@ import {
   type StageGateContext,
 } from "./schemas"
 import {
+  blankDraft,
   confirmBlocks,
   draftProseFields,
   stageMeta,
-  type StageDraft,
   type StageId,
   type WorldPath,
 } from "./stages"
@@ -32,28 +32,6 @@ import { confirmedDrafts, useWizardStore, type WizardSession } from "./store"
 import { DEFAULT_CONSTANT_BUDGET, demoteAdvice, draftConstantTokens, layerReport } from "./tokens"
 
 const WORLD_PATHS: WorldPath[] = ["real", "small", "large"]
-
-/** An empty, editable draft so handwriting-only stages (exegesis) and
- * hand-first authors can work without an AI pass. */
-function blankDraft(stage: StageId, ctx: StageGateContext): StageDraft | null {
-  switch (stage) {
-    case "exegesis":
-      return { stage, text: "" }
-    case "nsfw":
-      return { stage, motivation: "", entries: [] }
-    case "palette":
-      return {
-        stage,
-        base: { name: "", detail: "", derivation: "" },
-        mains: [{ name: "", detail: "", derivation: "" }],
-        accent: null,
-      }
-    case "worldview":
-      return { stage, path: ctx.path, entries: [] }
-    default:
-      return null
-  }
-}
 
 function LintList({ hits, advisory }: { hits: Map<string, LintHit[]>; advisory: boolean }) {
   const { t } = useTranslation()
@@ -267,12 +245,12 @@ export default function StagePanel({ session, project }: { session: WizardSessio
             {t("studio.wizard.askGuidance")}
           </button>
         ) : null}
-        {draft === null && blankDraft(stage, ctx) !== null ? (
+        {draft === null ? (
           <button
             type="button"
             className="ghost-button"
             disabled={busy}
-            onClick={() => setDraft(session.projectUid, stage, blankDraft(stage, ctx))}
+            onClick={() => setDraft(session.projectUid, stage, blankDraft(stage, session.worldPath))}
           >
             {t("studio.wizard.startBlank")}
           </button>

@@ -24,8 +24,14 @@ export async function saveTextFile(defaultName: string, contents: string): Promi
       // Fall through to the clipboard fallback.
     }
   }
-  await navigator.clipboard.writeText(contents)
-  return "copied"
+  try {
+    await navigator.clipboard.writeText(contents)
+    return "copied"
+  } catch {
+    // Clipboard can reject (unfocused document, denied permission) — surface
+    // a cancelled outcome instead of an unhandled rejection with no notice.
+    return "cancelled"
+  }
 }
 
 /**

@@ -38,9 +38,29 @@ describe("WizardView", () => {
     const uid = useStudioStore.getState().activeUid
     expect(uid).not.toBeNull()
     expect(useWizardStore.getState().sessions[uid ?? ""]).toBeDefined()
+    // Starting must NOT kick the user out of the wizard view (createProject
+    // used to force view:"forge").
+    expect(useStudioStore.getState().view).toBe("wizard")
     // The first stage renders with its guided questions.
     expect(screen.getByRole("heading", { name: "1 · Worldview" })).toBeInTheDocument()
     expect(screen.getByText("Guided questions")).toBeInTheDocument()
+  })
+
+  it("walks basics by hand: blank draft → fill → confirm (no AI configured)", async () => {
+    const user = userEvent.setup()
+    const uid = beginSession()
+    useWizardStore.getState().gotoStage(uid, "basics")
+    render(<WizardView />)
+
+    await user.click(screen.getByRole("button", { name: "Start from a blank draft" }))
+    expect(screen.getByRole("button", { name: "Confirm & land in card" })).toBeDisabled()
+    await user.type(screen.getByLabelText("Name"), "阿理")
+    await user.type(screen.getByLabelText("Description"), "疤从左眉切到颧骨。")
+    await user.click(screen.getByRole("button", { name: "Confirm & land in card" }))
+
+    const project = useStudioStore.getState().projects.find((p) => p.uid === uid)
+    expect(project?.name).toBe("阿理")
+    expect(project?.description).toBe("疤从左眉切到颧骨。")
   })
 
   it("walks worldview from a blank draft to a confirmed worldbook entry", async () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { newProject, validateProject } from "../model"
 import { applyStage } from "./apply"
 import { auditContract, emptyContract } from "./contract"
-import { confirmBlocks, type StageDraft, type WizardLoreDraft } from "./stages"
+import { blankDraft, confirmBlocks, STAGE_ORDER, type StageDraft, type WizardLoreDraft } from "./stages"
 
 function loreDraft(slot: string, patch: Partial<WizardLoreDraft> = {}): WizardLoreDraft {
   return {
@@ -153,6 +153,25 @@ describe("applyStage: fields, palette assembly, variables", () => {
       contract.slots.find((s) => s.slot === `var:理.好感度`)?.target,
     )
     expect(again.project.variables[0].defaultValue).toBe("10")
+  })
+})
+
+describe("blankDraft: the hand-first path exists for EVERY stage", () => {
+  it("returns a matching editable draft per stage (no AI required anywhere)", () => {
+    for (const stage of STAGE_ORDER) {
+      const draft = blankDraft(stage, "large")
+      expect(draft.stage).toBe(stage)
+    }
+  })
+
+  it("keeps the worldview path and stays behind each stage's confirm gate", () => {
+    const wv = blankDraft("worldview", "real")
+    expect(wv.stage === "worldview" && wv.path).toBe("real")
+    // Content-bearing stages block until filled; empty-is-valid stages don't.
+    expect(confirmBlocks(blankDraft("basics", "small")).length).toBeGreaterThan(0)
+    expect(confirmBlocks(blankDraft("variables", "small"))).toContain("yamlUnparseable")
+    expect(confirmBlocks(blankDraft("npcs", "small"))).toEqual([])
+    expect(confirmBlocks(blankDraft("wardrobe", "small"))).toEqual([])
   })
 })
 
