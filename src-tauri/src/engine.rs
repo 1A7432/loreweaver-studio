@@ -63,15 +63,35 @@ pub async fn probe_engine_cli(engine_repo_dir: Option<String>) -> Vec<EngineCand
     if let Some(repo) = engine_repo_dir {
         let repo_path = Path::new(&repo);
         if repo_path.join("app.py").is_file() {
-            for python in ["python3", "python"] {
-                if executable_in_path(python).is_some() {
-                    candidates.push(EngineCandidate {
-                        kind: "python-module".to_owned(),
-                        program: python.to_owned(),
-                        args: vec!["-m".to_owned(), "app".to_owned()],
-                        cwd: Some(repo),
-                    });
-                    break;
+            // The repo's own virtualenv carries the engine's dependencies; a
+            // bare system python almost never does (found live: `python3 -m
+            // app --pack` died with a dependency traceback while the checkout
+            // had a perfectly good .venv). Prefer the venv interpreter.
+            let venv_pythons = [
+                repo_path.join(".venv").join("bin").join("python"),
+                repo_path.join(".venv").join("Scripts").join("python.exe"),
+                repo_path.join("venv").join("bin").join("python"),
+                repo_path.join("venv").join("Scripts").join("python.exe"),
+            ];
+            let venv = venv_pythons.iter().find(|python| python.is_file());
+            if let Some(python) = venv {
+                candidates.push(EngineCandidate {
+                    kind: "python-module".to_owned(),
+                    program: python.to_string_lossy().into_owned(),
+                    args: vec!["-m".to_owned(), "app".to_owned()],
+                    cwd: Some(repo.clone()),
+                });
+            } else {
+                for python in ["python3", "python"] {
+                    if executable_in_path(python).is_some() {
+                        candidates.push(EngineCandidate {
+                            kind: "python-module".to_owned(),
+                            program: python.to_owned(),
+                            args: vec!["-m".to_owned(), "app".to_owned()],
+                            cwd: Some(repo),
+                        });
+                        break;
+                    }
                 }
             }
         }
