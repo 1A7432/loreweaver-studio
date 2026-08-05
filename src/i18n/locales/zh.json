@@ -74,6 +74,86 @@
   "log": {
     "system": "系统"
   },
+  "play": {
+    "back": "← 菜单",
+    "busy": "处理中…",
+    "menuButton": "菜单",
+    "menu": {
+      "label": "主菜单",
+      "table": "牌桌「{{room}}」",
+      "role": {
+        "keeper": "守秘人",
+        "player": "调查员"
+      },
+      "enterGame": "进入游戏",
+      "demo": "试玩示例冒险",
+      "demoAction": "开始内置示例冒险",
+      "character": "我的角色",
+      "settings": "设置",
+      "keeperSection": "── 守秘人 ──",
+      "keys": "房间与邀请",
+      "module": "导入模组",
+      "rules": "规则系统",
+      "skills": "KP 技能",
+      "model": "模型与配置",
+      "quit": "断开连接"
+    },
+    "keys": {
+      "name": "名字",
+      "room": "房间",
+      "role": "角色",
+      "key": "密钥",
+      "mint": "签发邀请",
+      "mintedOnce": "给 {{name}} 的邀请——只显示这一次，现在复制：",
+      "copy": "复制",
+      "copied": "已复制 ✓",
+      "delete": "删除",
+      "empty": "还没有密钥——在上方签发一个邀请。"
+    },
+    "model": {
+      "provider": "服务商",
+      "ready": "●",
+      "chatModel": "对话模型",
+      "listModels": "拉取模型列表",
+      "baseUrl": "Base URL（可选）",
+      "apiKey": "API 密钥（只写）",
+      "keyMasked": "已保存：{{masked}}",
+      "apply": "应用",
+      "demoActive": "离线示例守秘人正在运行——应用模型后房间会切换过去。"
+    },
+    "module": {
+      "path": "服务器上的模组路径",
+      "pathPlaceholder": "packs/blackpool.lwpack 或源目录",
+      "install": "安装（.module）",
+      "sent": "已提交——结果会以系统消息出现在游戏日志里。",
+      "describe": "或者描述一个模组，让锻造炉来写",
+      "describePlaceholder": "一夜完结的 CoC 灯塔迷雾本…",
+      "generate": "生成并安装",
+      "generateOk": "{{name}}——{{detail}}",
+      "generateError": "生成失败：{{error}}"
+    },
+    "rules": {
+      "builtIn": "内置",
+      "empty": "服务器未报告任何规则系统。"
+    },
+    "skills": {
+      "empty": "尚未安装守秘人技能。"
+    },
+    "character": {
+      "none": "还没有角色——守秘人指派或模组创建后会出现在这里。",
+      "readonlyHint": "只读卡面。建卡与加点目前在终端客户端完成。"
+    },
+    "settings": {
+      "themeHint": "与终端客户端 F1–F5 同一套、同一顺序的桌面配色。Lamplight 是 Loreweaver 的识别色。",
+      "themes": {
+        "lamplight": "灯下牌桌",
+        "amber": "琥珀",
+        "df16": "DF-16",
+        "phosphor": "磷光",
+        "paperwhite": "纸白"
+      }
+    }
+  },
   "studio": {
     "project": "项目",
     "noProjects": "还没有项目",

@@ -8,6 +8,7 @@ import {
   type TransportEvent,
   type TransportStatus,
 } from "../lib/transport"
+import { useAdminStore } from "./admin"
 import { useSessionStore } from "./session"
 
 /** Tolerate the ticket shapes people actually paste: the engine writes
@@ -80,6 +81,8 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
       set({ welcome: frame })
       return
     }
+    // Keeper-admin replies feed the admin store; they never reach the chronicle.
+    if (useAdminStore.getState().ingest(frame)) return
     useSessionStore.getState().ingest(frame)
   },
 }))

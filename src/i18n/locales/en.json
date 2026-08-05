@@ -74,6 +74,86 @@
   "log": {
     "system": "System"
   },
+  "play": {
+    "back": "← Menu",
+    "busy": "Working…",
+    "menuButton": "Menu",
+    "menu": {
+      "label": "Main menu",
+      "table": "Table “{{room}}”",
+      "role": {
+        "keeper": "Keeper",
+        "player": "Investigator"
+      },
+      "enterGame": "Enter game",
+      "demo": "Play sample adventure",
+      "demoAction": "Start the built-in sample adventure",
+      "character": "My character",
+      "settings": "Settings",
+      "keeperSection": "── Keeper ──",
+      "keys": "Rooms & invites",
+      "module": "Import module",
+      "rules": "Rule systems",
+      "skills": "KP skills",
+      "model": "Model / config",
+      "quit": "Disconnect"
+    },
+    "keys": {
+      "name": "Name",
+      "room": "Room",
+      "role": "Role",
+      "key": "Key",
+      "mint": "Mint invite",
+      "mintedOnce": "Invite for {{name}} — shown once, copy it now:",
+      "copy": "Copy",
+      "copied": "Copied ✓",
+      "delete": "Delete",
+      "empty": "No keys yet — mint an invite above."
+    },
+    "model": {
+      "provider": "Provider",
+      "ready": "●",
+      "chatModel": "Chat model",
+      "listModels": "Fetch model list",
+      "baseUrl": "Base URL (optional)",
+      "apiKey": "API key (write-only)",
+      "keyMasked": "saved: {{masked}}",
+      "apply": "Apply",
+      "demoActive": "The offline sample Keeper is running — applying a model switches the room to it."
+    },
+    "module": {
+      "path": "Module path on the server",
+      "pathPlaceholder": "packs/blackpool.lwpack or a source dir",
+      "install": "Install (.module)",
+      "sent": "Sent — the result lands as a system line in the game log.",
+      "describe": "Or describe a module for the forge to write",
+      "describePlaceholder": "A one-night CoC scenario in a fog-bound lighthouse…",
+      "generate": "Generate & install",
+      "generateOk": "{{name}} — {{detail}}",
+      "generateError": "Generation failed: {{error}}"
+    },
+    "rules": {
+      "builtIn": "built-in",
+      "empty": "No rule systems reported."
+    },
+    "skills": {
+      "empty": "No keeper skills installed."
+    },
+    "character": {
+      "none": "No character yet — it appears once the Keeper assigns or the module creates one.",
+      "readonlyHint": "Read-only sheet. Creation and point-buy run in the terminal client for now."
+    },
+    "settings": {
+      "themeHint": "The table's palettes, same order as the TUI's F1–F5. Lamplight is the Loreweaver identity.",
+      "themes": {
+        "lamplight": "Lamplight",
+        "amber": "Amber",
+        "df16": "DF-16",
+        "phosphor": "Phosphor",
+        "paperwhite": "Paperwhite"
+      }
+    }
+  },
   "studio": {
     "project": "Project",
     "noProjects": "No projects yet",

@@ -1,19 +1,60 @@
-import { useState, type FormEvent } from "react"
+// Play mode: connect screen → MAIN MENU (the TUI flow — the game is one menu
+// item among character/settings and the keeper screens) → the chronicle or a
+// management screen. Esc anywhere below the menu returns to it.
+
+import { useEffect, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
 import { useConnectionStore } from "../../store/connection"
+import CharacterScreen from "./screens/CharacterScreen"
+import KeysScreen from "./screens/KeysScreen"
+import MainMenuScreen from "./screens/MainMenuScreen"
+import ModelScreen from "./screens/ModelScreen"
+import ModuleScreen from "./screens/ModuleScreen"
+import RulesScreen from "./screens/RulesScreen"
+import SettingsScreen from "./screens/SettingsScreen"
+import SkillsScreen from "./screens/SkillsScreen"
 import SessionView from "./SessionView"
+import StatusPill from "./StatusPill"
 
-function StatusPill() {
-  const { t } = useTranslation()
-  const status = useConnectionStore((s) => s.status)
-  const attempt = useConnectionStore((s) => s.attempt)
-  return (
-    <span className={`status-pill status-${status}`} data-status={status}>
-      <span className="status-dot" aria-hidden="true" />
-      {t(`connect.status.${status}`)}
-      {status === "reconnecting" && attempt > 0 ? ` (${t("connect.attempt", { n: attempt })})` : null}
-    </span>
-  )
+export type PlayScreen =
+  "menu" | "game" | "character" | "settings" | "keys" | "module" | "rules" | "skills" | "model"
+
+function OnlineView() {
+  const [screen, setScreen] = useState<PlayScreen>("menu")
+
+  // Esc backs out of any screen to the menu — the TUI's navigation spine.
+  // The game screen keeps Esc too (its input is a plain textarea; Esc there
+  // is not otherwise meaningful).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setScreen("menu")
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  const back = () => setScreen("menu")
+
+  switch (screen) {
+    case "menu":
+      return <MainMenuScreen onNavigate={setScreen} />
+    case "game":
+      return <SessionView onMenu={back} />
+    case "character":
+      return <CharacterScreen onBack={back} />
+    case "settings":
+      return <SettingsScreen onBack={back} />
+    case "keys":
+      return <KeysScreen onBack={back} />
+    case "module":
+      return <ModuleScreen onBack={back} />
+    case "rules":
+      return <RulesScreen onBack={back} />
+    case "skills":
+      return <SkillsScreen onBack={back} />
+    case "model":
+      return <ModelScreen onBack={back} />
+  }
 }
 
 export default function PlayView() {
@@ -29,7 +70,7 @@ export default function PlayView() {
   // The session stays visible through reconnects; the form only returns once
   // the transport has given up (offline) or is dialing the very first time.
   if (status === "online" || status === "reconnecting") {
-    return <SessionView />
+    return <OnlineView />
   }
 
   const offline = status === "offline"

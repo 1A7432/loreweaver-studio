@@ -1,38 +1,63 @@
 /* ============================================================
    Loreweaver Studio — design tokens
-   Dark "chronicle" theme: the narrative column reads like a
-   typeset session record; instrumentation stays quiet around it.
+   The palette IS the TUI's (src/lib/themes.ts, a port of the TUI client's
+   themes): `--lw-*` are the raw theme tokens — lamplight defaults here so the
+   first paint is on-brand; applyTheme() overrides them inline for the other
+   F1–F5 palettes. Every working variable below is DERIVED from the raw tokens
+   with color-mix, so nothing else in this file knows which theme is active.
    ============================================================ */
 
 :root {
   color-scheme: dark;
 
-  --bg: #131118;
-  --bg-raised: #1a1722;
-  --bg-inset: #0e0c13;
-  --border: #2a2536;
-  --border-soft: #211d2c;
+  /* raw TUI theme tokens (lamplight — the Loreweaver identity palette) */
+  --lw-bg: #17130e;
+  --lw-fg: #e7d8b5;
+  --lw-dim: #8a7b5e;
+  --lw-kp: #f2e4bc;
+  --lw-player: #7fa8b8;
+  --lw-npc: #c79b74;
+  --lw-system: #9c8a66;
+  --lw-crit: #f0c46a;
+  --lw-extreme: #7fb8a3;
+  --lw-hard: #5b9a86;
+  --lw-success: #5b9a86;
+  --lw-fail: #b8894a;
+  --lw-fumble: #a2432e;
+  --lw-hp-full: #5b9a86;
+  --lw-hp-low: #a2432e;
+  --lw-san-full: #6fa5b0;
+  --lw-san-low: #9b6a8c;
+  --lw-border: #4a3f30;
+  --lw-accent: #d19a3e;
 
-  --ink: #e9e4d8;
-  --ink-dim: #968fa2;
-  --ink-faint: #6b6577;
+  /* derived working variables */
+  --bg: var(--lw-bg);
+  --bg-raised: color-mix(in srgb, var(--lw-bg) 92%, var(--lw-fg) 8%);
+  --bg-inset: color-mix(in srgb, var(--lw-bg) 94%, black 6%);
+  --border: var(--lw-border);
+  --border-soft: color-mix(in srgb, var(--lw-border) 55%, var(--lw-bg) 45%);
 
-  --accent: #9d8cff;
-  --accent-strong: #b6a9ff;
-  --accent-ink: #131118;
+  --ink: var(--lw-fg);
+  --ink-dim: var(--lw-dim);
+  --ink-faint: color-mix(in srgb, var(--lw-dim) 65%, var(--lw-bg) 35%);
 
-  --danger: #e0574f;
-  --warn: #e0b45c;
-  --ok: #7fd1a8;
+  --accent: var(--lw-accent);
+  --accent-strong: color-mix(in srgb, var(--lw-accent) 70%, var(--lw-fg) 30%);
+  --accent-ink: var(--lw-bg);
 
-  /* dice rank ramp (fumble → crit) */
-  --rank-fumble: #e0574f;
-  --rank-fail: #d98e6a;
-  --rank-neutral: #968fa2;
-  --rank-success: #93b872;
-  --rank-hard: #6fb8ad;
-  --rank-extreme: #64a9d9;
-  --rank-crit: #e8bf59;
+  --danger: var(--lw-fumble);
+  --warn: var(--lw-fail);
+  --ok: var(--lw-success);
+
+  /* dice rank ramp (fumble → crit) — straight from the theme */
+  --rank-fumble: var(--lw-fumble);
+  --rank-fail: var(--lw-fail);
+  --rank-neutral: var(--lw-dim);
+  --rank-success: var(--lw-success);
+  --rank-hard: var(--lw-hard);
+  --rank-extreme: var(--lw-extreme);
+  --rank-crit: var(--lw-crit);
 
   --font-ui:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
@@ -362,19 +387,19 @@ body {
 }
 
 .speaker-kp {
-  --rail: var(--accent);
+  --rail: var(--lw-kp);
 }
 
 .speaker-player {
-  --rail: #7a7466;
+  --rail: var(--lw-player);
 }
 
 .speaker-npc {
-  --rail: #6fb8ad;
+  --rail: var(--lw-npc);
 }
 
 .speaker-system {
-  --rail: var(--border);
+  --rail: var(--lw-system);
 }
 
 .entry-speaker {
@@ -386,11 +411,11 @@ body {
 }
 
 .speaker-kp .entry-speaker {
-  color: var(--accent-strong);
+  color: var(--lw-kp);
 }
 
 .speaker-npc .entry-speaker {
-  color: #6fb8ad;
+  color: var(--lw-npc);
   text-transform: none;
 }
 
@@ -723,15 +748,15 @@ body {
 }
 
 .meter-hp {
-  --meter-color: #c96a5e;
+  --meter-color: var(--lw-hp-full);
 }
 
 .meter-mp {
-  --meter-color: #7d94d8;
+  --meter-color: var(--lw-player);
 }
 
 .meter-san {
-  --meter-color: #8b6fc9;
+  --meter-color: var(--lw-san-full);
 }
 
 .meter-context {
@@ -2421,4 +2446,254 @@ body {
 
 .card-alt-greeting textarea {
   flex: 1;
+}
+
+/* --- Play: main menu & management screens (TUI-aligned) --- */
+
+.play-menu {
+  display: flex;
+  gap: 16px;
+  padding: 24px;
+  flex: 1;
+  min-height: 0;
+  align-items: flex-start;
+}
+
+.play-menu-list {
+  flex: 1;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.play-menu-table {
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.play-menu-who {
+  color: var(--ink-dim);
+  font-weight: 400;
+}
+
+.play-menu-section {
+  color: var(--lw-fumble);
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+
+.play-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.play-menu-item .play-menu-cursor {
+  visibility: hidden;
+}
+
+.play-menu-item:hover,
+.play-menu-item:focus-visible {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.play-menu-item:hover .play-menu-cursor,
+.play-menu-item:focus-visible .play-menu-cursor {
+  visibility: visible;
+}
+
+.play-menu-quit {
+  margin-top: 16px;
+}
+
+.play-screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 16px 24px;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.play-screen-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.play-screen-head h2 {
+  margin: 0;
+}
+
+.play-busy {
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.play-screen-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.play-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.play-form .field {
+  width: 100%;
+}
+
+.play-mint-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.play-minted {
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.play-minted p {
+  margin: 0;
+  color: var(--ok);
+}
+
+.play-minted-key {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.play-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+
+.play-table th,
+.play-table td {
+  border: 1px solid var(--border-soft);
+  padding: 5px 10px;
+  text-align: left;
+}
+
+.play-table th {
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+
+.play-attr-name {
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.play-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.play-skill-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.play-skill-name {
+  font-weight: 600;
+}
+
+.play-skill-desc {
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.play-character h3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.play-character-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 420px;
+  margin-bottom: 10px;
+}
+
+.play-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.play-theme-card {
+  border: 2px solid;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.play-theme-card.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.play-theme-slot {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.play-theme-name {
+  font-weight: 600;
+}
+
+.play-theme-swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.play-theme-swatches i {
+  width: 16px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
 }
