@@ -14,6 +14,7 @@ use std::time::Duration;
 use crate::secrets::read_secret;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+const SECRET_READ_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_ERROR_BODY_CHARS: usize = 600;
 
 #[derive(Deserialize, Clone)]
@@ -192,9 +193,22 @@ pub async fn llm_chat(
     messages: Vec<ChatMessage>,
 ) -> Result<String, String> {
     let account = config.secret_account.clone();
-    let key = tauri::async_runtime::spawn_blocking(move || read_secret(&account))
-        .await
-        .map_err(|err| err.to_string())??;
+    // The keyring read can block INDEFINITELY: macOS re-prompts for keychain
+    // authorization whenever the binary changes (every dev rebuild), and that
+    // system dialog is easy to miss — without this timeout the invoke never
+    // resolves and the UI shows a busy state forever (observed live: an
+    // 18-minute "drafting…" that was really an unanswered keychain prompt).
+    let key = tokio::time::timeout(
+        SECRET_READ_TIMEOUT,
+        tauri::async_runtime::spawn_blocking(move || read_secret(&account)),
+    )
+    .await
+    .map_err(|_| {
+        "credential store did not respond — look for an OS keychain \
+         authorization dialog (dev builds re-prompt after every rebuild)"
+            .to_owned()
+    })?
+    .map_err(|err| err.to_string())??;
     let base = trimmed_base(&config.base_url);
 
     match config.kind.as_str() {

@@ -94,12 +94,31 @@ function currentConfig(sampling?: LlmSamplingParams): LlmProviderConfig {
   }
 }
 
+/** Hard ceiling on ONE model call. The Rust side already timeouts the HTTP
+ * request (180s) and the keychain read (60s), but a hung invoke must never
+ * leave the UI in a busy state forever — this is the belt to those braces. */
+export const CHAT_CALL_TIMEOUT_MS = 240_000
+
 export async function chatOnce(
   system: string,
   messages: LlmMessage[],
   sampling?: LlmSamplingParams,
 ): Promise<string> {
-  return llmChat(currentConfig(sampling), system, messages)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new Error(
+          "LLM call timed out — check for an OS keychain authorization dialog and the provider endpoint",
+        ),
+      )
+    }, CHAT_CALL_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([llmChat(currentConfig(sampling), system, messages), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export interface DraftLoopResult<T> {
