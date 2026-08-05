@@ -11,7 +11,7 @@ them and delete each entry as it's consumed. Item 8 remains the one open ask.
 
 1. ✅ **Machine-readable `--pack` output** — `--pack <dir> [--out <file>] --json` emits
    exactly ONE JSON object on stdout: `{"ok": true, "path", "id", "version", "sha256",
-   "trust": {...}}` on success, `{"ok": false, "error"}` on failure (exit 1). Human
+"trust": {...}}` on success, `{"ok": false, "error"}` on failure (exit 1). Human
    lines (including the trust card) stay on stderr. The pack wizard can render the
    trust card natively now.
 
@@ -35,7 +35,7 @@ them and delete each entry as it's consumed. Item 8 remains the one open ask.
    render "claimable characters" right after `--install` + world import.
 
 6. ✅ **Pack-relative `.import`** — the shipped syntax is `.import <packId>/<relative
-   path>` (no `pack:` prefix): resolves against the newest installed
+path>` (no `pack:` prefix): resolves against the newest installed
    `data_dir/packs/<id>@<version>/`, traversal-confined, falling through to the
    literal path when not pack-shaped.
 
