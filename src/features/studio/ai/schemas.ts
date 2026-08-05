@@ -4,7 +4,7 @@
 // the hand-authored editor uses — a draft that fails never reaches a project;
 // the failure list goes back to the model for a retry instead.
 
-import { asText, isRecord } from "../split/charcard"
+import { asText, isRecord, listOfStrings } from "../coerce"
 import {
   newLoreEntry,
   newProject,
@@ -60,17 +60,6 @@ export function extractJsonBlock(text: string): unknown {
     }
   }
   return null
-}
-
-function listOfStrings(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(asText).filter((item) => item.length > 0)
-  const text = asText(value)
-  return text
-    ? text
-        .split(/[\n,]/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-    : []
 }
 
 function numberish(value: unknown): string {

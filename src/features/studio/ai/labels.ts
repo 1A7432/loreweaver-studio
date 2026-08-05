@@ -3,7 +3,7 @@
 // per-entry (a bad entry is dropped, the draft keeps its previous values).
 
 import { MAX_LABEL_LEN, VAR_ID_RE } from "../model"
-import { asText, isRecord } from "../split/charcard"
+import { asText, isRecord } from "../coerce"
 import type { PromotionDraft } from "../split/promote"
 import { draftWithRetries } from "./provider"
 import { VARIABLE_LABELS_SYSTEM } from "./prompts"

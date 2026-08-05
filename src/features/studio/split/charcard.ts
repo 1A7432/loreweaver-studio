@@ -32,26 +32,11 @@ export interface StCharacterCard {
   raw: Record<string, unknown>
 }
 
-export function asText(value: unknown): string {
-  if (value === null || value === undefined) return ""
-  if (typeof value === "string") return value
-  if (typeof value === "number" || typeof value === "boolean") return String(value)
-  // The engine `str()`s exotic values; for the one shape seen in the wild
-  // (`creator_notes_multilingual` maps) pick a readable locale instead.
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>
-    for (const locale of ["en", "zh"]) {
-      if (typeof record[locale] === "string") return record[locale]
-    }
-    const first = Object.values(record).find((v) => typeof v === "string")
-    if (typeof first === "string") return first
-  }
-  return ""
-}
+// The tolerant-read primitives moved to ../coerce (they grew studio-wide
+// consumers); re-exported here so the mirror keeps its historical surface.
+import { asText, isRecord } from "../coerce"
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
+export { asText, isRecord }
 
 /** Mirror of `_normalize_card`: v2/v3 unwrap via `data`, tolerant field reads. */
 export function normalizeCard(raw: unknown): StCharacterCard {

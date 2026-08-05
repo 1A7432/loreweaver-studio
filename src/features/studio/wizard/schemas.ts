@@ -6,7 +6,7 @@
 // "derivation" field and the nsfw gate NEVER reads "motivation" — even a model
 // that ignores the prompt cannot land words in the author's handwritten slots.
 
-import { asText, isRecord } from "../split/charcard"
+import { asText, isRecord, listOfStrings } from "../coerce"
 import { flattenLeaves, parseInitvar } from "../split/mvu"
 import { promoteLeaves } from "../split/promote"
 import type {
@@ -29,17 +29,6 @@ export interface StageGateContext {
 export interface GateResult {
   value: StageDraft | null
   problems: string[]
-}
-
-function listOfStrings(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(asText).filter((item) => item.length > 0)
-  const text = asText(value)
-  return text
-    ? text
-        .split(/[\n,，、]/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-    : []
 }
 
 /** Coerce one worldbook-entry draft; `layer` defaults from the keys (has

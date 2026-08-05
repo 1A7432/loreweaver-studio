@@ -7,7 +7,7 @@
 // parser in charcard.ts is the round-trip oracle in tests.
 
 import { bytesToBase64 } from "../../lib/native"
-import { isRecord } from "./split/charcard"
+import { isRecord } from "./coerce"
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const CARD_KEYWORDS = new Set(["chara", "ccv3"])
