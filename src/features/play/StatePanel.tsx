@@ -36,11 +36,10 @@ function CharacterCard({ character }: { character: CharacterState }) {
   )
 }
 
-/** v1.7-additive optional field the shared package has not typed yet (see
- * PROTOCOL_NOTES.md): on a KEEPER connection, unexposed variables arrive
- * flagged `hidden:true` instead of being filtered out. */
+/** On a KEEPER connection, unexposed variables arrive flagged `hidden:true`
+ * instead of being filtered out (typed since protocol 1.9). */
 function isHidden(variable: ModuleVariable): boolean {
-  return (variable as ModuleVariable & { hidden?: boolean }).hidden === true
+  return variable.hidden === true
 }
 
 /**
