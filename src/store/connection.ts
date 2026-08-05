@@ -10,6 +10,18 @@ import {
 } from "../lib/transport"
 import { useSessionStore } from "./session"
 
+/** Tolerate the ticket shapes people actually paste: the engine writes
+ * `ticket=endpoint…` into iroh-ticket.txt, its console announce line reads
+ * `Ticket：endpoint…`, and terminals wrap long tickets across lines. The real
+ * ticket is the bare `endpoint…` string — slice from that marker when present
+ * and strip all whitespace; anything else passes through for the transport's
+ * own error message. */
+export function sanitizeTicket(raw: string): string {
+  const flat = raw.replace(/\s+/g, "")
+  const at = flat.toLowerCase().indexOf("endpoint")
+  return at > 0 ? flat.slice(at) : flat
+}
+
 interface ConnectionState {
   status: TransportStatus
   attempt: number
@@ -35,7 +47,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
     set({ status: "connecting", attempt: 0, lastError: null, welcome: null })
     useSessionStore.getState().clear()
     try {
-      await transportConnect(params)
+      await transportConnect({ ...params, ticket: sanitizeTicket(params.ticket), key: params.key.trim() })
     } catch (err) {
       set({ status: "offline", lastError: String(err) })
     }

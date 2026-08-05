@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import { useConnectionStore } from "./connection"
+import { sanitizeTicket, useConnectionStore } from "./connection"
 
 const WELCOME = {
   type: "welcome",
@@ -13,6 +13,21 @@ const WELCOME = {
 function reset() {
   useConnectionStore.setState({ status: "offline", attempt: 0, lastError: null, welcome: null })
 }
+
+describe("sanitizeTicket", () => {
+  it("accepts every real-world paste shape the engine produces", () => {
+    // Bare ticket: untouched.
+    expect(sanitizeTicket("endpointac5qv3krex")).toBe("endpointac5qv3krex")
+    // iroh-ticket.txt env-file line (this exact shape failed in live testing).
+    expect(sanitizeTicket("ticket=endpointac5qv3krex\n")).toBe("endpointac5qv3krex")
+    // Copied console announce line, CJK label included.
+    expect(sanitizeTicket("  Ticket：endpointac5qv3krex")).toBe("endpointac5qv3krex")
+    // Terminal-wrapped ticket with an embedded newline.
+    expect(sanitizeTicket("endpointac5qv3\nkrex")).toBe("endpointac5qv3krex")
+    // Garbage passes through for the transport's own error.
+    expect(sanitizeTicket("not-a-ticket")).toBe("not-a-ticket")
+  })
+})
 
 describe("connection store", () => {
   beforeEach(reset)
