@@ -1,6 +1,7 @@
 mod asset_cache;
 mod engine;
 mod files;
+mod host_local;
 mod llm;
 mod panel_serve;
 mod secrets;
@@ -12,6 +13,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(transport_bridge::TransportState::default())
         .manage(panel_serve::PanelServeState::default())
+        .manage(host_local::HostLocalState::default())
         // Tier-2 panel iframes load from this opaque-origin static scheme;
         // it serves only registered, hash-verified panel assets.
         .register_uri_scheme_protocol("panel", |ctx, request| {
@@ -27,6 +29,9 @@ pub fn run() {
             files::write_pack_source,
             engine::probe_engine_cli,
             engine::run_engine_cli,
+            host_local::host_local_start,
+            host_local::host_local_stop,
+            host_local::host_local_status,
             secrets::secret_set,
             secrets::secret_exists,
             secrets::secret_delete,

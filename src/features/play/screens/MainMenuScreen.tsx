@@ -6,6 +6,7 @@
 import { useTranslation } from "react-i18next"
 import { transportSend } from "../../../lib/transport"
 import { useConnectionStore } from "../../../store/connection"
+import { quitTable } from "../../../store/hostLocal"
 import StatePanel from "../StatePanel"
 import StatusPill from "../StatusPill"
 import type { PlayScreen } from "../PlayView"
@@ -20,7 +21,6 @@ interface MenuRow {
 export default function MainMenuScreen({ onNavigate }: { onNavigate: (screen: PlayScreen) => void }) {
   const { t } = useTranslation()
   const welcome = useConnectionStore((s) => s.welcome)
-  const disconnect = useConnectionStore((s) => s.disconnect)
   const isKeeper = welcome?.you.role === "keeper"
   const hasDemo = isKeeper && (welcome?.features ?? []).includes("demo")
 
@@ -82,7 +82,7 @@ export default function MainMenuScreen({ onNavigate }: { onNavigate: (screen: Pl
           </div>
         ))}
         <div className="play-menu-quit">
-          <button type="button" className="play-menu-item" onClick={() => void disconnect()}>
+          <button type="button" className="play-menu-item" onClick={() => void quitTable()}>
             <span className="play-menu-cursor" aria-hidden="true">
               ⚄
             </span>

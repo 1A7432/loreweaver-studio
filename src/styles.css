@@ -2697,3 +2697,46 @@ body {
   border-radius: 2px;
   display: inline-block;
 }
+
+/* --- One-click local hosting (the TUI's green button) --- */
+
+.host-local {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 14px;
+}
+
+.host-local-button {
+  background: var(--ok);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: 6px;
+  padding: 10px 18px;
+  font: 600 14px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.host-local-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.host-local-log {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.host-local-line {
+  font: 11px/1.5 var(--font-mono);
+  color: var(--ink-dim);
+  word-break: break-all;
+}

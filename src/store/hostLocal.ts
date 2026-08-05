@@ -1,0 +1,96 @@
+// One-click local hosting state. `start` brings the server up through the
+// Rust bridge, the event stream lands here, and the moment the ticket +
+// auto-minted keeper key arrive we dial the connection — the TUI's "Host
+// locally & play" in one press. Quitting the table stops the server we
+// started (and only then; reconnects never kill it).
+
+import { create } from "zustand"
+import { hostLocalStart, hostLocalStop, onHostLocalEvent, type HostLocalEvent } from "../lib/hostLocal"
+import { isTauri } from "../lib/transport"
+import { useAiStore } from "../features/studio/ai/provider"
+import { useConnectionStore } from "./connection"
+
+const MAX_LOG_LINES = 400
+
+export type HostLocalPhase = "idle" | "starting" | "ready" | "error"
+
+interface HostLocalState {
+  phase: HostLocalPhase
+  log: string[]
+  error: string | null
+  /** Whether the CURRENT connection came from our own local server. */
+  hostedSession: boolean
+
+  start: () => Promise<void>
+  stop: () => Promise<void>
+  ingest: (event: HostLocalEvent) => void
+}
+
+let subscribed = false
+
+async function subscribeOnce(ingest: (event: HostLocalEvent) => void): Promise<void> {
+  if (subscribed) return
+  subscribed = true
+  await onHostLocalEvent(ingest)
+}
+
+export const useHostLocalStore = create<HostLocalState>((set, get) => ({
+  phase: "idle",
+  log: [],
+  error: null,
+  hostedSession: false,
+
+  start: async () => {
+    if (!isTauri()) {
+      set({ phase: "error", error: "local hosting needs the desktop app" })
+      return
+    }
+    if (get().phase === "starting") return
+    set({ phase: "starting", log: [], error: null, hostedSession: false })
+    try {
+      await subscribeOnce(get().ingest)
+      await hostLocalStart(useAiStore.getState().engineRepoDir.trim() || undefined)
+    } catch (cause) {
+      set({ phase: "error", error: cause instanceof Error ? cause.message : String(cause) })
+    }
+  },
+
+  stop: async () => {
+    try {
+      await hostLocalStop()
+    } catch {
+      // Nothing to stop is fine.
+    }
+    set({ phase: "idle", hostedSession: false })
+  },
+
+  ingest: (event) => {
+    switch (event.kind) {
+      case "log":
+        set((s) => ({ log: [...s.log.slice(-(MAX_LOG_LINES - 1)), event.text] }))
+        return
+      case "ready":
+        set({ phase: "ready", hostedSession: true })
+        void useConnectionStore.getState().connect({ ticket: event.ticket, key: event.key })
+        return
+      case "exit":
+        set((s) =>
+          s.phase === "starting"
+            ? { phase: "error", error: "the local server exited before it was ready" }
+            : { phase: "idle", hostedSession: false },
+        )
+        return
+      case "error":
+        set({ phase: "error", error: event.message })
+        return
+    }
+  },
+}))
+
+/** Disconnect from the table; when we hosted the server ourselves, stop it
+ * too (the TUI's quit semantics). Reconnect logic never routes through here. */
+export async function quitTable(): Promise<void> {
+  const host = useHostLocalStore.getState()
+  await useConnectionStore.getState().disconnect()
+  if (host.hostedSession) await host.stop()
+}

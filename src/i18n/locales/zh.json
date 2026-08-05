@@ -20,6 +20,13 @@
     "namePlaceholder": "仅供参考——以密钥登记名为准",
     "submit": "连接",
     "disconnect": "断开",
+    "hostLocal": {
+      "button": "本地托管并游玩",
+      "starting": "正在启动服务器…",
+      "hint": "一键完成：使用你的引擎检出或下载预编译服务器（SHA-256 校验），启动后以守秘人身份自动登录。",
+      "desktopOnly": "本地托管需要桌面端。",
+      "cancel": "取消"
+    },
     "attempt": "第 {{n}} 次",
     "status": {
       "offline": "离线",

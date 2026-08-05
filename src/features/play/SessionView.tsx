@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 import { useConnectionStore } from "../../store/connection"
+import { quitTable } from "../../store/hostLocal"
 import InputBox from "./InputBox"
 import NarrativeLog from "./NarrativeLog"
 import { PanelSidebar, PanelTray } from "./panels/PanelDeck"
@@ -13,7 +14,6 @@ import TurnStatus from "./TurnStatus"
 export default function SessionView({ onMenu }: { onMenu?: () => void }) {
   const { t } = useTranslation()
   const welcome = useConnectionStore((s) => s.welcome)
-  const disconnect = useConnectionStore((s) => s.disconnect)
 
   return (
     <div className="session">
@@ -27,7 +27,7 @@ export default function SessionView({ onMenu }: { onMenu?: () => void }) {
           <span className="session-room">{welcome ? `${welcome.room} · ${welcome.you.name}` : "…"}</span>
           <PanelMenu />
           <StatusPill />
-          <button type="button" className="ghost-button" onClick={() => void disconnect()}>
+          <button type="button" className="ghost-button" onClick={() => void quitTable()}>
             {t("connect.disconnect")}
           </button>
         </header>

@@ -88,6 +88,14 @@ describe("PlayView", () => {
     expect(screen.queryByRole("menuitem", { name: /Rooms & invites/ })).not.toBeInTheDocument()
   })
 
+  it("offers the host-locally button on the connect screen (desktop-only outside the shell)", () => {
+    render(<PlayView />)
+    const button = screen.getByRole("button", { name: "Host locally & play" })
+    // jsdom is not the Tauri shell, so the button is present but disabled.
+    expect(button).toBeDisabled()
+    expect(screen.getByText(/needs the desktop app/)).toBeInTheDocument()
+  })
+
   it("surfaces transport errors on the connect form", () => {
     useConnectionStore.setState({ lastError: "bad_key: unknown key" })
     render(<PlayView />)

@@ -4,7 +4,9 @@
 
 import { useEffect, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
+import { isTauri } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
+import { useHostLocalStore } from "../../store/hostLocal"
 import CharacterScreen from "./screens/CharacterScreen"
 import KeysScreen from "./screens/KeysScreen"
 import MainMenuScreen from "./screens/MainMenuScreen"
@@ -18,6 +20,53 @@ import StatusPill from "./StatusPill"
 
 export type PlayScreen =
   "menu" | "game" | "character" | "settings" | "keys" | "module" | "rules" | "skills" | "model"
+
+/** The TUI's green button: bring a local server up and log straight in as
+ * Keeper. While it's starting the real bring-up log streams below. */
+function HostLocalBlock() {
+  const { t } = useTranslation()
+  const phase = useHostLocalStore((s) => s.phase)
+  const log = useHostLocalStore((s) => s.log)
+  const error = useHostLocalStore((s) => s.error)
+  const start = useHostLocalStore((s) => s.start)
+  const stop = useHostLocalStore((s) => s.stop)
+  const native = isTauri()
+
+  return (
+    <div className="host-local">
+      <button
+        type="button"
+        className="host-local-button"
+        disabled={!native || phase === "starting"}
+        onClick={() => void start()}
+      >
+        {phase === "starting" ? t("connect.hostLocal.starting") : t("connect.hostLocal.button")}
+      </button>
+      <p className="studio-hint">
+        {native ? t("connect.hostLocal.hint") : t("connect.hostLocal.desktopOnly")}
+      </p>
+      {phase !== "idle" && (log.length > 0 || error !== null) ? (
+        <div className="host-local-log" role="log">
+          {log.slice(-12).map((line, index) => (
+            <div key={index} className="host-local-line">
+              {line}
+            </div>
+          ))}
+          {error !== null ? (
+            <p className="connect-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {phase === "starting" ? (
+            <button type="button" className="ghost-button" onClick={() => void stop()}>
+              {t("connect.hostLocal.cancel")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function OnlineView() {
   const [screen, setScreen] = useState<PlayScreen>("menu")
@@ -93,6 +142,8 @@ export default function PlayView() {
           <h2>{t("connect.title")}</h2>
           <StatusPill />
         </header>
+
+        <HostLocalBlock />
 
         <form className="connect-form" onSubmit={onSubmit}>
           <label>

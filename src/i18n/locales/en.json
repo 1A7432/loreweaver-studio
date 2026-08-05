@@ -20,6 +20,13 @@
     "namePlaceholder": "advisory — the keystore name wins",
     "submit": "Connect",
     "disconnect": "Disconnect",
+    "hostLocal": {
+      "button": "Host locally & play",
+      "starting": "Bringing the server up…",
+      "hint": "One press: use your engine checkout or download the prebuilt server (SHA-256 verified), start it, and log you in as Keeper.",
+      "desktopOnly": "Local hosting needs the desktop app.",
+      "cancel": "Cancel"
+    },
     "attempt": "attempt {{n}}",
     "status": {
       "offline": "Offline",
