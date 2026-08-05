@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
+import { parse as parseYaml } from "yaml"
 import {
   aiAvailable,
   formatCliCommand,
@@ -266,6 +267,36 @@ export default function PackWizard() {
   const chooseOutputDir = async () => {
     const dir = await pickDirectory()
     if (dir !== null) store.setOutputDir(dir)
+  }
+
+  /** Adopt a source tree that already exists on disk (an earlier session's, or
+   * a hand-edited one) so build+install work WITHOUT re-dropping every file —
+   * the iteration loop a module author actually lives in. */
+  const adoptSourceDir = async () => {
+    const dir = await pickDirectory()
+    if (dir === null) return
+    setError(null)
+    try {
+      const manifest = await readFileByPath(`${dir}/pack.yaml`)
+      const parsed = parseYaml(new TextDecoder("utf-8").decode(manifest.bytes)) as {
+        id?: unknown
+        version?: unknown
+      } | null
+      const id = typeof parsed?.id === "string" ? parsed.id : ""
+      const version = typeof parsed?.version === "string" ? parsed.version : ""
+      if (!id || !version) {
+        setError(t("studio.pack.adoptInvalid", { dir }))
+        return
+      }
+      store.setMetadata({ id, version })
+      const parent = dir.replace(/\/[^/]+\/?$/, "") || dir
+      store.setOutputDir(parent)
+      store.setWritten(dir)
+      store.setBuiltPackPath(null)
+      store.setRunResult(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   const writeSource = async () => {
@@ -537,6 +568,15 @@ export default function PackWizard() {
                 placeholder="CC-BY-4.0"
               />
             </label>
+            <label className="field">
+              {t("studio.pack.meta.rulepackId")}
+              <input
+                value={store.metadata.rulepackId}
+                onChange={(e) => store.setMetadata({ rulepackId: e.target.value })}
+                placeholder={store.metadata.id ? `${store.metadata.id}-rules` : "my-rules"}
+                spellCheck={false}
+              />
+            </label>
             <label className="field field-wide">
               {t("studio.pack.meta.rulepackPatch")}
               <textarea
@@ -696,7 +736,11 @@ export default function PackWizard() {
             >
               {t("studio.pack.writeSource")}
             </button>
+            <button type="button" className="ghost-button" onClick={() => void adoptSourceDir()}>
+              {t("studio.pack.adoptDir")}
+            </button>
           </div>
+          <p className="studio-hint">{t("studio.pack.adoptHint")}</p>
           {store.writtenDir !== null ? (
             <p className="studio-notice" role="status">
               {t("studio.pack.written", { dir: store.writtenDir })}

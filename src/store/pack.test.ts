@@ -36,6 +36,12 @@ describe("classifyJson", () => {
     expect(classifyJson({ name: "X", description: "d" })).toBe("card")
     expect(classifyJson({ entries: [{ content: "a" }] })).toBe("lorebook")
     expect(classifyJson({ character_book: { entries: [] } })).toBe("lorebook")
+    // A stock ST world-info export carries name+description NEXT TO entries;
+    // the root-level entries collection must beat the loose card heuristic.
+    expect(classifyJson({ name: "Atlas", description: "city color", entries: [{ content: "a" }] })).toBe(
+      "lorebook",
+    )
+    expect(classifyJson({ name: "Atlas", entries: { "0": { content: "a" } } })).toBe("lorebook")
     expect(classifyJson({ something: 1 })).toBe("asset")
     expect(classifyJson([1])).toBe("asset")
   })
@@ -97,6 +103,7 @@ describe("pack store pipeline", () => {
       authors: "someone",
       license: "MIT",
       rulepackPatch: "",
+      rulepackId: "",
     })
     expect(draft.cards).toHaveLength(1)
     expect(draft.cards[0].kind).toBe("world")
@@ -125,6 +132,7 @@ describe("pack store pipeline", () => {
       authors: "a",
       license: "MIT",
       rulepackPatch: "",
+      rulepackId: "",
     })
     expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64 }])
   })

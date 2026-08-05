@@ -1853,6 +1853,13 @@ body {
   background: var(--bg-inset);
 }
 
+/* A panel that never completed the bridge handshake keeps its frame mounted
+   (a late `ready` still wins) but yields the space to the fallback blocks. */
+.panel-frame.stalled {
+  min-height: 0;
+  height: 0;
+}
+
 .panel-frame-loading {
   font: 12px/1.5 var(--font-ui);
   color: var(--ink-faint);

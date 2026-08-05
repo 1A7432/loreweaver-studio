@@ -34,9 +34,19 @@ export function panelServeUnregister(token: string): Promise<void> {
   return invoke<void>("panel_serve_unregister", { token })
 }
 
-/** The iframe src for a mounted panel's entry document. */
+/** Mirrors `panel_serve::ENTRY_PATH`. */
+export const PANEL_ENTRY_FILE = "__entry__.html"
+
+/** The iframe src for a mounted panel's entry document.
+ *
+ * `convertFileSrc` runs `encodeURIComponent` over the WHOLE path it is given,
+ * so handing it `<token>/<file>` yields one `%2F`-joined segment — which the
+ * scheme handler (segment-wise decode, traversal-safe) reads as a single
+ * bogus token and 404s, and which would also break every relative subresource
+ * inside the document. Build the base from the token alone (32 hex chars,
+ * encoding-invariant) and append real path segments. */
 export function panelEntryUrl(token: string): string {
-  return convertFileSrc(`${token}/__entry__.html`, "panel")
+  return `${convertFileSrc(token, "panel")}/${PANEL_ENTRY_FILE}`
 }
 
 // Concurrent mounts often share hashes (immutable, content-addressed);

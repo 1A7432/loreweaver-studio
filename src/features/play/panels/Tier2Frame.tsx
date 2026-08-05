@@ -33,7 +33,14 @@ import {
 import { pickText } from "./templates"
 import PanelFallback from "./PanelFallback"
 
-type Phase = "loading" | "ready" | "error"
+// "serving" = assets are served and the iframe has its src, but the panel has
+// not completed the bridge handshake yet; "live" = it did. A panel that never
+// speaks (document blocked, script threw at load) would otherwise sit as a
+// silent blank box, so the host falls back to its declared blocks instead.
+type Phase = "loading" | "serving" | "live" | "stalled" | "error"
+
+/** How long a panel gets to say `ready` before the host assumes it is dead. */
+const HANDSHAKE_TIMEOUT_MS = 6000
 
 export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
   const { t, i18n } = useTranslation()
@@ -45,10 +52,16 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
 
   useEffect(() => {
     let cancelled = false
+    let handshakeTimer: ReturnType<typeof setTimeout> | undefined
     const token = mintSecret()
     const nonce = mintSecret()
     const theme = collectPanelTheme()
     const bridge = new PanelBridge({
+      onReady: () => {
+        if (cancelled) return
+        clearTimeout(handshakeTimer)
+        setPhase("live")
+      },
       panelId: panel.id,
       nonce,
       locale,
@@ -86,7 +99,10 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
           return
         }
         setSrc(panelEntryUrl(token))
-        setPhase("ready")
+        setPhase("serving")
+        handshakeTimer = setTimeout(() => {
+          if (!cancelled && !bridge.isReady()) setPhase("stalled")
+        }, HANDSHAKE_TIMEOUT_MS)
       } catch {
         if (!cancelled) setPhase("error")
       }
@@ -94,6 +110,7 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
 
     return () => {
       cancelled = true
+      clearTimeout(handshakeTimer)
       window.removeEventListener("message", onMessage)
       unsubscribeState()
       unsubscribeEvents()
@@ -117,11 +134,21 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
   }
   return (
     <>
-      {phase === "loading" ? <p className="panel-frame-loading">{t("panels.loading")}</p> : null}
+      {phase === "loading" || phase === "serving" ? (
+        <p className="panel-frame-loading">{t("panels.loading")}</p>
+      ) : null}
+      {phase === "stalled" ? (
+        <p className="panel-frame-error-line" role="alert">
+          {t("panels.stalled")}
+          <button type="button" className="ghost-button" onClick={() => setAttempt((n) => n + 1)}>
+            {t("panels.retry")}
+          </button>
+        </p>
+      ) : null}
       {src ? (
         <iframe
           ref={iframeRef}
-          className="panel-frame"
+          className={phase === "stalled" ? "panel-frame stalled" : "panel-frame"}
           src={src}
           // Exactly allow-scripts: adding allow-same-origin would collapse
           // the opaque origin and with it the whole isolation story.
@@ -130,6 +157,9 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
           title={pickText(panel.title, locale) ?? panel.id}
         />
       ) : null}
+      {/* A stalled panel still owes the player its content: render the same
+          blocks every other client sees, and let a late handshake win. */}
+      {phase === "stalled" ? <PanelFallback panel={panel} /> : null}
     </>
   )
 }

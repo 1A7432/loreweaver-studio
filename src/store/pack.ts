@@ -69,6 +69,9 @@ export interface PackMetadataForm {
   authors: string
   license: string
   rulepackPatch: string
+  /** Rulepack file stem = the system id players type in `.set`. Blank falls
+   * back to `<packId>-rules` (the historical default). */
+  rulepackId: string
 }
 
 const EMPTY_METADATA: PackMetadataForm = {
@@ -81,6 +84,7 @@ const EMPTY_METADATA: PackMetadataForm = {
   authors: "",
   license: "",
   rulepackPatch: "",
+  rulepackId: "",
 }
 
 function uid(): string {
@@ -98,6 +102,11 @@ export function classifyJson(parsed: unknown): PackItemKind {
   if (looksLikeLorecard(parsed)) return "card"
   if (parsed.spec === "chara_card_v2" || parsed.spec === "chara_card_v3") return "card"
   if (isRecord(parsed.data) && (asText(parsed.data.name) || parsed.data.character_book)) return "card"
+  // A ROOT-level `entries` collection is the lorebook signature and beats the
+  // loose card heuristic below: a stock SillyTavern world-info export carries
+  // `{name, description, entries}`, and a card never holds entries at the root
+  // (its lore lives under `character_book`).
+  if (Array.isArray(parsed.entries) || isRecord(parsed.entries)) return "lorebook"
   if (asText(parsed.name) && (parsed.description !== undefined || parsed.first_mes !== undefined)) {
     return "card"
   }
@@ -504,7 +513,13 @@ export function buildDraftFromState(
       hooks: item.hooks,
     }))
   const rulepacks = metadata.rulepackPatch.trim()
-    ? [{ id: `${metadata.id}-rules`, yamlText: metadata.rulepackPatch }]
+    ? [
+        {
+          // The file stem IS the system id (`.set <id>`), so the author owns it.
+          id: metadata.rulepackId.trim() || `${metadata.id}-rules`,
+          yamlText: metadata.rulepackPatch,
+        },
+      ]
     : []
   return {
     id: metadata.id,

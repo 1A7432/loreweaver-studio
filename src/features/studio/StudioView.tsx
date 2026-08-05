@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { saveTextFile } from "../../lib/files"
-import { pickJsonFile } from "../../lib/native"
+import { saveBinaryFile, saveTextFile } from "../../lib/files"
+import { pickJsonFile, pickPngFile } from "../../lib/native"
 import { useActiveProject, useStudioStore, type StudioTab, type StudioViewName } from "../../store/studio"
 import { isRecord } from "./split/charcard"
 import { looksLikeLorecard, lorecardToProject } from "./split/lorecard"
@@ -11,6 +11,7 @@ import PresetManagerDialog from "./ai/PresetManagerDialog"
 import { aiReady, useAiStore } from "./ai/provider"
 import CardTab from "./CardTab"
 import { exportFileName, exportNativeBundle, exportSillyTavernCard } from "./exporters"
+import { embedCardIntoPng } from "./pngCard"
 import HooksTab from "./HooksTab"
 import { validateProject } from "./model"
 import PackWizard from "./pack/PackWizard"
@@ -50,6 +51,22 @@ export default function StudioView() {
         : exportSillyTavernCard(project, validation.specs)
     const outcome = await saveTextFile(exportFileName(project, flavor), JSON.stringify(payload, null, 2))
     setNotice(t(`studio.save.${outcome}`))
+  }
+
+  const doExportPng = async () => {
+    if (!project || !validation) return
+    const base = await pickPngFile()
+    if (base === null) return
+    try {
+      // Toolbar flavor on purpose: default options = secrets stripped — the
+      // safe-to-circulate tavern card (the wizard finish owns the release flavor).
+      const png = embedCardIntoPng(base.bytes, exportSillyTavernCard(project, validation.specs))
+      const name = exportFileName(project, "st").replace(/\.json$/, ".png")
+      const outcome = await saveBinaryFile(name, png, "png")
+      setNotice(t(`studio.save.${outcome}`))
+    } catch {
+      setNotice(t("studio.exportPngInvalid"))
+    }
   }
 
   const doImportNative = async () => {
@@ -167,6 +184,9 @@ export default function StudioView() {
                 </button>
                 <button type="button" className="ghost-button" onClick={() => void doExport("st")}>
                   {t("studio.exportSt")}
+                </button>
+                <button type="button" className="ghost-button" onClick={() => void doExportPng()}>
+                  {t("studio.exportPng")}
                 </button>
               </>
             ) : null}

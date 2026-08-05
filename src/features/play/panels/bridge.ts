@@ -95,6 +95,10 @@ export interface PanelBridgeOptions {
   postToPanel: (message: Record<string, unknown>) => void
   sendIntent: (frame: PanelIntentFrame) => void
   getSnapshot: () => PanelStateSnapshot | null
+  /** Fires once, when the panel completes the handshake — the only proof that
+   * its document loaded AND its script ran. The host uses it to tell a live
+   * panel from a blank box (a sandbox/asset failure the iframe swallows). */
+  onReady?: () => void
 }
 
 export class PanelBridge {
@@ -123,7 +127,9 @@ export class PanelBridge {
     if (!source || event.source !== source) return
 
     if (envelope.type === "ready") {
+      const first = !this.ready
       this.ready = true
+      if (first) this.opts.onReady?.()
       this.post({
         type: "ready_ack",
         panel: this.opts.panelId,
