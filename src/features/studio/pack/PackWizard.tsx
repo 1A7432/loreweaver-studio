@@ -401,7 +401,10 @@ export default function PackWizard() {
             type="button"
             className={step === store.step ? "pack-step active" : "pack-step"}
             onClick={() => goto(step)}
-            disabled={index > stepIndex + 1}
+            // The build step stands on its own — it can adopt a source tree
+            // that already exists on disk, so it is never gated behind the
+            // authoring steps.
+            disabled={index > stepIndex + 1 && step !== "build"}
           >
             {index + 1}. {t(`studio.pack.steps.${step}`)}
           </button>
