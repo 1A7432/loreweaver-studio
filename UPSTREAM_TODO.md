@@ -5,55 +5,50 @@ engine/tooling interface the card-split + AI-forge + auto-pack work wanted but d
 find. Studio-side we did NOT work around any of these with hacks — the features ship
 without them and get better when they land.
 
-1. **Machine-readable `--pack` / `--install` output.** The pack wizard shells out to
-   `loreweaver-server --pack <dir> --out <file>` (or `python -m app …`) and today can
-   only show raw stdout/stderr. A `--json` flag emitting the built pack's path, id,
-   version, sha256 and trust block on success (an error object on failure) would let
-   the wizard render the trust card natively (counts, hooks/EJS flags, world_cards)
-   instead of as terminal text.
+**2026-08-05 status: items 1–7 have LANDED upstream** (engine commits `b72def7`,
+`67be7b6`, `761d0c7`). The shapes below are what actually shipped — wire the studio to
+them and delete each entry as it's consumed. Item 8 remains the one open ask.
 
-2. **A stable `--version` for probing.** `probe_engine_cli` currently only checks that a
-   `loreweaver-server` binary exists on PATH / that `app.py` exists in the configured
-   checkout. A cheap, side-effect-free `--version` (semver on stdout) would let the
-   studio display the engine version and pre-check pack `engine.server` minimums before
-   a build instead of after.
+1. ✅ **Machine-readable `--pack` output** — `--pack <dir> [--out <file>] --json` emits
+   exactly ONE JSON object on stdout: `{"ok": true, "path", "id", "version", "sha256",
+   "trust": {...}}` on success, `{"ok": false, "error"}` on failure (exit 1). Human
+   lines (including the trust card) stay on stderr. The pack wizard can render the
+   trust card natively now.
 
-3. **`ModuleVariable.hidden` missing from `loreweaver-protocol` types.** The server
-   already sends `hidden:true` to keeper connections for unexposed variables (v1.7
-   additive), and the studio now renders those rows dimmed + locked — but through a
-   local cast, because `clients/protocol/src/types.ts` hasn't added the optional field.
-   One-line type addition (`hidden?: boolean`) + a changelog note.
+2. ✅ **`--version` probe** — `loreweaver-server --version` / `python -m app --version`
+   prints a bare semver on stdout, no side effects, no locale variance.
+   (`probe_engine_cli` should start consuming it.)
 
-4. **M14 native-bundle importer.** The forge and the splitter both export
-   `*.lorecard.json` (`format: "loreweaver.card", format_version: 0` — shape documented
-   in [docs/FORMATS.md](docs/FORMATS.md)); typed VarSpecs and secret/keeper-only fields
-   survive only in that flavor. Until the engine can import it, round-tripping goes
-   through the lossy ST shape ([InitVar] + player-visible only).
+3. ✅ **`ModuleVariable.hidden?: boolean`** — typed in `loreweaver-protocol` 1.9.0
+   (servers have sent it to keeper connections since v1.7). Drop the local cast in the
+   variables panel. npm publish of 1.9.0 pending (maintainer's interactive 2FA).
 
-5. **Pregen roster visibility on the wire.** After a world import lands the claimable
-   cast (`core.pregen_roster`), a client has no frame to render the roster (`.pc list`
-   is chat-only). A `state`-adjacent frame (or a documented `ui` convention) listing
-   `{name, claimed_by}` would let the studio's play mode show "claimable characters"
-   right after the pack-wizard's `--install` closes the loop.
+4. ✅ **M14 native-bundle importer** — the engine parses `*.lorecard.json`
+   (`core/lorecard.py`) through the same `.import` command: player imports strip
+   machinery structurally (typed specs, secret lore — the split now also counts
+   `secret_entries`), keeper `world` imports land typed specs as real `core.modvars`
+   trackers (CJK ids like `理智` are now first-class engine-side). Round-tripping is
+   no longer forced through the lossy ST shape.
 
-6. **`.import` accepting a pack-relative card path.** Installed packs land cards under
-   `data_dir/packs/<id>@<version>/`; the keeper still types the full server-side path to
-   world-import one. A `.import pack:<id>/<card>` shorthand would make the
-   "install → world import → claim" demo one obvious step shorter.
+5. ✅ **Pregen roster on the wire** — `state.pregens?: [{name, claimed_by}]` (protocol
+   v1.9, omitted when no roster exists, public to every viewer). The play mode can
+   render "claimable characters" right after `--install` + world import.
 
-7. **M15 bridge doc says `StateVariable`; the package type is `ModuleVariable`.** The
-   Tier-2 bridge signature in `docs/specs/M15-ui-panels.md` (and the studio snapshot)
-   types `onState` as `(s: {variables: StateVariable[], …})`, but no such export exists
-   in `loreweaver-protocol` — the state-frame variable list is `ModuleVariable[]`, and
-   that is what the studio's bridge forwards. One-word spec amendment keeps the next
-   panel author from hunting for a phantom type.
+6. ✅ **Pack-relative `.import`** — the shipped syntax is `.import <packId>/<relative
+   path>` (no `pack:` prefix): resolves against the newest installed
+   `data_dir/packs/<id>@<version>/`, traversal-confined, falling through to the
+   literal path when not pack-shaped.
 
-8. **Keeper-style prompt presets as pack assets.** The studio now imports SillyTavern
-   completion presets as local assets (prompt pool + two-layer enable matrix + sampling
-   - inert `extensions`, zero-loss) and can export the normalized JSON for distribution
-     inside a pack. The engine's single-prompt architecture (6 sections) is the iron rule,
-     so the studio deliberately makes NO injection promises for play: whether/how a shipped
-     preset maps into those sections (and which ST macros, if any, get expanded) is an
-     engine-side decision. Needed from upstream: a documented pack-asset convention (path +
-     manifest flag) and a section-mapping contract before any client can advertise
-     "preset-aware" play.
+7. ✅ **`StateVariable` phantom type** — the canonical spec already reads
+   `ModuleVariable`; refresh the studio's M15 snapshot from canonical if it still
+   shows the old name.
+
+8. **Keeper-style prompt presets as pack assets** — HALF landed: the engine now has the
+   authoritative preset parser (`core/preset.py`, matrix/marker/macro semantics matching
+   `src/features/studio/ai/stPreset.ts`), disk store (`data_dir/presets/`), the keeper
+   `.preset list|import|enable|disable|show` surface, and a bounded style-layer fold in
+   the prompt builder (markers are boundaries-only in v0; sampling params are reported,
+   not applied). Still needed before a client can advertise "preset-aware" play:
+   a pack-asset convention (path + manifest flag) so a pack can SHIP a preset through
+   `--install`, and the finer marker→section mapping contract if v0's single-fold
+   proves too coarse in play.
