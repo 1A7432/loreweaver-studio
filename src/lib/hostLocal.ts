@@ -17,16 +17,19 @@ export interface HostLocalStatus {
   home: string
 }
 
-export async function hostLocalStart(engineRepoDir?: string): Promise<void> {
-  await invoke("host_local_start", { engineRepoDir: engineRepoDir || null })
+export async function hostLocalStart(engineRepoDir?: string, homeOverride?: string): Promise<void> {
+  await invoke("host_local_start", {
+    engineRepoDir: engineRepoDir || null,
+    homeOverride: homeOverride || null,
+  })
 }
 
 export async function hostLocalStop(): Promise<boolean> {
   return invoke("host_local_stop")
 }
 
-export async function hostLocalStatus(): Promise<HostLocalStatus> {
-  return invoke("host_local_status")
+export async function hostLocalStatus(homeOverride?: string): Promise<HostLocalStatus> {
+  return invoke("host_local_status", { homeOverride: homeOverride || null })
 }
 
 export function onHostLocalEvent(handler: (event: HostLocalEvent) => void): Promise<UnlistenFn> {

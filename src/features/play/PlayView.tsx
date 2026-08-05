@@ -4,6 +4,7 @@
 
 import { useEffect, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
+import { pickDirectory } from "../../lib/native"
 import { isTauri } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useHostLocalStore } from "../../store/hostLocal"
@@ -28,9 +29,22 @@ function HostLocalBlock() {
   const phase = useHostLocalStore((s) => s.phase)
   const log = useHostLocalStore((s) => s.log)
   const error = useHostLocalStore((s) => s.error)
+  const homeOverride = useHostLocalStore((s) => s.homeOverride)
+  const effectiveHome = useHostLocalStore((s) => s.effectiveHome)
+  const setHomeOverride = useHostLocalStore((s) => s.setHomeOverride)
+  const refreshHome = useHostLocalStore((s) => s.refreshHome)
   const start = useHostLocalStore((s) => s.start)
   const stop = useHostLocalStore((s) => s.stop)
   const native = isTauri()
+
+  useEffect(() => {
+    void refreshHome()
+  }, [refreshHome])
+
+  const browse = async () => {
+    const dir = await pickDirectory()
+    if (dir !== null) setHomeOverride(dir)
+  }
 
   return (
     <div className="host-local">
@@ -45,6 +59,26 @@ function HostLocalBlock() {
       <p className="studio-hint">
         {native ? t("connect.hostLocal.hint") : t("connect.hostLocal.desktopOnly")}
       </p>
+      <div className="host-local-home">
+        <label className="field">
+          {t("connect.hostLocal.home")}
+          <input
+            value={homeOverride}
+            placeholder={effectiveHome || t("connect.hostLocal.homePlaceholder")}
+            spellCheck={false}
+            disabled={!native || phase === "starting"}
+            onChange={(e) => setHomeOverride(e.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          className="ghost-button"
+          disabled={!native || phase === "starting"}
+          onClick={() => void browse()}
+        >
+          {t("studio.ai.browse")}
+        </button>
+      </div>
       {phase !== "idle" && (log.length > 0 || error !== null) ? (
         <div className="host-local-log" role="log">
           {log.slice(-12).map((line, index) => (

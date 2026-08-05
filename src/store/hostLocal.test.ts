@@ -12,7 +12,14 @@ import { useConnectionStore } from "./connection"
 import { quitTable, useHostLocalStore } from "./hostLocal"
 
 function reset() {
-  useHostLocalStore.setState({ phase: "idle", log: [], error: null, hostedSession: false })
+  useHostLocalStore.setState({
+    phase: "idle",
+    log: [],
+    error: null,
+    hostedSession: false,
+    homeOverride: "",
+    effectiveHome: "",
+  })
 }
 
 describe("hostLocal store", () => {
@@ -47,6 +54,18 @@ describe("hostLocal store", () => {
     useHostLocalStore.getState().ingest({ kind: "exit", code: 0 })
     expect(useHostLocalStore.getState().phase).toBe("idle")
     expect(useHostLocalStore.getState().hostedSession).toBe(false)
+  })
+
+  it("passes the picked server folder through to the bridge on start", async () => {
+    // jsdom is not the shell — fake it so start() reaches the bridge call.
+    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    try {
+      useHostLocalStore.setState({ homeOverride: "  /Volumes/Table/loreweaver  " })
+      await useHostLocalStore.getState().start()
+      expect(bridge.hostLocalStart).toHaveBeenCalledWith(undefined, "/Volumes/Table/loreweaver")
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+    }
   })
 
   it("quitTable stops the server only for sessions we hosted ourselves", async () => {

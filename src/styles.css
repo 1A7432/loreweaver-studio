@@ -2763,3 +2763,17 @@ body {
   color: var(--ink-dim);
   word-break: break-all;
 }
+
+.host-local-home {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.host-local-home .field {
+  flex: 1;
+}
+
+.host-local-home input {
+  font: 12px/1.4 var(--font-mono);
+}

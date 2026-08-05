@@ -25,7 +25,9 @@
       "starting": "正在启动服务器…",
       "hint": "一键完成：使用你的引擎检出或下载预编译服务器（SHA-256 校验），启动后以守秘人身份自动登录。",
       "desktopOnly": "本地托管需要桌面端。",
-      "cancel": "取消"
+      "cancel": "取消",
+      "home": "服务器目录（数据、钥匙、缓存）",
+      "homePlaceholder": "~/.loreweaver"
     },
     "attempt": "第 {{n}} 次",
     "status": {

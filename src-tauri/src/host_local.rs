@@ -89,10 +89,18 @@ fn expand_home(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn resolve_paths() -> LocalPaths {
-    let root = nonempty(std::env::var("TRPG_LOCAL_SERVER_HOME"))
-        .or_else(|| nonempty(std::env::var("TRPG_HOME")))
-        .map(|value| expand_home(&value))
+fn resolve_paths(home_override: Option<&str>) -> LocalPaths {
+    // Precedence mirrors the TUI: the folder picked in the UI wins, then the
+    // TRPG_LOCAL_SERVER_HOME / TRPG_HOME environment, then ~/.loreweaver.
+    let override_root = home_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(expand_home);
+    let root = override_root
+        .or_else(|| {
+            nonempty(std::env::var("TRPG_LOCAL_SERVER_HOME")).map(|value| expand_home(&value))
+        })
+        .or_else(|| nonempty(std::env::var("TRPG_HOME")).map(|value| expand_home(&value)))
         .unwrap_or_else(|| user_home().join(".loreweaver"));
     LocalPaths {
         binary_dir: root.join("server-bin"),
@@ -521,6 +529,7 @@ pub async fn host_local_start(
     app: AppHandle,
     state: State<'_, HostLocalState>,
     engine_repo_dir: Option<String>,
+    home_override: Option<String>,
 ) -> Result<(), String> {
     {
         let mut guard = state
@@ -535,7 +544,7 @@ pub async fn host_local_start(
         }
     }
 
-    let paths = resolve_paths();
+    let paths = resolve_paths(home_override.as_deref());
     tokio::fs::create_dir_all(&paths.home)
         .await
         .map_err(|err| format!("creating {} failed: {err}", paths.home.display()))?;
@@ -630,6 +639,7 @@ pub async fn host_local_stop(
 #[tauri::command]
 pub async fn host_local_status(
     state: State<'_, HostLocalState>,
+    home_override: Option<String>,
 ) -> Result<HostLocalStatus, String> {
     let running = {
         let mut guard = state
@@ -643,13 +653,26 @@ pub async fn host_local_status(
     };
     Ok(HostLocalStatus {
         running,
-        home: resolve_paths().home.to_string_lossy().into_owned(),
+        home: resolve_paths(home_override.as_deref())
+            .home
+            .to_string_lossy()
+            .into_owned(),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_ticket, parse_sha256_sidecar, parse_sidecar_key};
+    use super::{extract_ticket, parse_sha256_sidecar, parse_sidecar_key, resolve_paths};
+
+    #[test]
+    fn home_override_outranks_the_env_chain() {
+        let paths = resolve_paths(Some("/tmp/custom-lw-home"));
+        assert!(paths.home.ends_with("custom-lw-home"));
+        assert!(paths.keys_file.ends_with("custom-lw-home/local-keys.toml"));
+        // Blank override falls through to the default chain.
+        let fallback = resolve_paths(Some("   "));
+        assert!(!fallback.home.as_os_str().is_empty());
+    }
 
     #[test]
     fn ticket_scanner_finds_the_base32_run() {

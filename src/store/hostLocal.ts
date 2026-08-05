@@ -5,7 +5,14 @@
 // started (and only then; reconnects never kill it).
 
 import { create } from "zustand"
-import { hostLocalStart, hostLocalStop, onHostLocalEvent, type HostLocalEvent } from "../lib/hostLocal"
+import { createJSONStorage, persist } from "zustand/middleware"
+import {
+  hostLocalStart,
+  hostLocalStatus,
+  hostLocalStop,
+  onHostLocalEvent,
+  type HostLocalEvent,
+} from "../lib/hostLocal"
 import { isTauri } from "../lib/transport"
 import { useAiStore } from "../features/studio/ai/provider"
 import { useConnectionStore } from "./connection"
@@ -20,7 +27,13 @@ interface HostLocalState {
   error: string | null
   /** Whether the CURRENT connection came from our own local server. */
   hostedSession: boolean
+  /** User-picked server folder ("" = the TUI-shared default chain). Persisted. */
+  homeOverride: string
+  /** The resolved effective home, for display (refreshed by refreshHome). */
+  effectiveHome: string
 
+  setHomeOverride: (path: string) => void
+  refreshHome: () => Promise<void>
   start: () => Promise<void>
   stop: () => Promise<void>
   ingest: (event: HostLocalEvent) => void
@@ -34,58 +47,87 @@ async function subscribeOnce(ingest: (event: HostLocalEvent) => void): Promise<v
   await onHostLocalEvent(ingest)
 }
 
-export const useHostLocalStore = create<HostLocalState>((set, get) => ({
-  phase: "idle",
-  log: [],
-  error: null,
-  hostedSession: false,
+export const useHostLocalStore = create<HostLocalState>()(
+  persist(
+    (set, get) => ({
+      phase: "idle",
+      log: [],
+      error: null,
+      hostedSession: false,
+      homeOverride: "",
+      effectiveHome: "",
 
-  start: async () => {
-    if (!isTauri()) {
-      set({ phase: "error", error: "local hosting needs the desktop app" })
-      return
-    }
-    if (get().phase === "starting") return
-    set({ phase: "starting", log: [], error: null, hostedSession: false })
-    try {
-      await subscribeOnce(get().ingest)
-      await hostLocalStart(useAiStore.getState().engineRepoDir.trim() || undefined)
-    } catch (cause) {
-      set({ phase: "error", error: cause instanceof Error ? cause.message : String(cause) })
-    }
-  },
+      setHomeOverride: (path) => {
+        set({ homeOverride: path })
+        void get().refreshHome()
+      },
 
-  stop: async () => {
-    try {
-      await hostLocalStop()
-    } catch {
-      // Nothing to stop is fine.
-    }
-    set({ phase: "idle", hostedSession: false })
-  },
+      refreshHome: async () => {
+        if (!isTauri()) return
+        try {
+          const status = await hostLocalStatus(get().homeOverride.trim() || undefined)
+          set({ effectiveHome: status.home })
+        } catch {
+          // Display-only; the start path surfaces real errors.
+        }
+      },
 
-  ingest: (event) => {
-    switch (event.kind) {
-      case "log":
-        set((s) => ({ log: [...s.log.slice(-(MAX_LOG_LINES - 1)), event.text] }))
-        return
-      case "ready":
-        set({ phase: "ready", hostedSession: true })
-        void useConnectionStore.getState().connect({ ticket: event.ticket, key: event.key })
-        return
-      case "exit":
-        set((s) =>
-          s.phase === "starting"
-            ? { phase: "error", error: "the local server exited before it was ready" }
-            : { phase: "idle", hostedSession: false },
-        )
-        return
-      case "error":
-        set({ phase: "error", error: event.message })
-        return
-    }
-  },
-}))
+      start: async () => {
+        if (!isTauri()) {
+          set({ phase: "error", error: "local hosting needs the desktop app" })
+          return
+        }
+        if (get().phase === "starting") return
+        set({ phase: "starting", log: [], error: null, hostedSession: false })
+        try {
+          await subscribeOnce(get().ingest)
+          await hostLocalStart(
+            useAiStore.getState().engineRepoDir.trim() || undefined,
+            get().homeOverride.trim() || undefined,
+          )
+        } catch (cause) {
+          set({ phase: "error", error: cause instanceof Error ? cause.message : String(cause) })
+        }
+      },
+
+      stop: async () => {
+        try {
+          await hostLocalStop()
+        } catch {
+          // Nothing to stop is fine.
+        }
+        set({ phase: "idle", hostedSession: false })
+      },
+
+      ingest: (event) => {
+        switch (event.kind) {
+          case "log":
+            set((s) => ({ log: [...s.log.slice(-(MAX_LOG_LINES - 1)), event.text] }))
+            return
+          case "ready":
+            set({ phase: "ready", hostedSession: true })
+            void useConnectionStore.getState().connect({ ticket: event.ticket, key: event.key })
+            return
+          case "exit":
+            set((s) =>
+              s.phase === "starting"
+                ? { phase: "error", error: "the local server exited before it was ready" }
+                : { phase: "idle", hostedSession: false },
+            )
+            return
+          case "error":
+            set({ phase: "error", error: event.message })
+            return
+        }
+      },
+    }),
+    {
+      name: "loreweaver-studio-host-local",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (s) => ({ homeOverride: s.homeOverride }),
+    },
+  ),
+)
 
 /** Disconnect from the table; when we hosted the server ourselves, stop it
  * too (the TUI's quit semantics). Reconnect logic never routes through here. */
