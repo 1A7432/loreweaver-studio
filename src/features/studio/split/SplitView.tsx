@@ -191,6 +191,7 @@ export default function SplitView() {
             hooks: payloads.hooks,
             vars: payloads.initvarEntries,
             ejs: payloads.ejsBlocks,
+            secret: payloads.secretEntries,
           })}
         </span>
         <div className="header-spacer" />

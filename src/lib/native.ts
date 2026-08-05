@@ -96,6 +96,34 @@ export async function pickPngFile(): Promise<PickedFile | null> {
   return pickViaBrowser(".png,image/png")
 }
 
+/** Pick + read any number of files of any type (panel assets etc.). */
+export async function pickAnyFiles(): Promise<PickedFile[]> {
+  if (isTauri()) {
+    const picked = await open({ multiple: true })
+    const paths = typeof picked === "string" ? [picked] : Array.isArray(picked) ? picked : []
+    const files: PickedFile[] = []
+    for (const path of paths) files.push(await readFileByPath(path))
+    return files
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement("input")
+    input.type = "file"
+    input.multiple = true
+    input.onchange = () => {
+      const files = Array.from(input.files ?? [])
+      void Promise.all(
+        files.map(async (file) => ({
+          name: file.name,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+          path: null,
+        })),
+      ).then(resolve)
+    }
+    input.addEventListener("cancel", () => resolve([]))
+    input.click()
+  })
+}
+
 /** Pick a directory (native only — the browser has no useful equivalent). */
 export async function pickDirectory(): Promise<string | null> {
   if (!isTauri()) return null

@@ -5,13 +5,23 @@
 // lorebooks + skills + rulepack patches) that the engine CLI then builds.
 // Field names and constraints mirror `core/pack.py`.
 
-import { stringify } from "yaml"
+import { parse, stringify } from "yaml"
 import type { Issue } from "../model"
 
 export const PACK_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 export const SEMVER_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:[-+][0-9A-Za-z.-]{1,32})?$/
 export const MAX_HOOK_SOURCE_CHARS = 40_000
 const MAX_NOTE_CHARS = 2_000
+
+// M15 panel caps, mirroring `core/panels.py` (author-time strictness — the
+// engine re-validates at build; these keep the wizard red inline).
+export const PANELS_FILE_NAME = "ui/panels.yaml"
+const MAX_PANELS_PER_PACK = 16
+const MAX_PANEL_BLOCKS = 32
+const MAX_PANEL_EXTRA_ASSETS = 8
+const PANEL_SLOTS = new Set(["sidebar", "tray", "modal"])
+const PANEL_AUDIENCES = new Set(["all", "player", "keeper"])
+const PANEL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 
 export interface PackCardDraft {
   /** File name under `cards/` (already sanitized, extension included). */
@@ -33,6 +43,25 @@ export interface PackSkillDraft {
   descriptionZh: string
   /** Hook sources, concatenated into one hooks.js. */
   hooks: string[]
+  /** Hand-written SKILL.md body (frontmatter included). When set it ships
+   * VERBATIM instead of the generated stub — real keeper skills carry prompt
+   * sections, not just a description line. */
+  skillMd?: string
+}
+
+/** One file a tier-2 panel ships (path is pack-relative, under `ui/`). */
+export interface PackPanelFileDraft {
+  path: string
+  /** Exactly one of these: UTF-8 text (html/js/css ride as text for readable
+   * diffs) or raw bytes. */
+  contents?: string
+  base64?: string
+}
+
+/** The pack's module-UI declaration: `ui/panels.yaml` + every panel file. */
+export interface PackPanelsDraft {
+  yamlText: string
+  files: PackPanelFileDraft[]
 }
 
 export interface PackRulepackDraft {
@@ -67,6 +96,8 @@ export interface WorldPackDraft {
   skills: PackSkillDraft[]
   rulepacks: PackRulepackDraft[]
   assets: PackAssetDraft[]
+  /** M15 module-UI panels; null when the pack ships none. */
+  panels: PackPanelsDraft | null
 }
 
 export interface PackTextFile {
@@ -123,13 +154,24 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
     if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
     seenFiles.add(path)
   }
+  const seenSkillSlugs = new Set<string>()
   for (const skill of draft.skills) {
     if (!PACK_ID_RE.test(skill.slug)) {
       issues.push({ key: "packSkillSlugInvalid", params: { file: skill.slug } })
     }
+    if (seenSkillSlugs.has(skill.slug)) {
+      issues.push({ key: "packDuplicatePath", params: { file: `skills/${skill.slug}` } })
+    }
+    seenSkillSlugs.add(skill.slug)
     const joined = joinHooks(skill.hooks)
     if (joined.length > MAX_HOOK_SOURCE_CHARS) {
       issues.push({ key: "packHooksTooLong", params: { file: skill.slug, max: MAX_HOOK_SOURCE_CHARS } })
+    }
+    // A hand-written SKILL.md must open with YAML frontmatter or the engine's
+    // `parse_skill_text` refuses the whole pack.
+    const custom = skill.skillMd?.trim()
+    if (custom && !custom.startsWith("---")) {
+      issues.push({ key: "packSkillMdNoFrontmatter", params: { file: skill.slug } })
     }
   }
   for (const rulepack of draft.rulepacks) {
@@ -146,6 +188,127 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
     const path = `assets/${asset.fileName}`
     if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
     seenFiles.add(path)
+  }
+  if (draft.panels !== null) issues.push(...validatePanelsDraft(draft.panels, seenFiles))
+  return issues
+}
+
+/** Structural mirror of `core/panels.py::parse_panels_text` — the shape-level
+ * rules that decide whether the engine will even look at the file (slug/slot/
+ * audience enums, tier-1 vs tier-2 key sets, asset confinement, caps). Deep
+ * block validation stays the ENGINE's job; its build error lands in the wizard
+ * terminal. Detail strings are author diagnostics, technical English on
+ * purpose (same stance as the engine's). */
+function validatePanelsDraft(panels: PackPanelsDraft, seenFiles: Set<string>): Issue[] {
+  const issues: Issue[] = []
+  const filePaths = new Set<string>()
+  for (const file of panels.files) {
+    const path = file.path
+    const clean =
+      path.startsWith("ui/") &&
+      !path.endsWith("/") &&
+      path !== PANELS_FILE_NAME &&
+      path.split("/").every((part) => part.trim().length > 0 && part !== "." && part !== "..")
+    if (!clean) {
+      issues.push({ key: "packPanelPathInvalid", params: { file: path } })
+      continue
+    }
+    if (filePaths.has(path) || seenFiles.has(path)) {
+      issues.push({ key: "packDuplicatePath", params: { file: path } })
+    }
+    filePaths.add(path)
+    seenFiles.add(path)
+    if ((file.contents === undefined) === (file.base64 === undefined)) {
+      issues.push({ key: "packPanelFileBodyMissing", params: { file: path } })
+    }
+  }
+
+  let doc: unknown
+  try {
+    doc = parse(panels.yamlText)
+  } catch (error) {
+    issues.push({
+      key: "packPanelsYamlInvalid",
+      params: { detail: error instanceof Error ? error.message.split("\n")[0] : String(error) },
+    })
+    return issues
+  }
+  const root = doc as Record<string, unknown> | null
+  const list = root !== null && typeof root === "object" ? root.panels : undefined
+  if (!Array.isArray(list) || list.length === 0) {
+    issues.push({ key: "packPanelsShape" })
+    return issues
+  }
+  if (list.length > MAX_PANELS_PER_PACK) {
+    issues.push({ key: "packPanelsCount", params: { max: MAX_PANELS_PER_PACK } })
+  }
+
+  const referenced = new Set<string>()
+  const seenIds = new Set<string>()
+  for (const [index, rawPanel] of list.entries()) {
+    const panel = rawPanel as Record<string, unknown> | null
+    const bad = (detail: string) =>
+      issues.push({
+        key: "packPanelInvalid",
+        params: { panel: typeof panel?.id === "string" ? panel.id : `#${index + 1}`, detail },
+      })
+    if (panel === null || typeof panel !== "object") {
+      bad("each panel must be a mapping")
+      continue
+    }
+    const id = typeof panel.id === "string" ? panel.id : ""
+    if (!PANEL_SLUG_RE.test(id)) bad("id must be a lowercase slug ([a-z0-9-], max 64)")
+    else if (seenIds.has(id)) bad("duplicate panel id")
+    else seenIds.add(id)
+    if (panel.title === undefined) bad("missing title")
+    if (typeof panel.slot !== "string" || !PANEL_SLOTS.has(panel.slot)) {
+      bad("slot must be sidebar | tray | modal")
+    }
+    if (panel.audience !== undefined) {
+      if (typeof panel.audience !== "string" || !PANEL_AUDIENCES.has(panel.audience)) {
+        bad("audience must be all | player | keeper")
+      }
+    }
+
+    if (panel.entry === undefined) {
+      // Tier 1: blocks required; tier-2 keys forbidden.
+      if (panel.assets !== undefined || panel.fallback !== undefined) {
+        bad("only a tier-2 panel (with entry) declares assets/fallback")
+      }
+      const blocks = panel.blocks
+      if (!Array.isArray(blocks) || blocks.length === 0) bad("a tier-1 panel needs blocks")
+      else if (blocks.length > MAX_PANEL_BLOCKS) bad(`at most ${MAX_PANEL_BLOCKS} blocks`)
+      continue
+    }
+
+    // Tier 2: entry html + explicit assets (entry included) + explicit fallback.
+    if (panel.blocks !== undefined) bad("a tier-2 panel declares fallback blocks, not blocks")
+    const entry = typeof panel.entry === "string" ? panel.entry : ""
+    if (!/\.html?$/i.test(entry)) bad("entry must be an .html document")
+    const assets = Array.isArray(panel.assets) ? panel.assets.filter((a) => typeof a === "string") : []
+    if (assets.length === 0) bad("a tier-2 panel must list every file it ships (entry included)")
+    else {
+      if (!assets.includes(entry)) bad("assets must include the entry document itself")
+      if (assets.length - 1 > MAX_PANEL_EXTRA_ASSETS) {
+        bad(`at most ${MAX_PANEL_EXTRA_ASSETS} assets beyond the entry`)
+      }
+      const entryDir = entry.includes("/") ? entry.slice(0, entry.lastIndexOf("/")) : ""
+      for (const asset of assets) {
+        if (entryDir !== "" && !asset.startsWith(`${entryDir}/`)) {
+          bad(`${asset} is outside the entry's directory ${entryDir}`)
+        }
+        referenced.add(asset)
+        if (!filePaths.has(asset)) {
+          issues.push({ key: "packPanelMissingFile", params: { panel: id || `#${index + 1}`, file: asset } })
+        }
+      }
+    }
+    if (!("fallback" in panel))
+      bad("fallback is required for a tier-2 panel (write `fallback: null` to opt out)")
+  }
+
+  for (const path of filePaths) {
+    if (!referenced.has(path)) issues.push({ key: "packPanelFileOrphan", params: { file: path } })
   }
   return issues
 }
@@ -178,6 +341,7 @@ export function buildManifestYaml(draft: WorldPackDraft): string {
   if (draft.lorebooks.length > 0) {
     contents.lorebooks = draft.lorebooks.map((lorebook) => `lorebooks/${lorebook.fileName}`)
   }
+  if (draft.panels !== null) contents.panels = [PANELS_FILE_NAME]
   // NOTE: no `trust` block — it is generated at pack time; a hand-written one
   // is rejected by the engine (`parse_manifest_text(expect_trust=False)`).
   const manifest: Record<string, unknown> = {
@@ -202,8 +366,11 @@ function joinHooks(hooks: string[]): string {
     .join("\n\n")
 }
 
-/** SKILL.md with the frontmatter `core.skills.parse_skill_text` expects. */
+/** SKILL.md with the frontmatter `core.skills.parse_skill_text` expects. A
+ * hand-written `skillMd` ships verbatim — the author owns the whole document. */
 export function buildSkillMd(skill: PackSkillDraft): string {
+  const custom = skill.skillMd?.trim()
+  if (custom) return custom.endsWith("\n") ? custom : `${custom}\n`
   const frontmatter = stringify(
     {
       name: skill.nameEn.trim() || skill.slug,
@@ -243,6 +410,13 @@ export function buildPackSourcePlan(draft: WorldPackDraft): PackSourcePlan {
   }
   for (const asset of draft.assets) {
     binaries.push({ path: `assets/${asset.fileName}`, base64: asset.base64 })
+  }
+  if (draft.panels !== null) {
+    files.push({ path: PANELS_FILE_NAME, contents: draft.panels.yamlText })
+    for (const file of draft.panels.files) {
+      if (file.contents !== undefined) files.push({ path: file.path, contents: file.contents })
+      else if (file.base64 !== undefined) binaries.push({ path: file.path, base64: file.base64 })
+    }
   }
 
   return { dirName: draft.id, files, binaries }

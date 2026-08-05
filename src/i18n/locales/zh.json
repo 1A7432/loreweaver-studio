@@ -168,6 +168,10 @@
     "noProjects": "还没有项目",
     "untitled": "未命名卡片",
     "newProject": "新建卡片",
+    "importNative": "导入 Loreweaver 包…",
+    "importNativeOk": "已把「{{name}}」导入工坊。",
+    "importNativeWarn": "已导入「{{name}}」——{{n}} 行被跳过（引擎容错规则）。",
+    "importNativeBad": "该文件不是 Loreweaver 原生卡包（*.lorecard.json）。",
     "deleteProject": "删除",
     "deleteConfirm": "删除「{{name}}」？此操作不可撤销。",
     "exportNative": "导出 Loreweaver 包",
@@ -509,7 +513,7 @@
       "parseFailed": "无法读取这张卡：{{detail}}",
       "worldCard": "携带世界机制",
       "plainCard": "纯人设卡",
-      "counts": "{{hooks}} 段 hook 脚本 · {{vars}} 条变量声明 · {{ejs}} 个 EJS 块",
+      "counts": "{{hooks}} 段 hook 脚本 · {{vars}} 条变量声明 · {{ejs}} 个 EJS 块 · {{secret}} 条秘密条目",
       "characterHalf": "人物半",
       "characterHint": "已剥离 EJS、移除变量声明、摘除 hooks——任何玩家都可安全自行导入。可直接编辑，导出以此为准。",
       "worldHalf": "世界半",
@@ -735,7 +739,35 @@
         "packDuplicatePath": "包内路径重复：{{file}}。",
         "packSkillSlugInvalid": "技能 slug「{{file}}」必须是小写 slug。",
         "packHooksTooLong": "技能 {{file}}：hooks.js 超过 {{max}} 字符。",
-        "packRulepackIdInvalid": "规则包 id「{{file}}」必须是小写 slug。"
+        "packRulepackIdInvalid": "规则包 id「{{file}}」必须是小写 slug。",
+        "packSkillMdNoFrontmatter": "技能 {{file}}：SKILL.md 必须以 --- frontmatter 开头。",
+        "packPanelsYamlInvalid": "panels.yaml 解析失败：{{detail}}",
+        "packPanelsShape": "panels.yaml 根节点必须是含非空 `panels` 列表的映射。",
+        "packPanelsCount": "每个包至多 {{max}} 个面板。",
+        "packPanelInvalid": "面板 {{panel}}：{{detail}}",
+        "packPanelMissingFile": "面板 {{panel}} 声明了 {{file}}，但面板文件列表里没有它。",
+        "packPanelPathInvalid": "面板文件路径 {{file}} 必须位于 ui/ 下（纯相对路径）。",
+        "packPanelFileBodyMissing": "面板文件 {{file}}：内容缺失或重复。",
+        "packPanelFileOrphan": "面板文件 {{file}} 未被任何面板引用——请移除或在 panels.yaml 里声明。"
+      },
+      "panels": {
+        "title": "模组 UI 面板（M15）",
+        "hint": "可选：声明 ui/panels.yaml（Tier-1 块在所有客户端渲染；Tier-2 面板把 HTML/JS/CSS 装进自己的 ui/<面板>/ 目录，且必须声明 fallback）。下方添加的文件会原样落进源树。",
+        "yaml": "ui/panels.yaml",
+        "subdir": "ui/ 下的目标子目录",
+        "addFiles": "添加面板文件…",
+        "clear": "移除全部面板",
+        "pathLabel": "面板文件路径",
+        "textFile": "文本",
+        "binaryFile": "二进制"
+      },
+      "skills": {
+        "title": "手写技能",
+        "hint": "可选：完整的 SKILL.md 文档（frontmatter + 提示词分节）与可选的 hooks.js——用于守秘人风格的导演技能，而不只是从卡里抽 hooks。",
+        "add": "添加技能",
+        "slug": "技能 slug",
+        "md": "SKILL.md（原样写入）",
+        "hooks": "hooks.js（可选）"
       }
     }
   }

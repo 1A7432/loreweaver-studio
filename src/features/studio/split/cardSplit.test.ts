@@ -109,7 +109,7 @@ describe("splitCard", () => {
 
     // 4 spans: one in description, two forming the if/close pair in first_mes,
     // one inside the surviving book entry.
-    expect(payloads).toEqual({ hooks: 1, initvarEntries: 1, ejsBlocks: 4 })
+    expect(payloads).toEqual({ hooks: 1, initvarEntries: 1, ejsBlocks: 4, secretEntries: 0 })
     expect(payloadsAny(payloads)).toBe(true)
     expect(hooks).toEqual(["on('turn_start', () => {})"])
     expect(initvarEntries).toHaveLength(1)
@@ -130,7 +130,7 @@ describe("splitCard", () => {
   it("reports all-zero payloads for a plain persona card", () => {
     const card = normalizeCard({ name: "Plain", description: "Just prose." })
     const { payloads } = splitCard(card)
-    expect(payloads).toEqual({ hooks: 0, initvarEntries: 0, ejsBlocks: 0 })
+    expect(payloads).toEqual({ hooks: 0, initvarEntries: 0, ejsBlocks: 0, secretEntries: 0 })
     expect(payloadsAny(payloads)).toBe(false)
   })
 })

@@ -8,7 +8,28 @@ export const MAX_LABEL_LEN = 50
 export const MAX_OPTIONS = 20
 export const MAX_OPTION_LEN = 50
 export const MAX_CONDITION_LEN = 500
+/** ASCII fast-path shape. The FULL rule is `isValidVarId` — the engine's
+ * `core.modvars._valid_id` accepts non-ASCII ids (CJK like `理智` is
+ * first-class since M14) and only rejects separator/control characters. */
 export const VAR_ID_RE = /^[a-z0-9_]{1,64}$/
+
+const VAR_ID_UNICODE_FORBIDDEN_RE = /[\p{Z}\p{C}]/u
+
+/** Mirror of the engine's `core.modvars._valid_id`: 1–64 code points; ASCII
+ * must be [a-z0-9_]; non-ASCII is allowed unless it is a separator (Z*) or
+ * control/format (C*) character. */
+export function isValidVarId(slug: string): boolean {
+  let length = 0
+  for (const char of slug) {
+    length += 1
+    if (length > 64) return false
+    const code = char.codePointAt(0) ?? 0
+    if (code < 0x80) {
+      if (!/[a-z0-9_]/.test(char)) return false
+    } else if (VAR_ID_UNICODE_FORBIDDEN_RE.test(char)) return false
+  }
+  return length >= 1
+}
 
 export type VarKind = "number" | "bool" | "text" | "enum"
 export type VarVisibility = "player" | "keeper"
@@ -146,7 +167,7 @@ function cleanOptions(raw: string): string[] {
 export function buildSpec(v: ForgeVariable): { spec: ModvarSpec | null; errors: Issue[] } {
   const errors: Issue[] = []
   const id = normalizeVarId(v.id)
-  if (!VAR_ID_RE.test(id)) errors.push({ key: "idInvalid" })
+  if (!isValidVarId(id)) errors.push({ key: "idInvalid" })
 
   const labels: Record<string, string> = {}
   if (v.labelEn.trim()) labels.en = v.labelEn.trim().slice(0, MAX_LABEL_LEN)

@@ -15,7 +15,15 @@ import {
 import { asText, isRecord } from "../features/studio/split/charcard"
 import { flattenLeaves, parseInitvar, type MvuLeaf } from "../features/studio/split/mvu"
 import { promoteLeaves, suggestExposePrefixes, type PromotionDraft } from "../features/studio/split/promote"
-import { safeFileName, validatePackDraft, type WorldPackDraft } from "../features/studio/split/packSource"
+import {
+  safeFileName,
+  validatePackDraft,
+  type PackPanelFileDraft,
+  type PackPanelsDraft,
+  type PackSkillDraft,
+  type WorldPackDraft,
+} from "../features/studio/split/packSource"
+import { looksLikeLorecard, lorecardToCard } from "../features/studio/split/lorecard"
 import type { Issue } from "../features/studio/model"
 import { bytesToBase64, type EngineCandidate, type EngineRunResult, type PickedFile } from "../lib/native"
 
@@ -87,6 +95,7 @@ const decoder = new TextDecoder("utf-8")
  * JSON that is neither stays an asset the author can reclassify. */
 export function classifyJson(parsed: unknown): PackItemKind {
   if (!isRecord(parsed)) return "asset"
+  if (looksLikeLorecard(parsed)) return "card"
   if (parsed.spec === "chara_card_v2" || parsed.spec === "chara_card_v3") return "card"
   if (isRecord(parsed.data) && (asText(parsed.data.name) || parsed.data.character_book)) return "card"
   if (asText(parsed.name) && (parsed.description !== undefined || parsed.first_mes !== undefined)) {
@@ -162,6 +171,12 @@ async function itemFromFile(file: PickedFile): Promise<PackItem> {
       return { ...base, kind: "asset", fileName: safeFileName(stem, "file") + ".json", jsonText }
     }
     const kind = classifyJson(parsed)
+    if (kind === "card" && isRecord(parsed) && looksLikeLorecard(parsed)) {
+      // Native bundle: the M14 parser, not the ST one — and keep the
+      // `.lorecard.json` double suffix the ecosystem recognizes.
+      const bareStem = stem.toLowerCase().endsWith(".lorecard") ? stem.slice(0, -".lorecard".length) : stem
+      return lorecardItem(base, parsed, jsonText, `${safeFileName(bareStem, "card")}.lorecard.json`)
+    }
     if (kind === "card") {
       return await cardItem(base, file, jsonText, `${safeFileName(stem, "card")}.json`)
     }
@@ -196,6 +211,25 @@ async function cardItem(
   fileName: string,
 ): Promise<PackItem> {
   const card = await parseCardBytes(file.bytes, file.name)
+  return splitIntoItem(base, card, jsonText, fileName)
+}
+
+/** Native bundle → pack item: same split/promotion machinery, native parser. */
+function lorecardItem(
+  base: Omit<PackItem, "kind" | "fileName">,
+  parsed: Record<string, unknown>,
+  jsonText: string,
+  fileName: string,
+): PackItem {
+  return splitIntoItem(base, lorecardToCard(parsed).card, jsonText, fileName)
+}
+
+function splitIntoItem(
+  base: Omit<PackItem, "kind" | "fileName">,
+  card: StCharacterCard,
+  jsonText: string | null,
+  fileName: string,
+): PackItem {
   const split = splitCard(card)
   const { leaves, truncated } = initvarLeaves(split.initvarEntries)
   const isWorld = payloadsAny(split.payloads)
@@ -220,6 +254,12 @@ interface PackState {
   metadata: PackMetadataForm
   loadError: string | null
 
+  /** M15 module-UI panels: `ui/panels.yaml` + the panel files it references. */
+  panels: PackPanelsDraft | null
+  /** Hand-authored skills (full SKILL.md + optional hooks.js), alongside the
+   * ones extracted from cards. */
+  manualSkills: PackSkillDraft[]
+
   outputDir: string | null
   writtenDir: string | null
   candidates: EngineCandidate[]
@@ -235,6 +275,14 @@ interface PackState {
   updateItem: (uid: string, patch: Partial<PackItem>) => void
   updateDraft: (itemUid: string, draftUid: string, patch: Partial<PromotionDraft>) => void
   setMetadata: (patch: Partial<PackMetadataForm>) => void
+  setPanelsYaml: (yamlText: string) => void
+  addPanelFiles: (files: PickedFile[], subdir: string) => void
+  updatePanelFilePath: (path: string, nextPath: string) => void
+  removePanelFile: (path: string) => void
+  clearPanels: () => void
+  addManualSkill: () => void
+  updateManualSkill: (index: number, patch: Partial<PackSkillDraft>) => void
+  removeManualSkill: (index: number) => void
   seedFromSplit: (item: PackItem, notesZh: string, notesEn: string) => void
   setOutputDir: (dir: string | null) => void
   setWritten: (dir: string | null) => void
@@ -247,11 +295,31 @@ interface PackState {
   reset: () => void
 }
 
+/** Panel files that ride as UTF-8 text (readable diffs); the rest go base64. */
+const PANEL_TEXT_EXTENSIONS = new Set(["html", "htm", "js", "css", "svg", "json", "yaml", "yml", "txt", "md"])
+
+function panelFileFromPicked(file: PickedFile, subdir: string): PackPanelFileDraft {
+  const dir = subdir
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .map((part) => safeFileName(part, ""))
+    .filter((part) => part.length > 0)
+    .join("/")
+  const path = `ui/${dir ? `${dir}/` : ""}${file.name}`
+  const extension = /\.([^.]+)$/.exec(file.name.toLowerCase())?.[1] ?? ""
+  if (PANEL_TEXT_EXTENSIONS.has(extension)) {
+    return { path, contents: decoder.decode(file.bytes) }
+  }
+  return { path, base64: bytesToBase64(file.bytes) }
+}
+
 export const usePackStore = create<PackState>()((set) => ({
   step: "input",
   items: [],
   metadata: EMPTY_METADATA,
   loadError: null,
+  panels: null,
+  manualSkills: [],
   outputDir: null,
   writtenDir: null,
   candidates: [],
@@ -307,11 +375,62 @@ export const usePackStore = create<PackState>()((set) => ({
 
   setMetadata: (patch) => set((state) => ({ metadata: { ...state.metadata, ...patch } })),
 
+  setPanelsYaml: (yamlText) => set((state) => ({ panels: { yamlText, files: state.panels?.files ?? [] } })),
+
+  addPanelFiles: (files, subdir) =>
+    set((state) => {
+      const existing = state.panels ?? { yamlText: "", files: [] }
+      const additions = files.map((file) => panelFileFromPicked(file, subdir))
+      const kept = existing.files.filter((file) => !additions.some((next) => next.path === file.path))
+      return { panels: { ...existing, files: [...kept, ...additions] } }
+    }),
+
+  updatePanelFilePath: (path, nextPath) =>
+    set((state) =>
+      state.panels === null
+        ? {}
+        : {
+            panels: {
+              ...state.panels,
+              files: state.panels.files.map((file) =>
+                file.path === path ? { ...file, path: nextPath } : file,
+              ),
+            },
+          },
+    ),
+
+  removePanelFile: (path) =>
+    set((state) =>
+      state.panels === null
+        ? {}
+        : { panels: { ...state.panels, files: state.panels.files.filter((file) => file.path !== path) } },
+    ),
+
+  clearPanels: () => set({ panels: null }),
+
+  addManualSkill: () =>
+    set((state) => ({
+      manualSkills: [
+        ...state.manualSkills,
+        { slug: "", nameEn: "", descriptionEn: "", descriptionZh: "", hooks: [], skillMd: "" },
+      ],
+    })),
+
+  updateManualSkill: (index, patch) =>
+    set((state) => ({
+      manualSkills: state.manualSkills.map((skill, i) => (i === index ? { ...skill, ...patch } : skill)),
+    })),
+
+  removeManualSkill: (index) =>
+    set((state) => ({ manualSkills: state.manualSkills.filter((_, i) => i !== index) })),
+
   seedFromSplit: (item, notesZh, notesEn) =>
     set({
       step: "metadata",
       items: [{ ...item, notesZh, notesEn }],
       metadata: { ...EMPTY_METADATA },
+      panels: null,
+      manualSkills: [],
       writtenDir: null,
       runResult: null,
       builtPackPath: null,
@@ -332,6 +451,8 @@ export const usePackStore = create<PackState>()((set) => ({
       items: [],
       metadata: EMPTY_METADATA,
       loadError: null,
+      panels: null,
+      manualSkills: [],
       outputDir: null,
       writtenDir: null,
       runResult: null,
@@ -355,7 +476,12 @@ export function packExposeLines(items: PackItem[]): string[] {
 }
 
 /** Assemble the WorldPackDraft for validation + source-tree planning. */
-export function buildDraftFromState(items: PackItem[], metadata: PackMetadataForm): WorldPackDraft {
+export function buildDraftFromState(
+  items: PackItem[],
+  metadata: PackMetadataForm,
+  panels: PackPanelsDraft | null = null,
+  manualSkills: PackSkillDraft[] = [],
+): WorldPackDraft {
   const cards = items
     .filter((item) => item.kind === "card")
     .map((item) => ({
@@ -396,11 +522,12 @@ export function buildDraftFromState(items: PackItem[], metadata: PackMetadataFor
     lorebooks: items
       .filter((item) => item.kind === "lorebook" && item.jsonText !== null)
       .map((item) => ({ fileName: item.fileName, jsonText: item.jsonText ?? "" })),
-    skills,
+    skills: [...skills, ...manualSkills],
     rulepacks,
     assets: items
       .filter((item) => item.kind === "asset")
       .map((item) => ({ fileName: item.fileName, base64: item.base64 })),
+    panels: panels !== null && panels.yamlText.trim() ? panels : null,
   }
 }
 
@@ -422,6 +549,11 @@ function withoutHooksJson(item: PackItem): string {
   return JSON.stringify(splitCard(item.card).character.raw, null, 2)
 }
 
-export function packValidationIssues(items: PackItem[], metadata: PackMetadataForm): Issue[] {
-  return validatePackDraft(buildDraftFromState(items, metadata))
+export function packValidationIssues(
+  items: PackItem[],
+  metadata: PackMetadataForm,
+  panels: PackPanelsDraft | null = null,
+  manualSkills: PackSkillDraft[] = [],
+): Issue[] {
+  return validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills))
 }

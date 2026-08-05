@@ -33,7 +33,36 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
     skills: [],
     rulepacks: [],
     assets: [],
+    panels: null,
     ...overrides,
+  }
+}
+
+const PANELS_YAML = `panels:
+  - id: hud
+    title: {en: HUD, zh: 状态板}
+    slot: sidebar
+    blocks:
+      - {kind: meter, label: {en: Fear, zh: 恐慌}, value: {$var: fear}, min: 0, max: 10}
+  - id: case-board
+    title: {en: Case Board, zh: 案情板}
+    slot: modal
+    audience: all
+    entry: ui/case-board/index.html
+    assets:
+      - ui/case-board/index.html
+      - ui/case-board/app.js
+    fallback:
+      - {kind: text, text: {en: "Rich client only.", zh: "请在富客户端查看。"}}
+`
+
+function panelsDraft(yaml = PANELS_YAML) {
+  return {
+    yamlText: yaml,
+    files: [
+      { path: "ui/case-board/index.html", contents: "<main></main>" },
+      { path: "ui/case-board/app.js", contents: "console.log(1)" },
+    ],
   }
 }
 
@@ -196,6 +225,111 @@ describe("buildSkillMd / buildPackSourcePlan", () => {
       }),
     )
     expect(plan.binaries).toEqual([{ path: "cards/heavy.png", base64: "aGk=" }])
+  })
+})
+
+describe("panels (M15)", () => {
+  it("accepts a well-formed panels draft and plans ui/ into the source tree", () => {
+    const withPanels = draft({ panels: panelsDraft() })
+    expect(validatePackDraft(withPanels)).toEqual([])
+
+    const plan = buildPackSourcePlan(withPanels)
+    const paths = plan.files.map((file) => file.path)
+    expect(paths).toContain("ui/panels.yaml")
+    expect(paths).toContain("ui/case-board/index.html")
+    expect(paths).toContain("ui/case-board/app.js")
+
+    const manifest = parse(plan.files[0].contents) as { contents: Record<string, unknown> }
+    expect(manifest.contents.panels).toEqual(["ui/panels.yaml"])
+  })
+
+  it("omits contents.panels entirely when the pack ships none", () => {
+    const manifest = parse(buildManifestYaml(draft())) as { contents: Record<string, unknown> }
+    expect("panels" in manifest.contents).toBe(false)
+  })
+
+  it("flags YAML that does not parse, with the first error line as detail", () => {
+    const issues = validatePackDraft(draft({ panels: { yamlText: "panels: [", files: [] } }))
+    expect(issues.map((issue) => issue.key)).toContain("packPanelsYamlInvalid")
+  })
+
+  it("mirrors the engine's structural rules (tier-2 fallback, asset confinement, missing files)", () => {
+    const badYaml = `panels:
+  - id: Case_Board
+    title: Board
+    slot: nowhere
+    entry: ui/case-board/index.html
+    assets:
+      - ui/case-board/index.html
+      - ui/elsewhere/app.js
+`
+    const issues = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: badYaml,
+          files: [{ path: "ui/case-board/index.html", contents: "<main></main>" }],
+        },
+      }),
+    )
+    const keys = issues.map((issue) => issue.key)
+    expect(keys).toContain("packPanelInvalid")
+    expect(keys).toContain("packPanelMissingFile")
+    const details = issues
+      .filter((issue) => issue.key === "packPanelInvalid")
+      .map((issue) => String(issue.params?.detail))
+    expect(details.some((detail) => detail.includes("slug"))).toBe(true)
+    expect(details.some((detail) => detail.includes("slot"))).toBe(true)
+    expect(details.some((detail) => detail.includes("fallback"))).toBe(true)
+    expect(details.some((detail) => detail.includes("outside the entry's directory"))).toBe(true)
+  })
+
+  it("flags shipped panel files no panel references, and paths outside ui/", () => {
+    const issues = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: PANELS_YAML,
+          files: [
+            { path: "ui/case-board/index.html", contents: "<main></main>" },
+            { path: "ui/case-board/app.js", contents: "x" },
+            { path: "ui/stray.css", contents: "x" },
+            { path: "elsewhere/evil.js", contents: "x" },
+          ],
+        },
+      }),
+    )
+    const keys = issues.map((issue) => issue.key)
+    expect(keys).toContain("packPanelFileOrphan")
+    expect(keys).toContain("packPanelPathInvalid")
+  })
+
+  it("ships a hand-written SKILL.md verbatim and flags one without frontmatter", () => {
+    const custom =
+      "---\nname: Direction\ndescription: Keeper craft.\nmetadata:\n  scope: room\n---\n\n# 導演台本\n"
+    const md = buildSkillMd({
+      slug: "direction",
+      nameEn: "",
+      descriptionEn: "",
+      descriptionZh: "",
+      hooks: [],
+      skillMd: custom,
+    })
+    expect(md).toBe(custom)
+
+    const issues = validatePackDraft(
+      draft({
+        skills: [
+          {
+            slug: "direction",
+            nameEn: "",
+            descriptionEn: "",
+            descriptionZh: "",
+            hooks: [],
+            skillMd: "no frontmatter",
+          },
+        ],
+      }),
+    )
+    expect(issues.map((issue) => issue.key)).toContain("packSkillMdNoFrontmatter")
   })
 })
 

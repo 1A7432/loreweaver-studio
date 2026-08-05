@@ -73,7 +73,7 @@ describe("pack store pipeline", () => {
 
     const card = items[0]
     expect(card.cardKind).toBe("world")
-    expect(card.payloads).toEqual({ hooks: 1, initvarEntries: 1, ejsBlocks: 1 })
+    expect(card.payloads).toEqual({ hooks: 1, initvarEntries: 1, ejsBlocks: 1, secretEntries: 0 })
     expect(card.drafts.length).toBe(2)
     expect(items[1].entryCount).toBe(2)
 

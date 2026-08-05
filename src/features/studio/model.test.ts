@@ -54,8 +54,16 @@ describe("buildSpec", () => {
     expect(spec?.default).toBe(10)
   })
 
+  it("accepts non-ASCII ids the engine accepts (CJK/Cyrillic are first-class since M14)", () => {
+    // Ground truth: core.modvars.normalize_id('почему') == 'почему', '视线' == '视线'.
+    expect(buildSpec(variable({ id: "почему" })).errors).toEqual([])
+    expect(buildSpec(variable({ id: "视线", minimum: "0", maximum: "10" })).spec?.id).toBe("视线")
+  })
+
   it("rejects bad ids, reversed bounds, and non-integer bounds", () => {
-    expect(buildSpec(variable({ id: "почему" })).errors).toContainEqual({ key: "idInvalid" })
+    // Zero-width space is category Cf — the engine's _valid_id refuses Z*/C*.
+    expect(buildSpec(variable({ id: "​zero" })).errors).toContainEqual({ key: "idInvalid" })
+    expect(buildSpec(variable({ id: "x".repeat(65) })).errors).toContainEqual({ key: "idInvalid" })
     expect(buildSpec(variable({ id: "x", minimum: "5", maximum: "1" })).errors).toContainEqual({
       key: "boundsOrder",
     })

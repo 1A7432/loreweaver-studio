@@ -168,6 +168,10 @@
     "noProjects": "No projects yet",
     "untitled": "Untitled card",
     "newProject": "New card",
+    "importNative": "Import Loreweaver bundle…",
+    "importNativeOk": "Imported \"{{name}}\" into the forge.",
+    "importNativeWarn": "Imported \"{{name}}\" — {{n}} row(s) were skipped (see the engine's tolerance rules).",
+    "importNativeBad": "That file is not a Loreweaver native bundle (*.lorecard.json).",
     "deleteProject": "Delete",
     "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone.",
     "exportNative": "Export Loreweaver bundle",
@@ -509,7 +513,7 @@
       "parseFailed": "Could not read that card: {{detail}}",
       "worldCard": "carries world machinery",
       "plainCard": "plain persona card",
-      "counts": "{{hooks}} hook script(s) · {{vars}} variable declaration(s) · {{ejs}} EJS block(s)",
+      "counts": "{{hooks}} hook script(s) · {{vars}} variable declaration(s) · {{ejs}} EJS block(s) · {{secret}} secret entr(ies)",
       "characterHalf": "Character half",
       "characterHint": "EJS stripped, variable declarations removed, hooks detached — safe for any player to self-import. Edit freely; exports use these fields.",
       "worldHalf": "World half",
@@ -735,7 +739,35 @@
         "packDuplicatePath": "Duplicate path in the pack: {{file}}.",
         "packSkillSlugInvalid": "Skill slug \"{{file}}\" must be a lowercase slug.",
         "packHooksTooLong": "Skill {{file}}: hooks.js exceeds {{max}} characters.",
-        "packRulepackIdInvalid": "Rulepack id \"{{file}}\" must be a lowercase slug."
+        "packRulepackIdInvalid": "Rulepack id \"{{file}}\" must be a lowercase slug.",
+        "packSkillMdNoFrontmatter": "Skill {{file}}: SKILL.md must open with a --- frontmatter block.",
+        "packPanelsYamlInvalid": "panels.yaml does not parse: {{detail}}",
+        "packPanelsShape": "panels.yaml must be a mapping with a non-empty `panels` list.",
+        "packPanelsCount": "At most {{max}} panels per pack.",
+        "packPanelInvalid": "Panel {{panel}}: {{detail}}",
+        "packPanelMissingFile": "Panel {{panel}} declares {{file}}, but that file is not in the panel file list.",
+        "packPanelPathInvalid": "Panel file path {{file}} must live under ui/ (plain relative path).",
+        "packPanelFileBodyMissing": "Panel file {{file}}: file body missing or duplicated.",
+        "packPanelFileOrphan": "Panel file {{file}} is not referenced by any panel — remove it or declare it."
+      },
+      "panels": {
+        "title": "Module UI panels (M15)",
+        "hint": "Optional: declare ui/panels.yaml (Tier-1 blocks render everywhere; a Tier-2 panel ships HTML/JS/CSS under its own ui/<panel>/ directory and MUST declare a fallback). Files added below land verbatim in the source tree.",
+        "yaml": "ui/panels.yaml",
+        "subdir": "Target folder under ui/",
+        "addFiles": "Add panel files…",
+        "clear": "Remove all panels",
+        "pathLabel": "Panel file path",
+        "textFile": "text",
+        "binaryFile": "binary"
+      },
+      "skills": {
+        "title": "Hand-written skills",
+        "hint": "Optional: full SKILL.md documents (frontmatter + prompt sections) with an optional hooks.js — for keeper-style direction skills, not just hook extraction.",
+        "add": "Add a skill",
+        "slug": "Skill slug",
+        "md": "SKILL.md (verbatim)",
+        "hooks": "hooks.js (optional)"
       }
     }
   }

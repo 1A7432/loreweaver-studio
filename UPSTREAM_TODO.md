@@ -43,7 +43,18 @@ path>` (no `pack:` prefix): resolves against the newest installed
    `ModuleVariable`; refresh the studio's M15 snapshot from canonical if it still
    shows the old name.
 
-8. **Keeper-style prompt presets as pack assets** — HALF landed: the engine now has the
+8.5. ✅ **Native bundles as first-class pack cards** — landed ENGINE-side in-session
+(2026-08-06, user-directed): `core/pack.py::_validate_card_bytes` dispatches
+`looks_like_lorecard` → `parse_lorecard_bytes`, so `cards/*.lorecard.json` gets honest
+machinery detection (hooks / `secret` lore / declaration entries) and the same
+`kind: world` enforcement + trust counts as ST cards. Studio consumed it the same day
+(pack bench classifies native bundles; forge imports them). Remaining nuance, noted
+deliberately: `detect_world_payloads` does NOT count typed `variables` — a bundle whose
+ONLY machinery is typed specs still passes as `character` (both sides mirror this;
+player import strips specs anyway, so nothing leaks — but trust's `world_cards` can
+undercount that edge). Decide upstream whether typed specs alone should force world.
+
+9. **Keeper-style prompt presets as pack assets** — HALF landed: the engine now has the
    authoritative preset parser (`core/preset.py`, matrix/marker/macro semantics matching
    `src/features/studio/ai/stPreset.ts`), disk store (`data_dir/presets/`), the keeper
    `.preset list|import|enable|disable|show` surface, and a bounded style-layer fold in

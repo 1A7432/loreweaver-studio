@@ -19,10 +19,16 @@ export interface WorldPayloads {
   hooks: number
   initvarEntries: number
   ejsBlocks: number
+  /** Keeper-only (`secret: true`) entries — a native bundle (M14) can carry
+   * them; stock ST cards never do. Keeper-only lore IS world machinery
+   * (mirrors the engine's `WorldPayloads.secret_entries`). */
+  secretEntries: number
 }
 
 export function payloadsAny(payloads: WorldPayloads): boolean {
-  return payloads.hooks > 0 || payloads.initvarEntries > 0 || payloads.ejsBlocks > 0
+  return (
+    payloads.hooks > 0 || payloads.initvarEntries > 0 || payloads.ejsBlocks > 0 || payloads.secretEntries > 0
+  )
 }
 
 /** Split leading ST-Prompt-Template `@@decorator` lines off `text`. Flags map
@@ -141,9 +147,17 @@ export function splitCard(card: StCharacterCard): SplitCardResult {
 
   const entries: Record<string, unknown>[] = []
   const initvarEntries: Record<string, unknown>[] = []
+  let secretEntries = 0
   for (const rawEntry of card.characterBook) {
     if (isVariableDeclarationEntry(rawEntry)) {
       initvarEntries.push(rawEntry)
+      continue
+    }
+    // Keeper-only lore never rides the character half (a native bundle can
+    // flag it; the engine's worldbook import chokepoint additionally drops it
+    // fail-closed on any non-keeper path — two layers, same rule).
+    if (rawEntry.secret === true) {
+      secretEntries += 1
       continue
     }
     const entry: Record<string, unknown> = { ...rawEntry }
@@ -165,7 +179,7 @@ export function splitCard(card: StCharacterCard): SplitCardResult {
   }
   return {
     character,
-    payloads: { hooks: hooks.length, initvarEntries: initvarEntries.length, ejsBlocks },
+    payloads: { hooks: hooks.length, initvarEntries: initvarEntries.length, ejsBlocks, secretEntries },
     hooks,
     initvarEntries,
   }

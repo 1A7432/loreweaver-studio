@@ -9,7 +9,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview"
 import {
   aiAvailable,
   formatCliCommand,
-  pickCardFile,
+  pickAnyFiles,
   pickDirectory,
   probeEngineCli,
   readFileByPath,
@@ -80,6 +80,7 @@ function ItemRow({ item }: { item: PackItem }) {
             hooks: item.payloads.hooks,
             vars: item.payloads.initvarEntries,
             ejs: item.payloads.ejsBlocks,
+            secret: item.payloads.secretEntries,
           })}
           {item.card?.name ? ` · ${item.card.name}` : ""}
         </p>
@@ -140,7 +141,13 @@ export default function PackWizard() {
   const [busy, setBusy] = useState(false)
   const [aiProblems, setAiProblems] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [panelDir, setPanelDir] = useState("")
   const dropRef = useRef<HTMLDivElement | null>(null)
+
+  const addPanelAssets = async () => {
+    const files = await pickAnyFiles()
+    if (files.length > 0) store.addPanelFiles(files, panelDir)
+  }
 
   // Native drag-drop (Tauri swallows HTML5 DnD): file paths arrive as an event.
   useEffect(() => {
@@ -178,8 +185,8 @@ export default function PackWizard() {
   }
 
   const addViaPicker = async () => {
-    const file = await pickCardFile()
-    if (file !== null) await store.addFiles([file])
+    const files = await pickAnyFiles()
+    if (files.length > 0) await store.addFiles(files)
   }
 
   const draftMetadataWithAi = async () => {
@@ -264,7 +271,7 @@ export default function PackWizard() {
   const writeSource = async () => {
     if (store.outputDir === null) return
     setError(null)
-    const draft = buildDraftFromState(store.items, store.metadata)
+    const draft = buildDraftFromState(store.items, store.metadata, store.panels, store.manualSkills)
     const plan = buildPackSourcePlan(draft)
     const root = `${store.outputDir}/${plan.dirName}`
     try {
@@ -341,7 +348,7 @@ export default function PackWizard() {
     }
   }
 
-  const issues = packValidationIssues(store.items, store.metadata)
+  const issues = packValidationIssues(store.items, store.metadata, store.panels, store.manualSkills)
   const stepIndex = PACK_STEPS.indexOf(store.step)
   const worldCards = store.items.filter((item) => item.kind === "card" && item.cardKind === "world")
   const canNext: Record<PackStep, boolean> = {
@@ -541,6 +548,124 @@ export default function PackWizard() {
               />
             </label>
           </div>
+
+          <section className="pack-extra-section">
+            <h3>{t("studio.pack.panels.title")}</h3>
+            <p className="studio-hint">{t("studio.pack.panels.hint")}</p>
+            <label className="field field-wide">
+              {t("studio.pack.panels.yaml")}
+              <textarea
+                rows={10}
+                value={store.panels?.yamlText ?? ""}
+                onChange={(e) => store.setPanelsYaml(e.target.value)}
+                placeholder={
+                  "panels:\n  - id: hud\n    title: {en: HUD, zh: 状态板}\n    slot: sidebar\n    blocks:\n      - {kind: meter, label: {en: Fear, zh: 恐慌}, value: {$var: fear}, min: 0, max: 10}"
+                }
+                spellCheck={false}
+              />
+            </label>
+            <div className="dialog-row">
+              <label className="field field-narrow">
+                {t("studio.pack.panels.subdir")}
+                <input
+                  value={panelDir}
+                  onChange={(e) => setPanelDir(e.target.value)}
+                  placeholder="case-board"
+                  spellCheck={false}
+                />
+              </label>
+              <button type="button" className="ghost-button" onClick={() => void addPanelAssets()}>
+                {t("studio.pack.panels.addFiles")}
+              </button>
+              {store.panels !== null ? (
+                <button type="button" className="ghost-button" onClick={() => store.clearPanels()}>
+                  {t("studio.pack.panels.clear")}
+                </button>
+              ) : null}
+            </div>
+            {store.panels !== null && store.panels.files.length > 0 ? (
+              <ul className="pack-file-list">
+                {store.panels.files.map((file) => (
+                  <li key={file.path}>
+                    <input
+                      className="pack-panel-path"
+                      value={file.path}
+                      aria-label={t("studio.pack.panels.pathLabel")}
+                      onChange={(e) => store.updatePanelFilePath(file.path, e.target.value)}
+                      spellCheck={false}
+                    />
+                    <span className="split-badge">
+                      {file.contents !== undefined
+                        ? t("studio.pack.panels.textFile")
+                        : t("studio.pack.panels.binaryFile")}
+                    </span>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => store.removePanelFile(file.path)}
+                    >
+                      {t("studio.remove")}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+
+          <section className="pack-extra-section">
+            <h3>{t("studio.pack.skills.title")}</h3>
+            <p className="studio-hint">{t("studio.pack.skills.hint")}</p>
+            {store.manualSkills.map((skill, index) => (
+              <div className="pack-item" key={index}>
+                <div className="pack-item-head">
+                  <label className="field field-narrow">
+                    {t("studio.pack.skills.slug")}
+                    <input
+                      value={skill.slug}
+                      onChange={(e) => store.updateManualSkill(index, { slug: e.target.value })}
+                      placeholder="my-skill"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => store.removeManualSkill(index)}
+                  >
+                    {t("studio.remove")}
+                  </button>
+                </div>
+                <label className="field field-wide">
+                  {t("studio.pack.skills.md")}
+                  <textarea
+                    rows={8}
+                    value={skill.skillMd ?? ""}
+                    onChange={(e) => store.updateManualSkill(index, { skillMd: e.target.value })}
+                    placeholder={"---\nname: …\ndescription: …\nmetadata:\n  scope: room\n---\n\n…"}
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="field field-wide">
+                  {t("studio.pack.skills.hooks")}
+                  <textarea
+                    rows={4}
+                    value={skill.hooks[0] ?? ""}
+                    onChange={(e) =>
+                      store.updateManualSkill(index, {
+                        hooks: e.target.value.trim() ? [e.target.value] : [],
+                      })
+                    }
+                    placeholder={"on('turn_start', () => { /* … */ })"}
+                    spellCheck={false}
+                  />
+                </label>
+              </div>
+            ))}
+            <button type="button" className="ghost-button" onClick={() => store.addManualSkill()}>
+              {t("studio.pack.skills.add")}
+            </button>
+          </section>
+
           {issues.length > 0 ? (
             <ul className="issue-list">
               {issues.map((issue, index) => (

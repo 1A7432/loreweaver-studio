@@ -1,7 +1,10 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { saveTextFile } from "../../lib/files"
+import { pickJsonFile } from "../../lib/native"
 import { useActiveProject, useStudioStore, type StudioTab, type StudioViewName } from "../../store/studio"
+import { isRecord } from "./split/charcard"
+import { looksLikeLorecard, lorecardToProject } from "./split/lorecard"
 import AiPanel from "./ai/AiPanel"
 import AiSettingsDialog from "./ai/AiSettingsDialog"
 import PresetManagerDialog from "./ai/PresetManagerDialog"
@@ -30,6 +33,7 @@ export default function StudioView() {
   const createProject = useStudioStore((s) => s.createProject)
   const deleteProject = useStudioStore((s) => s.deleteProject)
   const selectProject = useStudioStore((s) => s.selectProject)
+  const importProject = useStudioStore((s) => s.importProject)
   const aiSettings = useAiStore()
   const [notice, setNotice] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
@@ -46,6 +50,27 @@ export default function StudioView() {
         : exportSillyTavernCard(project, validation.specs)
     const outcome = await saveTextFile(exportFileName(project, flavor), JSON.stringify(payload, null, 2))
     setNotice(t(`studio.save.${outcome}`))
+  }
+
+  const doImportNative = async () => {
+    const file = await pickJsonFile()
+    if (file === null) return
+    try {
+      const parsed: unknown = JSON.parse(new TextDecoder("utf-8").decode(file.bytes))
+      if (!isRecord(parsed) || !looksLikeLorecard(parsed)) {
+        setNotice(t("studio.importNativeBad"))
+        return
+      }
+      const { project: imported, warnings } = lorecardToProject(parsed)
+      importProject(imported)
+      setNotice(
+        warnings.length > 0
+          ? t("studio.importNativeWarn", { name: imported.name, n: warnings.length })
+          : t("studio.importNativeOk", { name: imported.name }),
+      )
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   return (
@@ -107,6 +132,9 @@ export default function StudioView() {
               onClick={() => createProject(t("studio.untitled"))}
             >
               {t("studio.newProject")}
+            </button>
+            <button type="button" className="ghost-button" onClick={() => void doImportNative()}>
+              {t("studio.importNative")}
             </button>
             {project ? (
               <button
