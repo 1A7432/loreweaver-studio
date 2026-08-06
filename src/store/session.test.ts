@@ -33,6 +33,41 @@ describe("session store", () => {
     expect(entry.frame.done).toBe(true)
   })
 
+  it("lets a plain KP reply supersede an abandoned draft from another id", () => {
+    // A corrective rewrite: the server abandons the streamed draft and sends
+    // the corrected text as a fresh plain narrative.
+    ingest(narrative("s1", "The fog thick", { stream: true }))
+    ingest(narrative("n2", "The fog thickens over the pier."))
+    const { entries } = useSessionStore.getState()
+    expect(entries).toHaveLength(1)
+    const entry = entries[0]
+    if (entry.kind !== "narrative") throw new Error("expected narrative")
+    expect(entry.frame.id).toBe("n2")
+    expect(entry.frame.text).toBe("The fog thickens over the pier.")
+  })
+
+  it("lets a finished stream supersede another id's still-open draft", () => {
+    ingest(narrative("s1", "tool-round draft", { stream: true }))
+    ingest(narrative("s2", "The real reply", { stream: true }))
+    ingest(narrative("s2", " lands.", { stream: true, done: true }))
+    const { entries } = useSessionStore.getState()
+    expect(entries).toHaveLength(1)
+    const entry = entries[0]
+    if (entry.kind !== "narrative") throw new Error("expected narrative")
+    expect(entry.frame.id).toBe("s2")
+    expect(entry.frame.text).toBe("The real reply lands.")
+  })
+
+  it("never supersedes on a mid-stream delta or a non-KP line", () => {
+    ingest(narrative("s1", "draft one ", { stream: true }))
+    // A new stream opening does not evict the old draft…
+    ingest(narrative("s2", "draft two ", { stream: true }))
+    expect(useSessionStore.getState().entries).toHaveLength(2)
+    // …and neither does a player's plain line, nor a finished KP bubble its own draft.
+    ingest(narrative("p1", "I wait.", { speaker: "player", name: "Ash" }))
+    expect(useSessionStore.getState().entries).toHaveLength(3)
+  })
+
   it("caps a runaway stream at MAX_STREAM_TEXT", () => {
     ingest(narrative("s1", "x".repeat(MAX_STREAM_TEXT - 10), { stream: true }))
     ingest(narrative("s1", "y".repeat(100), { stream: true }))

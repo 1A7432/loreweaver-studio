@@ -59,18 +59,30 @@ function Entry({ entry }: { entry: LogEntry }) {
   }
 }
 
+/** How close to the bottom (px) still counts as "following the stream". */
+export const FOLLOW_SLACK_PX = 48
+
 export default function NarrativeLog() {
   const { t } = useTranslation()
   const entries = useSessionStore((s) => s.entries)
   const scroller = useRef<HTMLDivElement>(null)
+  // Streaming turns one reply into dozens of updates; only follow when the
+  // reader is already pinned at the bottom, so scrolling up to reread history
+  // is never yanked back down mid-stream.
+  const pinned = useRef(true)
+
+  const onScroll = () => {
+    const el = scroller.current
+    if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLACK_PX
+  }
 
   useEffect(() => {
     const el = scroller.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && pinned.current) el.scrollTop = el.scrollHeight
   }, [entries])
 
   return (
-    <div className="narrative-log" ref={scroller}>
+    <div className="narrative-log" ref={scroller} onScroll={onScroll}>
       {entries.length === 0 ? <p className="log-empty">{t("session.empty")}</p> : null}
       {entries.map((entry) => (
         <Entry key={entry.seq} entry={entry} />

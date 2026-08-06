@@ -61,11 +61,27 @@ function pushEntry(entries: LogEntry[], entry: Omit<LogEntry, "seq">): LogEntry[
  * Narrative merge rules (matching the reference TUI, plus replay dedup):
  * - a `stream:true` chunk appends its text delta to the entry with the same id
  *   (creating it if new) and carries the `done` flag forward;
+ * - a finished or plain KP reply supersedes any still-open KP draft bubble
+ *   with a DIFFERENT id — when a post-generation correction rewrites the
+ *   reply, the server abandons the streamed draft and sends the corrected
+ *   text as a fresh plain narrative;
  * - a plain frame whose id is already present is a history replay duplicate
  *   (the server replays recent narrative on every join) and is dropped;
  * - anything else is a fresh line.
  */
 function ingestNarrative(entries: LogEntry[], frame: NarrativeFrame): LogEntry[] {
+  if (frame.speaker === "kp" && (!frame.stream || frame.done)) {
+    entries = entries.filter(
+      (e) =>
+        !(
+          e.kind === "narrative" &&
+          e.frame.speaker === "kp" &&
+          e.frame.stream &&
+          !e.frame.done &&
+          e.frame.id !== frame.id
+        ),
+    )
+  }
   const index = entries.findIndex((e) => e.kind === "narrative" && e.frame.id === frame.id)
   if (frame.stream) {
     if (index === -1) return pushEntry(entries, { kind: "narrative", frame })

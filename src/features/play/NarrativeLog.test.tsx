@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it } from "vitest"
 import "../../i18n"
 import { useSessionStore } from "../../store/session"
@@ -67,6 +67,30 @@ describe("NarrativeLog", () => {
     })
     rerender(<NarrativeLog />)
     expect(container.querySelector(".stream-cursor")).toBeNull()
+  })
+
+  it("follows a stream only while the reader is pinned near the bottom", () => {
+    const delta = (text: string) =>
+      act(() =>
+        ingest({ type: "narrative", id: "s1", speaker: "kp", text, format: "markdown", stream: true }),
+      )
+    delta("The fog ")
+    const { container } = render(<NarrativeLog />)
+    const log = container.querySelector(".narrative-log") as HTMLDivElement
+    Object.defineProperty(log, "scrollHeight", { value: 1000, configurable: true })
+    Object.defineProperty(log, "clientHeight", { value: 200, configurable: true })
+
+    // Scrolled up to reread history: a new delta must not yank the view down.
+    log.scrollTop = 100
+    fireEvent.scroll(log)
+    delta("thickens ")
+    expect(log.scrollTop).toBe(100)
+
+    // Back at the bottom: following resumes.
+    log.scrollTop = 780
+    fireEvent.scroll(log)
+    delta("over the pier.")
+    expect(log.scrollTop).toBe(1000)
   })
 
   it("renders system spinner notices with an animated spinner element", () => {
