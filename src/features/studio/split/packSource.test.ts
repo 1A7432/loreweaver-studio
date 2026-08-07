@@ -22,9 +22,7 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
     cards: [
       {
         fileName: "deep-pier.st.json",
-        kind: "world",
         jsonText: "{}",
-        hasWorldPayloads: true,
         notesEn: "Run `.var expose 理` after import.",
         notesZh: "导入后运行 `.var expose 理`。",
       },
@@ -83,24 +81,6 @@ describe("validatePackDraft", () => {
     expect(keys).toContain("packAuthorsRequired")
   })
 
-  it("mirrors the engine's kind enforcement: world machinery ⇒ kind world", () => {
-    const issues = validatePackDraft(
-      draft({
-        cards: [
-          {
-            fileName: "heavy.png",
-            kind: "character",
-            base64: "aGk=",
-            hasWorldPayloads: true,
-            notesEn: "",
-            notesZh: "",
-          },
-        ],
-      }),
-    )
-    expect(issues.map((issue) => issue.key)).toContain("packCardKindMismatch")
-  })
-
   it("rejects skill slugs and rulepack ids that are not slugs", () => {
     const issues = validatePackDraft(
       draft({
@@ -115,16 +95,22 @@ describe("validatePackDraft", () => {
 })
 
 describe("buildManifestYaml", () => {
-  it("emits the engine manifest shape: localized fields, card mapping, no trust block", () => {
+  it("emits the v2 author shape: localized fields, notes mapping, no trust/files/kind", () => {
     const manifest = parse(buildManifestYaml(draft())) as Record<string, unknown>
     expect(manifest.id).toBe("deep-pier")
     expect(manifest.name).toEqual({ en: "Deep Pier", zh: "深渊码头" })
+    // Generated at pack time or detection-stamped: never hand-written.
     expect(manifest.trust).toBeUndefined()
+    expect(manifest.files).toBeUndefined()
+    expect(manifest.manifest_version).toBeUndefined()
+    // Minimum-version block, mirroring the flagship reference pack.
+    expect(manifest.engine).toEqual({ protocol: "2.0" })
     const contents = manifest.contents as Record<string, unknown>
+    // Manifest v2: authors never declare `kind` — a noted card carries
+    // exactly {path, notes}; the build stamps the detected kind.
     expect(contents.cards).toEqual([
       {
         path: "cards/deep-pier.st.json",
-        kind: "world",
         notes: {
           en: "Run `.var expose 理` after import.",
           zh: "导入后运行 `.var expose 理`。",
@@ -133,16 +119,14 @@ describe("buildManifestYaml", () => {
     ])
   })
 
-  it("dumps a plain character card with no notes as a bare path string", () => {
+  it("dumps a card with no notes as a bare path string", () => {
     const manifest = parse(
       buildManifestYaml(
         draft({
           cards: [
             {
               fileName: "npc.json",
-              kind: "character",
               jsonText: "{}",
-              hasWorldPayloads: false,
               notesEn: "",
               notesZh: "",
             },
@@ -215,9 +199,7 @@ describe("buildSkillMd / buildPackSourcePlan", () => {
         cards: [
           {
             fileName: "heavy.png",
-            kind: "world",
             base64: "aGk=",
-            hasWorldPayloads: true,
             notesEn: "",
             notesZh: "",
           },

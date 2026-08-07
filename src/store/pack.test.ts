@@ -88,6 +88,54 @@ describe("pack store pipeline", () => {
     expect(usePackStore.getState().items[0].cardKind).toBe("world")
   })
 
+  it("pins a clean card to character in both directions (v2: kind is detected, never declared)", async () => {
+    const store = usePackStore.getState()
+    await store.addFiles([file("npc.json", JSON.stringify({ spec: "chara_card_v2", data: { name: "NPC" } }))])
+    const card = usePackStore.getState().items[0]
+    expect(card.cardKind).toBe("character")
+    usePackStore.getState().updateItem(card.uid, { cardKind: "world" })
+    expect(usePackStore.getState().items[0].cardKind).toBe("character")
+  })
+
+  it("folds a native bundle's typed variables specs into the world detection", async () => {
+    const store = usePackStore.getState()
+    // A specs-only lorecard: no hooks, no [InitVar] entry, no secret lore —
+    // only typed specs. `core/pack.py:644-652` forces kind: world here.
+    const bundle = {
+      format: "loreweaver.card",
+      format_version: 1,
+      name: "林晚",
+      description: "a plain persona with trackers",
+      opening: "雨夜。",
+      variables: [
+        { id: "heat", kind: "number", minimum: 0, maximum: 10, default: 1 },
+        { id: "mood", kind: "enum", options: ["calm", "tense"] },
+        { id: "heat", kind: "number" }, // duplicate id — the engine skips it
+      ],
+      worldbook: [{ title: "Pier", content: "plain lore" }],
+    }
+    await store.addFiles([file("lin-wan.lorecard.json", JSON.stringify(bundle))])
+    const card = usePackStore.getState().items[0]
+    expect(card.kind).toBe("card")
+    expect(card.cardKind).toBe("world")
+    expect(card.payloads).toEqual({ hooks: 0, initvarEntries: 2, ejsBlocks: 0, secretEntries: 0 })
+  })
+
+  it("keeps a native bundle without any machinery a character card", async () => {
+    const store = usePackStore.getState()
+    const bundle = {
+      format: "loreweaver.card",
+      format_version: 1,
+      name: "阿白",
+      description: "no trackers at all",
+      worldbook: [{ title: "Pier", content: "plain lore" }],
+    }
+    await store.addFiles([file("a-bai.lorecard.json", JSON.stringify(bundle))])
+    const card = usePackStore.getState().items[0]
+    expect(card.cardKind).toBe("character")
+    expect(card.payloads?.initvarEntries).toBe(0)
+  })
+
   it("builds a WorldPackDraft with skills extracted and hooks removed from the card copy", async () => {
     await usePackStore.getState().addFiles([file("heavy.json", heavyCardJson())])
     const card = usePackStore.getState().items[0]
@@ -106,7 +154,8 @@ describe("pack store pipeline", () => {
       rulepackId: "",
     })
     expect(draft.cards).toHaveLength(1)
-    expect(draft.cards[0].kind).toBe("world")
+    // Manifest v2: the author draft carries NO kind — detection stamps it.
+    expect(draft.cards[0]).not.toHaveProperty("kind")
     expect(draft.cards[0].jsonText).not.toContain("loreweaver_hooks")
     expect(draft.skills).toHaveLength(1)
     expect(draft.skills[0].hooks).toEqual(["on('turn_start', () => {})"])

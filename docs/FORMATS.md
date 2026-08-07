@@ -129,8 +129,9 @@ detection exactly (same regexes, same entry test, same stripping):
   entries removed, hooks extension dropped. Exported as `*.clean.st.json`
   (the original envelope with cleaned fields written back) or as a native
   bundle / forge project.
-- **World half**: the ORIGINAL card, verbatim, declared `kind: world` in
-  `pack.yaml` — because the keeper's world import reads the full card. The
+- **World half**: the ORIGINAL card, verbatim — the pack build DETECTS it as
+  `kind: world` (authors never declare kinds; the stamp lands in the built
+  manifest) because the keeper's world import reads the full card. The
   studio never rewrites world machinery; it only PROMOTES a copy of the
   InitVar tree into typed VarSpecs (author-confirmed, `buildSpec`-validated)
   and suggests `.var expose <prefix>` lines for the card's install notes.
@@ -138,12 +139,33 @@ detection exactly (same regexes, same entry test, same stripping):
 ## 4. `.lwpack` source trees — planned here, built by the engine
 
 `buildPackSourcePlan` lays out `pack.yaml` + `cards/` + `lorebooks/` +
-`skills/<slug>/{SKILL.md,hooks.js}` + `rulepacks/*.yaml`, mirroring
-`core/pack.py`'s manifest schema (localized `name`/`description`, card
-entries as bare paths or `{path, kind, notes}` mappings, no hand-written
-`trust` block). Validation and the byte-deterministic zip are the ENGINE's
-job — the wizard shells out to `loreweaver-server --pack <dir> --out <file>`
-(or `python -m app --pack …`) and shows its output; the studio deliberately
-contains no zip writer. Card `kind` labels are enforced against structural
-detection on BOTH sides: the wizard locks machinery-carrying cards to
-`kind: world` before the engine re-checks the same rule at build and install.
+`skills/<slug>/{SKILL.md,hooks.js}` + `rulepacks/*.yaml` (+ optional
+`ui/panels.yaml` and its files), mirroring `core/pack.py`'s **v2 author
+manifest** schema:
+
+- localized `name`/`description` (`{en, zh}`), `authors`, `license`, and an
+  `engine: {protocol: "2.0"}` minimum-version block (`protocol`/`server` are
+  the only keys the engine accepts; minimum-compare only);
+- card entries are bare paths or `{path, notes: {en, zh}}` mappings — authors
+  **never declare `kind`** (the engine rejects a declared kind outright).
+  Machinery — hooks / `[InitVar]` / EJS / `secret` lore, plus a native
+  bundle's typed `variables` specs (`core/pack.py:644-652`) — is DETECTED at
+  build time via `core.card_split.detect_world_payloads` and stamped into the
+  built manifest; install re-verifies the stamp against the real payload. The
+  wizard mirrors the same detection (a specs-only lorecard is `world`), so
+  its badges always agree with the engine's stamp;
+- no hand-written `trust` or `files` blocks and no `manifest_version` — the
+  build generates the trust summary and the complete file inventory
+  (`sha256`/`size` per member), and an omitted author-side
+  `manifest_version` means "current".
+
+Validation and the byte-deterministic zip are the ENGINE's job — the wizard
+shells out to `loreweaver-server --pack <dir> --out <file> --json` (or
+`python -m app --pack …`) and shows its output; the studio deliberately
+contains no zip writer. With `--json`, stdout carries exactly one machine
+object — `{"ok": true, "path", "id", "version", "sha256", "trust"}` on
+success, `{"ok": false, "error"}` on failure — while the human lines
+(including the localized trust card) stay on stderr. The wizard renders the
+trust card natively from that object (content counts, detected world-card
+count, hooks/EJS/rules-script flags, Stage Director subjects and the
+imagegen veto) and surfaces a failure's `error` prominently.

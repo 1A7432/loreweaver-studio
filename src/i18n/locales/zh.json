@@ -698,19 +698,20 @@
         "lorebook": "世界书",
         "asset": "素材"
       },
-      "cardKind": "卡片种类",
       "cardKinds": {
         "character": "人物卡",
         "world": "世界卡"
       },
-      "kindLocked": "携带 hooks / 变量声明 / EJS——引擎要求标为 kind: world。",
+      "detectedKindHint": "由卡片真实载荷检测判定——不是作者可选项。引擎会在构建的清单里写入这个 kind。",
+      "detectedWorld": "检测为世界卡（含机制：hooks / 变量声明 / typed specs / EJS）——由守秘人导入",
+      "detectedCharacter": "检测为人物卡（不含机制）——玩家可自行导入",
       "lorebookEntries": "{{n}} 条条目",
       "fileName": "包内文件名",
       "extractSkill": "同时把 hooks 抽取为 skills/ 目录（卡副本中会移除，避免重复安装）",
       "pngHooksStay": "PNG 卡：hooks 保留在卡内，随守秘人的世界导入一并安装。",
       "notesZh": "安装备注（中文）",
       "notesEn": "安装备注（英文）",
-      "reviewHint": "类型判定是结构性的而非猜测：携带 hooks / [InitVar] / EJS 的卡会锁定为 kind: world（引擎在打包与安装时执行同样的强制检查）。",
+      "reviewHint": "卡片种类由结构检测判定、无需作者声明：携带 hooks / [InitVar] / typed specs / EJS 的卡即为世界卡。引擎在构建与安装时重新检测——清单标注永远与真实载荷一致。",
       "noWorldCards": "包里没有世界卡——无需提升变量。",
       "aiDraft": "AI 起草元数据",
       "aiDraftHint": "根据检测到的内容起草 id、双语名称/描述与安装备注。卡片种类始终来自结构检测，绝不由模型决定。",
@@ -746,6 +747,7 @@
       "runBuild": "校验并构建 .lwpack",
       "running": "运行中…",
       "runInstall": "安装已构建的包",
+      "buildFailed": "引擎拒绝构建此包：{{detail}}",
       "timedOut": "引擎 CLI 运行超时。",
       "exitCode": "引擎退出码 {{code}}",
       "noOutput": "（无输出）",
@@ -759,7 +761,6 @@
         "packDescriptionRequired": "包需要描述（中文或英文）。",
         "packLicenseRequired": "许可证必填（SPDX id 或简称）。",
         "packAuthorsRequired": "至少填写一位作者。",
-        "packCardKindMismatch": "{{file}} 携带世界机制——必须标为 kind: world。",
         "packCardBodyMissing": "{{file}}：卡片内容缺失或重复。",
         "packNotesTooLong": "{{file}}：备注超过 {{max}} 字符。",
         "packDuplicatePath": "包内路径重复：{{file}}。",
@@ -794,6 +795,21 @@
         "slug": "技能 slug",
         "md": "SKILL.md（原样写入）",
         "hooks": "hooks.js（可选）"
+      },
+      "trust": {
+        "title": "信任卡（引擎生成）",
+        "counts": "{{skills}} 个技能 · {{rulepacks}} 个规则包 · {{cards}} 张卡 · {{lorebooks}} 本世界书 · {{assets}} 个素材（{{mb}} MB）· {{panels}} 个面板",
+        "worldCards": "{{count}} 张世界卡——守秘人用 `.import <文件> world` 导入",
+        "hooksYes": "携带沙箱 hooks JS（技能 hooks.js 和/或卡内 hooks）",
+        "hooksNo": "不含 hooks JS",
+        "ejsYes": "携带 EJS 模板",
+        "ejsNo": "不含 EJS 模板",
+        "scriptYes": "携带规则包脚本",
+        "scriptNo": "不含规则脚本",
+        "presentation": "舞台监督：{{subjects}} 个可配图主体——图像生成：{{imagegen}}",
+        "imagegenAllowed": "允许",
+        "imagegenPackOnly": "仅限包内素材（作者已否决生成）",
+        "sha": "sha256 {{hash}}…"
       }
     }
   }

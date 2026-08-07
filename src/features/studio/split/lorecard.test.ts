@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest"
 import { exportNativeBundle } from "../exporters"
 import { newLoreEntry, newPregen, newProject, newVariable, validateProject } from "../model"
 import { splitCard } from "./cardSplit"
-import { looksLikeLorecard, lorecardToCard, lorecardToProject } from "./lorecard"
+import { looksLikeLorecard, countVariableSpecs, lorecardToCard, lorecardToProject } from "./lorecard"
 
 function sampleProject() {
   const project = newProject("白鹭")
@@ -212,5 +212,76 @@ describe("lorecard as a pack card (engine-aligned classification)", () => {
     })
     expect(card.characterBook).toHaveLength(1)
     expect(warnings).toHaveLength(2)
+  })
+})
+
+/** Mirrors `core/lorecard.py::_parse_variables` → `core/modvars.normalize_spec`
+ * tolerance: exactly the specs the engine counts when it folds typed specs
+ * into the world-payload detection (`core/pack.py:644-652`). */
+describe("countVariableSpecs (engine normalization mirror)", () => {
+  const spec = (overrides: Record<string, unknown> = {}) => ({ id: "heat", kind: "number", ...overrides })
+
+  it("counts valid specs and dedupes by the normalized id", () => {
+    expect(
+      countVariableSpecs({
+        variables: [
+          spec({ id: "Heat" }),
+          spec({ id: "heat" }), // same normalized id — skipped
+          { id: "理智", kind: "number", minimum: 0, maximum: 100, default: 46 },
+          { id: "mood", kind: "enum", options: ["calm", " tense "], default: "CALM" },
+        ],
+      }),
+    ).toBe(3)
+  })
+
+  it("skips junk rows, unusable ids/kinds, and a non-list variables block", () => {
+    expect(countVariableSpecs({ variables: "not-a-list" })).toBe(0)
+    expect(
+      countVariableSpecs({
+        variables: ["junk", { kind: "number" }, { id: "!!", kind: "number" }, { id: "x", kind: "date" }],
+      }),
+    ).toBe(0)
+  })
+
+  it("applies the engine's number-bounds rules (coercible, ordered)", () => {
+    expect(
+      countVariableSpecs({
+        variables: [
+          spec({ id: "a", minimum: "0", maximum: "10" }), // numeric strings coerce
+          spec({ id: "b", minimum: "abc" }), // uncoercible bound — dropped
+          spec({ id: "c", minimum: 10, maximum: 1 }), // inverted — dropped
+        ],
+      }),
+    ).toBe(1)
+    // Bounds on a NON-number kind are ignored by normalize_spec, never fatal.
+    expect(countVariableSpecs({ variables: [{ id: "flag", kind: "bool", minimum: "abc" }] })).toBe(1)
+  })
+
+  it("applies the engine's default validation per kind", () => {
+    expect(
+      countVariableSpecs({
+        variables: [
+          { id: "a", kind: "bool", default: "yes" },
+          { id: "b", kind: "bool", default: "maybe" }, // dropped
+          { id: "c", kind: "number", default: "3.5" }, // float-string coerces
+          { id: "d", kind: "text", default: { nested: true } }, // container — dropped
+          { id: "e", kind: "text", default: 42 }, // stringifies
+        ],
+      }),
+    ).toBe(3)
+  })
+
+  it("requires enum options and a default among them (case-insensitive)", () => {
+    expect(
+      countVariableSpecs({
+        variables: [
+          { id: "a", kind: "enum", options: ["one", "two"], default: "TWO" },
+          { id: "b", kind: "enum", options: ["one"], default: "three" }, // dropped
+          { id: "c", kind: "enum", options: [] }, // no usable options — dropped
+          { id: "d", kind: "enum", options: "one" }, // options not a list — dropped
+          { id: "e", kind: "enum", options: ["one", 42, "ONE", "two"] }, // dedupes case-folded
+        ],
+      }),
+    ).toBe(2)
   })
 })

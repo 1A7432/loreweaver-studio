@@ -23,7 +23,8 @@ import {
   type PackSkillDraft,
   type WorldPackDraft,
 } from "../features/studio/split/packSource"
-import { looksLikeLorecard, lorecardToCard } from "../features/studio/split/lorecard"
+import { countVariableSpecs, looksLikeLorecard, lorecardToCard } from "../features/studio/split/lorecard"
+import type { PackBuildSuccess } from "../features/studio/pack/buildResult"
 import type { Issue } from "../features/studio/model"
 import { bytesToBase64, type EngineCandidate, type EngineRunResult, type PickedFile } from "../lib/native"
 
@@ -230,7 +231,16 @@ function lorecardItem(
   jsonText: string,
   fileName: string,
 ): PackItem {
-  return splitIntoItem(base, lorecardToCard(parsed).card, jsonText, fileName)
+  const item = splitIntoItem(base, lorecardToCard(parsed).card, jsonText, fileName)
+  // `core/pack.py:644-652`: typed `variables` specs are the native flavor of
+  // variable declarations — the engine folds them into the world-payload
+  // count, so a specs-only lorecard detects as `world`. They live on the
+  // bundle (not the embedded card), which is why the fold happens here rather
+  // than in `cardSplit.detectWorldPayloads`.
+  const specs = countVariableSpecs(parsed)
+  if (specs === 0 || item.payloads === null) return item
+  const payloads = { ...item.payloads, initvarEntries: item.payloads.initvarEntries + specs }
+  return { ...item, payloads, cardKind: "world" }
 }
 
 function splitIntoItem(
@@ -276,6 +286,8 @@ interface PackState {
   installAfterBuild: boolean
   running: boolean
   runResult: EngineRunResult | null
+  /** Parsed `--pack --json` success object (drives the native trust card). */
+  packResult: PackBuildSuccess | null
   builtPackPath: string | null
 
   setStep: (step: PackStep) => void
@@ -300,6 +312,7 @@ interface PackState {
   setInstallAfterBuild: (value: boolean) => void
   setRunning: (running: boolean) => void
   setRunResult: (result: EngineRunResult | null) => void
+  setPackResult: (result: PackBuildSuccess | null) => void
   setBuiltPackPath: (path: string | null) => void
   reset: () => void
 }
@@ -336,6 +349,7 @@ export const usePackStore = create<PackState>()((set) => ({
   installAfterBuild: false,
   running: false,
   runResult: null,
+  packResult: null,
   builtPackPath: null,
 
   setStep: (step) => set({ step }),
@@ -360,8 +374,9 @@ export const usePackStore = create<PackState>()((set) => ({
       items: state.items.map((item) => {
         if (item.uid !== uid) return item
         const next = { ...item, ...patch }
-        // The engine's rule, enforced live: world machinery ⇒ kind world.
-        if (next.payloads !== null && payloadsAny(next.payloads)) next.cardKind = "world"
+        // Manifest v2: `kind` is DETECTED, never declared — pin the stored
+        // kind to the detection result on every edit, in both directions.
+        if (next.payloads !== null) next.cardKind = payloadsAny(next.payloads) ? "world" : "character"
         return next
       }),
     })),
@@ -442,6 +457,7 @@ export const usePackStore = create<PackState>()((set) => ({
       manualSkills: [],
       writtenDir: null,
       runResult: null,
+      packResult: null,
       builtPackPath: null,
     }),
 
@@ -452,6 +468,7 @@ export const usePackStore = create<PackState>()((set) => ({
   setInstallAfterBuild: (installAfterBuild) => set({ installAfterBuild }),
   setRunning: (running) => set({ running }),
   setRunResult: (runResult) => set({ runResult }),
+  setPackResult: (packResult) => set({ packResult }),
   setBuiltPackPath: (builtPackPath) => set({ builtPackPath }),
 
   reset: () =>
@@ -465,6 +482,7 @@ export const usePackStore = create<PackState>()((set) => ({
       outputDir: null,
       writtenDir: null,
       runResult: null,
+      packResult: null,
       builtPackPath: null,
       running: false,
       installAfterBuild: false,
@@ -495,11 +513,9 @@ export function buildDraftFromState(
     .filter((item) => item.kind === "card")
     .map((item) => ({
       fileName: item.fileName,
-      kind: item.cardKind,
       jsonText:
         item.extractSkill && item.jsonText !== null ? withoutHooksJson(item) : (item.jsonText ?? undefined),
       base64: item.jsonText === null ? item.base64 : undefined,
-      hasWorldPayloads: item.payloads !== null && payloadsAny(item.payloads),
       notesEn: item.notesEn,
       notesZh: item.notesZh,
     }))

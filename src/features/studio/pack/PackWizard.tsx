@@ -32,7 +32,7 @@ import { aiFillLabels } from "../ai/labels"
 import { PACK_METADATA_SYSTEM } from "../ai/prompts"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { draftToPackMetadata } from "../ai/schemas"
-import { payloadsAny } from "../split/cardSplit"
+import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
 import { buildPackSourcePlan } from "../split/packSource"
 import PromoteTable from "../split/PromoteTable"
 
@@ -40,7 +40,6 @@ function ItemRow({ item }: { item: PackItem }) {
   const { t } = useTranslation()
   const updateItem = usePackStore((s) => s.updateItem)
   const removeItem = usePackStore((s) => s.removeItem)
-  const kindLocked = item.payloads !== null && payloadsAny(item.payloads)
 
   return (
     <div className="pack-item">
@@ -59,16 +58,15 @@ function ItemRow({ item }: { item: PackItem }) {
           <option value="asset">{t("studio.pack.kinds.asset")}</option>
         </select>
         {item.kind === "card" ? (
-          <select
-            value={item.cardKind}
-            aria-label={t("studio.pack.cardKind")}
-            onChange={(e) => updateItem(item.uid, { cardKind: e.target.value as "character" | "world" })}
-            disabled={kindLocked}
-            title={kindLocked ? t("studio.pack.kindLocked") : undefined}
+          // Manifest v2: the kind is a DETECTED readout, never an author
+          // choice — the build stamps it from the real payload and install
+          // re-verifies the stamp.
+          <span
+            className={item.cardKind === "world" ? "split-badge world" : "split-badge"}
+            title={t("studio.pack.detectedKindHint")}
           >
-            <option value="character">{t("studio.pack.cardKinds.character")}</option>
-            <option value="world">{t("studio.pack.cardKinds.world")}</option>
-          </select>
+            {t(`studio.pack.cardKinds.${item.cardKind}`)}
+          </span>
         ) : null}
         <button type="button" className="ghost-button" onClick={() => removeItem(item.uid)}>
           {t("studio.remove")}
@@ -84,6 +82,7 @@ function ItemRow({ item }: { item: PackItem }) {
             secret: item.payloads.secretEntries,
           })}
           {item.card?.name ? ` · ${item.card.name}` : ""}
+          {` · ${t(item.cardKind === "world" ? "studio.pack.detectedWorld" : "studio.pack.detectedCharacter")}`}
         </p>
       ) : null}
       {item.kind === "lorebook" ? (
@@ -132,6 +131,53 @@ function ItemRow({ item }: { item: PackItem }) {
         </>
       ) : null}
     </div>
+  )
+}
+
+/** The engine-generated trust card (from the `--pack --json` object): pack
+ * composition, detected world-card count, and every code-carrying flag — the
+ * same disclosure the CLI prints before install, rendered natively. */
+function TrustCard({ result }: { result: PackBuildSuccess }) {
+  const { t } = useTranslation()
+  const trust = result.trust
+  if (trust === null) return null
+  const megabytes = (trust.asset_bytes / (1024 * 1024)).toFixed(1)
+  return (
+    <section className="pack-output pack-trust" aria-label={t("studio.pack.trust.title")}>
+      <h3>{t("studio.pack.trust.title")}</h3>
+      <p className="studio-hint">
+        {`${result.id}@${result.version} · ${t("studio.pack.trust.sha", { hash: result.sha256.slice(0, 16) })}`}
+      </p>
+      <ul className="issue-list">
+        <li>
+          {t("studio.pack.trust.counts", {
+            skills: trust.skills,
+            rulepacks: trust.rulepacks,
+            cards: trust.cards,
+            lorebooks: trust.lorebooks,
+            assets: trust.assets,
+            mb: megabytes,
+            panels: trust.panels,
+          })}
+        </li>
+        {trust.world_cards > 0 ? (
+          <li>{t("studio.pack.trust.worldCards", { count: trust.world_cards })}</li>
+        ) : null}
+        <li>{t(trust.has_hooks ? "studio.pack.trust.hooksYes" : "studio.pack.trust.hooksNo")}</li>
+        <li>{t(trust.has_ejs ? "studio.pack.trust.ejsYes" : "studio.pack.trust.ejsNo")}</li>
+        <li>{t(trust.has_rules_script ? "studio.pack.trust.scriptYes" : "studio.pack.trust.scriptNo")}</li>
+        {trust.presentation > 0 ? (
+          <li>
+            {t("studio.pack.trust.presentation", {
+              subjects: trust.presentation,
+              imagegen: t(
+                trust.imagegen ? "studio.pack.trust.imagegenAllowed" : "studio.pack.trust.imagegenPackOnly",
+              ),
+            })}
+          </li>
+        ) : null}
+      </ul>
+    </section>
   )
 }
 
@@ -340,22 +386,37 @@ export default function PackWizard() {
           store.writtenDir,
           "--out",
           `${store.outputDir}/${store.metadata.id}-${store.metadata.version}.lwpack`,
+          "--json",
         ]
-      : ["--pack", `<${t("studio.pack.sourceDirPlaceholder")}>`]
+      : ["--pack", `<${t("studio.pack.sourceDirPlaceholder")}>`, "--json"]
 
   const runPack = async () => {
     if (candidate === null || store.writtenDir === null || store.outputDir === null) return
     store.setRunning(true)
     store.setRunResult(null)
+    store.setPackResult(null)
     setError(null)
     try {
       const outPath = `${store.outputDir}/${store.metadata.id}-${store.metadata.version}.lwpack`
-      const result = await runEngineCli(candidate, ["--pack", store.writtenDir, "--out", outPath])
+      // `--json`: stdout is exactly ONE machine object; human lines (the
+      // localized trust card included) stay on stderr for the terminal below.
+      const result = await runEngineCli(candidate, ["--pack", store.writtenDir, "--out", outPath, "--json"])
       store.setRunResult(result)
+      const parsed = parsePackBuildJson(result.stdout)
+      if (parsed?.ok === false) {
+        // The engine validated and refused: surface its reason prominently —
+        // the stderr detail stays visible in the terminal for full context.
+        setError(t("studio.pack.buildFailed", { detail: parsed.error }))
+        return
+      }
       if (result.code === 0) {
-        store.setBuiltPackPath(outPath)
+        if (parsed?.ok === true) store.setPackResult(parsed.result)
+        // Prefer the engine-reported path; fall back to the requested --out
+        // when stdout wasn't the machine shape (older engine).
+        const builtPath = parsed?.ok === true ? parsed.result.path : outPath
+        store.setBuiltPackPath(builtPath)
         if (store.installAfterBuild) {
-          const install = await runEngineCli(candidate, ["--install", outPath, "--yes"])
+          const install = await runEngineCli(candidate, ["--install", builtPath, "--yes"])
           store.setRunResult(install)
         }
       }
@@ -802,6 +863,7 @@ export default function PackWizard() {
               </button>
             ) : null}
           </div>
+          {store.packResult !== null ? <TrustCard result={store.packResult} /> : null}
           {store.runResult !== null ? (
             <div className="pack-output">
               <p

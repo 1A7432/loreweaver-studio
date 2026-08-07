@@ -21,12 +21,14 @@
 
 import { asText, isRecord, type StCharacterCard } from "./charcard"
 import {
+  isValidVarId,
   MAX_PREGENS,
   MAX_PREGEN_SKILLS,
   newLoreEntry,
   newPregen,
   newProject,
   newVariable,
+  normalizeVarId,
   type ForgeLoreEntry,
   type ForgePregen,
   type ForgeProject,
@@ -142,6 +144,115 @@ export interface ParsedLorecard {
   alternateGreetings: string[]
   hooks: string[]
   warnings: string[]
+}
+
+/** Engine `core.modvars.coerce_int`: bools, ints, floats (truncated) and
+ * numeric strings; null on anything else (bounds/defaults that fail this kill
+ * the spec at normalization). */
+function coerceInt(value: unknown): number | null {
+  if (typeof value === "boolean") return value ? 1 : 0
+  if (typeof value === "number") return Number.isFinite(value) ? Math.trunc(value) : null
+  if (typeof value === "string") {
+    const text = value.trim()
+    if (/^[+-]?\d+$/.test(text)) return Number.parseInt(text, 10)
+    if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)) {
+      const parsed = Number(text)
+      return Number.isFinite(parsed) ? Math.trunc(parsed) : null
+    }
+  }
+  return null
+}
+
+/** Engine `core.modvars.coerce_bool`: real bools, 0/1, and the usual words. */
+function coerceBoolValue(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value
+  if (typeof value === "number" && (value === 0 || value === 1)) return value === 1
+  if (typeof value === "string") {
+    const lowered = value.trim().toLowerCase()
+    if (["true", "1", "yes", "y", "on"].includes(lowered)) return true
+    if (["false", "0", "no", "n", "off"].includes(lowered)) return false
+  }
+  return null
+}
+
+const MAX_OPTION_LEN = 50
+const MAX_OPTIONS = 20
+
+/** Engine `build_spec`'s enum-options cleaning (strip, truncate, case-folded
+ * dedupe); null when nothing usable remains — which kills the spec. */
+function cleanEnumOptions(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null
+  const cleaned: string[] = []
+  for (const option of raw) {
+    if (typeof option !== "string" || !option.trim()) continue
+    const text = option.trim().slice(0, MAX_OPTION_LEN)
+    if (!cleaned.some((existing) => existing.toLowerCase() === text.toLowerCase())) cleaned.push(text)
+  }
+  return cleaned.length > 0 ? cleaned.slice(0, MAX_OPTIONS) : null
+}
+
+/** Engine `validate_value` as a bare validity check (the normalized VALUE is
+ * irrelevant here — only whether the spec survives). */
+function defaultSurvives(kind: string, value: unknown, options: string[] | null): boolean {
+  switch (kind) {
+    case "number":
+      return coerceInt(value) !== null
+    case "bool":
+      return coerceBoolValue(value) !== null
+    case "enum": {
+      const text = String(value).trim()
+      return (options ?? []).some((option) => option.toLowerCase() === text.toLowerCase())
+    }
+    default:
+      // text: containers are unusable, everything else stringifies.
+      return !(typeof value === "object" && value !== null)
+  }
+}
+
+/** Count the bundle's typed `variables` specs that survive engine
+ * normalization — the mirror of `core/lorecard.py::_parse_variables` feeding
+ * `core/modvars.normalize_spec` (junk rows, unusable ids/kinds, bad
+ * bounds/defaults and duplicate ids are all skipped). The pack build folds
+ * this count into `detect_world_payloads` (`core/pack.py:644-652`), so the
+ * studio's kind detection must count exactly the same specs. */
+export function countVariableSpecs(raw: Record<string, unknown>): number {
+  const list = raw.variables
+  if (!Array.isArray(list)) return 0
+  const seen = new Set<string>()
+  let count = 0
+  for (const item of list) {
+    if (!isRecord(item)) continue
+    const id = normalizeVarId(asText(item.id))
+    if (!isValidVarId(id) || seen.has(id)) continue
+    const kind = asText(item.kind).trim()
+    if (!VAR_KINDS.has(kind)) continue
+    if (kind === "number") {
+      // Bounds are read only for the number kind; present-but-uncoercible or
+      // inverted bounds kill the spec (`build_spec` raises, `normalize_spec`
+      // drops it).
+      const hasMin = item.minimum !== undefined && item.minimum !== null
+      const hasMax = item.maximum !== undefined && item.maximum !== null
+      const low = hasMin ? coerceInt(item.minimum) : null
+      const high = hasMax ? coerceInt(item.maximum) : null
+      if ((hasMin && low === null) || (hasMax && high === null)) continue
+      if (low !== null && high !== null && low > high) continue
+    }
+    let options: string[] | null = null
+    if (kind === "enum") {
+      options = cleanEnumOptions(item.options)
+      if (options === null) continue
+    }
+    if (
+      item.default !== undefined &&
+      item.default !== null &&
+      !defaultSurvives(kind, item.default, options)
+    ) {
+      continue
+    }
+    seen.add(id)
+    count += 1
+  }
+  return count
 }
 
 /** Native bundle → a character-card view for the pack/split machinery. Throws

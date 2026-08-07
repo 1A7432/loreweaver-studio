@@ -26,12 +26,10 @@ const PANEL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 export interface PackCardDraft {
   /** File name under `cards/` (already sanitized, extension included). */
   fileName: string
-  kind: "character" | "world"
   /** Exactly one of these: JSON card text, or original PNG bytes. */
   jsonText?: string
   base64?: string
-  /** Structural detection result for this card (drives kind enforcement). */
-  hasWorldPayloads: boolean
+  /** Install notes (table rules / usage guide, shown at install). */
   notesEn: string
   notesZh: string
 }
@@ -140,10 +138,6 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
 
   const seenFiles = new Set<string>()
   for (const card of draft.cards) {
-    // The engine's `_enforce_card_kind`: world machinery ⇒ `kind: world`.
-    if (card.hasWorldPayloads && card.kind !== "world") {
-      issues.push({ key: "packCardKindMismatch", params: { file: card.fileName } })
-    }
     if ((card.jsonText === undefined) === (card.base64 === undefined)) {
       issues.push({ key: "packCardBodyMissing", params: { file: card.fileName } })
     }
@@ -320,15 +314,15 @@ function localized(en: string, zh: string): Record<string, string> {
   return out
 }
 
-/** A card entry dumps to a plain path when it carries no declarations (the
- * engine round-trips old manifests that way) and to a mapping otherwise. */
+/** Manifest v2: a card entry is a plain path, or a `{path, notes}` mapping
+ * when install notes exist. Authors NEVER declare `kind` — the engine rejects
+ * a declared kind outright (`core/pack.py::_parse_card_entry`); detection at
+ * build time is the single source of truth and stamps the built manifest. */
 function cardEntryToYaml(card: PackCardDraft): unknown {
   const path = `cards/${card.fileName}`
   const notes = localized(card.notesEn, card.notesZh)
-  if (card.kind === "character" && Object.keys(notes).length === 0) return path
-  const entry: Record<string, unknown> = { path, kind: card.kind }
-  if (Object.keys(notes).length > 0) entry.notes = notes
-  return entry
+  if (Object.keys(notes).length === 0) return path
+  return { path, notes }
 }
 
 export function buildManifestYaml(draft: WorldPackDraft): string {
@@ -344,6 +338,9 @@ export function buildManifestYaml(draft: WorldPackDraft): string {
   if (draft.panels !== null) contents.panels = [PANELS_FILE_NAME]
   // NOTE: no `trust` block — it is generated at pack time; a hand-written one
   // is rejected by the engine (`parse_manifest_text(expect_trust=False)`).
+  // Same for `files:` (the built archive's generated inventory) and card
+  // `kind` (detection-stamped). `manifest_version` stays omitted — for an
+  // AUTHOR manifest omission means "current" (`core/pack.py:318`).
   const manifest: Record<string, unknown> = {
     id: draft.id,
     version: draft.version,
@@ -351,6 +348,11 @@ export function buildManifestYaml(draft: WorldPackDraft): string {
     description: localized(draft.descriptionEn, draft.descriptionZh),
     authors: draft.authors.map((author) => author.trim()).filter((author) => author.length > 0),
     license: draft.license.trim(),
+    // Minimum engine versions (minimum-compare only; `protocol` + `server` are
+    // the only keys the engine accepts). "2.0" mirrors the flagship reference
+    // pack (`content/xipu-songdeng/pack.yaml`) and covers every content kind
+    // the studio can emit.
+    engine: { protocol: "2.0" },
     contents,
   }
   if (draft.assets.length > 0) {
