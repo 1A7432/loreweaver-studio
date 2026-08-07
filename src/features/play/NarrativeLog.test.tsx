@@ -44,36 +44,32 @@ describe("NarrativeLog", () => {
     expect(screen.getByText("Ash")).toBeInTheDocument()
   })
 
-  it("shows a blinking cursor only while a stream is unfinished", () => {
+  it("shows a blinking cursor only while the draft is open", () => {
     ingest({
-      type: "narrative",
+      type: "narrative_delta",
       id: "s1",
       speaker: "kp",
       text: "The fog",
-      format: "markdown",
-      stream: true,
     })
     const { container, rerender } = render(<NarrativeLog />)
     expect(container.querySelector(".stream-cursor")).not.toBeNull()
 
+    // The closing `narrative` (same id, full final text) seals the bubble.
     ingest({
       type: "narrative",
       id: "s1",
       speaker: "kp",
-      text: " settles.",
+      text: "The fog settles.",
       format: "markdown",
-      stream: true,
-      done: true,
     })
     rerender(<NarrativeLog />)
     expect(container.querySelector(".stream-cursor")).toBeNull()
+    expect(screen.getByText("The fog settles.")).toBeInTheDocument()
   })
 
   it("follows a stream only while the reader is pinned near the bottom", () => {
     const delta = (text: string) =>
-      act(() =>
-        ingest({ type: "narrative", id: "s1", speaker: "kp", text, format: "markdown", stream: true }),
-      )
+      act(() => ingest({ type: "narrative_delta", id: "s1", speaker: "kp", text }))
     delta("The fog ")
     const { container } = render(<NarrativeLog />)
     const log = container.querySelector(".narrative-log") as HTMLDivElement

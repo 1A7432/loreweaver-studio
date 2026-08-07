@@ -5,6 +5,12 @@ main repo, against `docs/protocol.md` (v1.7) and `@loreweaver/protocol` 1.7.0. T
 records everything the protocol or the shared package left ambiguous or unusable from the
 outside — feedback for upstream, not workarounds we expect to keep forever.
 
+> **Update — protocol 2.x:** the studio now pins `npm:loreweaver-protocol@2.1.0` and
+> targets engine 2.x only. Items 1 and 2 below are resolved upstream (the 2.x package
+> ships a built `dist/` with proper `types`, and 2.0 re-specified streaming as
+> `narrative_delta` chunks closed by one full-text `narrative`); the corresponding local
+> workarounds (source alias, stream/done merging) have been removed.
+
 ## Package consumption
 
 1. **`@loreweaver/protocol` exports point at an unbuilt `dist/`.** The package's
@@ -15,6 +21,8 @@ outside — feedback for upstream, not workarounds we expect to keep forever.
    `paths`/`resolve.alias` mapping straight into `src/index.ts`. Upstream fixes that
    would remove the workaround: publish with a `prepare` script, commit `dist/`, or add
    a `source`/`default` fallback condition pointing at the TS source.
+   **Resolved in 2.1.0** — the published tarball ships built `dist/` (types + JS) and
+   `src/`; the aliases are deleted and normal resolution is used.
 
 ## Wire protocol
 
@@ -25,6 +33,9 @@ outside — feedback for upstream, not workarounds we expect to keep forever.
    carries `stream:true`. We follow the TUI: merge only frames with `stream:true`,
    append deltas, carry `done` forward. A terminating frame with `done:true` but no
    `stream:true` would render as a duplicate line in both clients — worth pinning down.
+   **Resolved in 2.0** — streaming is now `narrative_delta` chunks (concatenate by `id`)
+   closed by a `narrative` with the same `id` whose full text REPLACES the draft (empty
+   text drops it). The studio implements exactly that; no ambiguity left.
 
 3. **History replay interacts with reconnects only for narrative/media.** On every join
    the server replays recent `narrative` (and media/audio state). Narrative replay is

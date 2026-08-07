@@ -1,5 +1,4 @@
 /// <reference types="vitest/config" />
-import { fileURLToPath } from "node:url"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
@@ -8,16 +7,6 @@ const host = process.env.TAURI_DEV_HOST
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-
-  resolve: {
-    alias: {
-      // Same story as tsconfig `paths`: consume the package's TS source
-      // directly; its `default`/`types` exports point at an unbuilt dist/.
-      "@loreweaver/protocol": fileURLToPath(
-        new URL("./node_modules/@loreweaver/protocol/src/index.ts", import.meta.url),
-      ),
-    },
-  },
 
   // Tauri expects a fixed dev port and handles its own terminal output.
   clearScreen: false,

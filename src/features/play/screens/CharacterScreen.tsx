@@ -5,7 +5,7 @@
 import { useTranslation } from "react-i18next"
 import { stripControlChars } from "@loreweaver/protocol"
 import { useSessionStore } from "../../../store/session"
-import Meter from "../Meter"
+import { ResourceRow } from "../StatePanel"
 import ScreenShell from "./ScreenShell"
 
 function attrText(value: unknown): string {
@@ -29,13 +29,9 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
             <span className="desk-tag">{stripControlChars(character.system)}</span>
           </h3>
           <div className="play-character-meters">
-            <Meter label="HP" value={character.hp} max={character.hpmax} tone="hp" />
-            {character.mpmax > 0 ? (
-              <Meter label="MP" value={character.mp} max={character.mpmax} tone="mp" />
-            ) : null}
-            {character.sanmax > 0 ? (
-              <Meter label="SAN" value={character.san} max={character.sanmax} tone="san" />
-            ) : null}
+            {character.resources.map((resource) => (
+              <ResourceRow key={resource.id} resource={resource} />
+            ))}
           </div>
           {character.status_effects.length > 0 ? (
             <div className="chip-row">

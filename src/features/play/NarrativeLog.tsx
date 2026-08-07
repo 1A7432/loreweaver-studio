@@ -14,10 +14,9 @@ function speakerLabel(frame: NarrativeFrame, systemLabel: string): string {
   return stripControlChars(frame.name ?? "?")
 }
 
-function NarrativeEntry({ frame }: { frame: NarrativeFrame }) {
+function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
   const { t } = useTranslation()
   const text = stripControlChars(frame.text)
-  const streaming = Boolean(frame.stream) && !frame.done
   return (
     <article className={`log-entry speaker-${frame.speaker}`}>
       <header className="entry-speaker">{speakerLabel(frame, t("log.system"))}</header>
@@ -27,7 +26,7 @@ function NarrativeEntry({ frame }: { frame: NarrativeFrame }) {
         ) : (
           <p className="entry-plain">{text}</p>
         )}
-        {streaming ? <span className="stream-cursor" aria-hidden="true" /> : null}
+        {draft ? <span className="stream-cursor" aria-hidden="true" /> : null}
       </div>
     </article>
   )
@@ -45,7 +44,7 @@ function SystemEntry({ frame }: { frame: SystemFrame }) {
 function Entry({ entry }: { entry: LogEntry }) {
   switch (entry.kind) {
     case "narrative":
-      return <NarrativeEntry frame={entry.frame} />
+      return <NarrativeEntry frame={entry.frame} draft={entry.draft} />
     case "dice":
       return <DiceLine frame={entry.frame} />
     case "system":

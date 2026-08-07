@@ -13,18 +13,23 @@ describe("StatePanel", () => {
       character: {
         name: "Ash",
         system: "coc7",
-        hp: 9,
-        hpmax: 12,
-        mp: 3,
-        mpmax: 8,
-        san: 44,
-        sanmax: 60,
+        resources: [
+          { id: "hp", label: "HP", value: 9, max: 12 },
+          { id: "mp", label: "MP", value: 3, max: 8 },
+          { id: "san", label: "SAN", value: 44, max: 60 },
+        ],
         attributes: {},
         status_effects: ["bleeding"],
       },
       party: [
         { name: "Ash", online: true, active: true },
-        { name: "Bo", online: false, active: false, ai: true, hp: 5, hpMax: 10 },
+        {
+          name: "Bo",
+          online: false,
+          active: false,
+          ai: true,
+          resources: [{ id: "hp", label: "HP", value: 5, max: 10 }],
+        },
       ],
       scene: { name: "Old Pier", focus: "fog" },
       clock: { time: "23:40", round: 2 },
@@ -46,7 +51,7 @@ describe("StatePanel", () => {
     expect(screen.getByText("44/60")).toBeInTheDocument()
     expect(screen.getByText("bleeding")).toBeInTheDocument()
     expect(screen.getByText("AI")).toBeInTheDocument()
-    expect(screen.getByText("5/10")).toBeInTheDocument()
+    expect(screen.getByText(/5\/10/)).toBeInTheDocument()
     expect(screen.getByText(/Old Pier/)).toBeInTheDocument()
     expect(screen.getByText(/23:40/)).toBeInTheDocument()
     expect(screen.getByText("Nyx")).toBeInTheDocument()
@@ -96,8 +101,7 @@ describe("StatePanel — module variables (v1.6)", () => {
       online: 1,
       variables: [
         { id: "public", label: "Public", kind: "number", value: 1 },
-        // The shared package hasn't typed `hidden` yet; the wire sends it.
-        { id: "plot", label: "Plot flag", kind: "bool", value: true, hidden: true } as never,
+        { id: "plot", label: "Plot flag", kind: "bool", value: true, hidden: true },
       ],
     })
     const { container } = render(<StatePanel />)

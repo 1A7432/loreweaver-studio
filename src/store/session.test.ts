@@ -6,6 +6,10 @@ function narrative(id: string, text: string, extra: Partial<NarrativeFrame> = {}
   return { type: "narrative", id, speaker: "kp", text, format: "markdown", ...extra }
 }
 
+function delta(id: string, text: string): ServerFrame {
+  return { type: "narrative_delta", id, speaker: "kp", text }
+}
+
 const ingest = (frame: ServerFrame, now?: number) => useSessionStore.getState().ingest(frame, now)
 
 describe("session store", () => {
@@ -21,56 +25,67 @@ describe("session store", () => {
     expect(entries.map((e) => e.kind)).toEqual(["narrative", "narrative"])
   })
 
-  it("merges streaming chunks by id and finalizes on done", () => {
-    ingest(narrative("s1", "The fog ", { stream: true }))
-    ingest(narrative("s1", "thickens", { stream: true }))
-    ingest(narrative("s1", ".", { stream: true, done: true }))
-    const { entries } = useSessionStore.getState()
+  it("accumulates deltas into one draft and replaces it with the closing narrative", () => {
+    ingest(delta("s1", "The fog "))
+    ingest(delta("s1", "thickens"))
+    ingest(delta("s1", "."))
+    let entries = useSessionStore.getState().entries
     expect(entries).toHaveLength(1)
-    const entry = entries[0]
+    let entry = entries[0]
     if (entry.kind !== "narrative") throw new Error("expected narrative")
+    expect(entry.draft).toBe(true)
     expect(entry.frame.text).toBe("The fog thickens.")
-    expect(entry.frame.done).toBe(true)
-  })
 
-  it("lets a plain KP reply supersede an abandoned draft from another id", () => {
-    // A corrective rewrite: the server abandons the streamed draft and sends
-    // the corrected text as a fresh plain narrative.
-    ingest(narrative("s1", "The fog thick", { stream: true }))
-    ingest(narrative("n2", "The fog thickens over the pier."))
-    const { entries } = useSessionStore.getState()
+    // The closing `narrative` (same id) carries the full final text — any
+    // post-generation correction is already folded in — and closes the draft.
+    ingest(narrative("s1", "The fog thickens over the pier."))
+    entries = useSessionStore.getState().entries
     expect(entries).toHaveLength(1)
-    const entry = entries[0]
+    entry = entries[0]
     if (entry.kind !== "narrative") throw new Error("expected narrative")
-    expect(entry.frame.id).toBe("n2")
+    expect(entry.draft).toBe(false)
     expect(entry.frame.text).toBe("The fog thickens over the pier.")
   })
 
-  it("lets a finished stream supersede another id's still-open draft", () => {
-    ingest(narrative("s1", "tool-round draft", { stream: true }))
-    ingest(narrative("s2", "The real reply", { stream: true }))
-    ingest(narrative("s2", " lands.", { stream: true, done: true }))
-    const { entries } = useSessionStore.getState()
-    expect(entries).toHaveLength(1)
-    const entry = entries[0]
-    if (entry.kind !== "narrative") throw new Error("expected narrative")
-    expect(entry.frame.id).toBe("s2")
-    expect(entry.frame.text).toBe("The real reply lands.")
+  it("drops an abandoned draft when its closing narrative is empty", () => {
+    ingest(delta("s1", "The fog thick"))
+    ingest(narrative("s1", ""))
+    expect(useSessionStore.getState().entries).toHaveLength(0)
   })
 
-  it("never supersedes on a mid-stream delta or a non-KP line", () => {
-    ingest(narrative("s1", "draft one ", { stream: true }))
-    // A new stream opening does not evict the old draft…
-    ingest(narrative("s2", "draft two ", { stream: true }))
+  it("ignores an empty narrative with no matching draft", () => {
+    ingest(narrative("n1", "The pier creaks."))
+    ingest(narrative("n2", ""))
+    expect(useSessionStore.getState().entries).toHaveLength(1)
+  })
+
+  it("keeps drafts with different ids as separate bubbles", () => {
+    ingest(delta("s1", "tool-round draft"))
+    ingest(delta("s2", "The real reply"))
     expect(useSessionStore.getState().entries).toHaveLength(2)
-    // …and neither does a player's plain line, nor a finished KP bubble its own draft.
+    // Closing one stream leaves the other draft untouched.
+    ingest(narrative("s2", "The real reply lands."))
+    const { entries } = useSessionStore.getState()
+    expect(entries).toHaveLength(2)
+    const closed = entries[1]
+    if (closed.kind !== "narrative") throw new Error("expected narrative")
+    expect(closed.frame.id).toBe("s2")
+    expect(closed.draft).toBe(false)
+    expect(closed.frame.text).toBe("The real reply lands.")
+    const open = entries[0]
+    if (open.kind !== "narrative") throw new Error("expected narrative")
+    expect(open.draft).toBe(true)
+  })
+
+  it("never evicts a draft on a player's plain line", () => {
+    ingest(delta("s1", "draft one "))
     ingest(narrative("p1", "I wait.", { speaker: "player", name: "Ash" }))
-    expect(useSessionStore.getState().entries).toHaveLength(3)
+    expect(useSessionStore.getState().entries).toHaveLength(2)
   })
 
   it("caps a runaway stream at MAX_STREAM_TEXT", () => {
-    ingest(narrative("s1", "x".repeat(MAX_STREAM_TEXT - 10), { stream: true }))
-    ingest(narrative("s1", "y".repeat(100), { stream: true }))
+    ingest(delta("s1", "x".repeat(MAX_STREAM_TEXT - 10)))
+    ingest(delta("s1", "y".repeat(100)))
     const entry = useSessionStore.getState().entries[0]
     if (entry.kind !== "narrative") throw new Error("expected narrative")
     expect(entry.frame.text).toHaveLength(MAX_STREAM_TEXT)

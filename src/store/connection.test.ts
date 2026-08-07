@@ -3,7 +3,7 @@ import { sanitizeTicket, useConnectionStore } from "./connection"
 
 const WELCOME = {
   type: "welcome",
-  protocol: "1.6",
+  protocol: "2.1",
   room: "r1",
   you: { id: "u1", name: "Nyx", role: "player" },
   locale: "en",

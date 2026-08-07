@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type {
   DiceFrame,
+  NarrativeDeltaFrame,
   NarrativeFrame,
   PresenceFrame,
   ServerFrame,
@@ -18,7 +19,7 @@ export const MAX_STREAM_TEXT = 20_000
 export const TURN_BUSY_TIMEOUT_MS = 120_000
 
 export type LogEntry =
-  | { seq: number; kind: "narrative"; frame: NarrativeFrame }
+  | { seq: number; kind: "narrative"; frame: NarrativeFrame; draft?: boolean }
   | { seq: number; kind: "dice"; frame: DiceFrame }
   | { seq: number; kind: "system"; frame: SystemFrame }
   | { seq: number; kind: "ui"; frame: UiFrame }
@@ -53,50 +54,59 @@ let nextSeq = 1
 
 const IDLE_TURN: TurnState = { busy: false, actor: null, since: 0 }
 
-function pushEntry(entries: LogEntry[], entry: Omit<LogEntry, "seq">): LogEntry[] {
+/** `Omit` that distributes over a union, so variant-only keys (like `draft`) survive. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+
+function pushEntry(entries: LogEntry[], entry: DistributiveOmit<LogEntry, "seq">): LogEntry[] {
   return [...entries, { ...entry, seq: nextSeq++ } as LogEntry].slice(-MAX_LOG_ENTRIES)
 }
 
 /**
- * Narrative merge rules (matching the reference TUI, plus replay dedup):
- * - a `stream:true` chunk appends its text delta to the entry with the same id
- *   (creating it if new) and carries the `done` flag forward;
- * - a finished or plain KP reply supersedes any still-open KP draft bubble
- *   with a DIFFERENT id — when a post-generation correction rewrites the
- *   reply, the server abandons the streamed draft and sends the corrected
- *   text as a fresh plain narrative;
- * - a plain frame whose id is already present is a history replay duplicate
- *   (the server replays recent narrative on every join) and is dropped;
+ * Narrative merge rules (protocol 2.0, matching the reference TUI):
+ * - `narrative_delta` chunks concatenate into one draft bubble keyed by `id`
+ *   (created on the first delta, rendered as markdown while open);
+ * - the closing `narrative` with the SAME `id` carries the full final text
+ *   and REPLACES the draft (post-generation corrections are already folded
+ *   in); an empty final text drops an abandoned draft outright;
+ * - a `narrative` whose id matches a completed line is a history replay
+ *   (the server replays recent narrative on every join) and replaces it
+ *   in place — same id, same text, same slot;
  * - anything else is a fresh line.
  */
 function ingestNarrative(entries: LogEntry[], frame: NarrativeFrame): LogEntry[] {
-  if (frame.speaker === "kp" && (!frame.stream || frame.done)) {
-    entries = entries.filter(
-      (e) =>
-        !(
-          e.kind === "narrative" &&
-          e.frame.speaker === "kp" &&
-          e.frame.stream &&
-          !e.frame.done &&
-          e.frame.id !== frame.id
-        ),
-    )
-  }
   const index = entries.findIndex((e) => e.kind === "narrative" && e.frame.id === frame.id)
-  if (frame.stream) {
-    if (index === -1) return pushEntry(entries, { kind: "narrative", frame })
-    const existing = entries[index] as Extract<LogEntry, { kind: "narrative" }>
-    const merged: NarrativeFrame = {
-      ...existing.frame,
-      text: (existing.frame.text + frame.text).slice(0, MAX_STREAM_TEXT),
-      done: frame.done,
-    }
+  if (index !== -1) {
+    if (!frame.text) return entries.filter((_, i) => i !== index)
     const next = [...entries]
-    next[index] = { ...existing, frame: merged }
+    next[index] = { seq: entries[index].seq, kind: "narrative", frame, draft: false }
     return next
   }
-  if (index !== -1) return entries
-  return pushEntry(entries, { kind: "narrative", frame })
+  if (!frame.text) return entries
+  return pushEntry(entries, { kind: "narrative", frame, draft: false })
+}
+
+/** One streaming text delta, accumulated into the draft bubble for its id. */
+function ingestDelta(entries: LogEntry[], frame: NarrativeDeltaFrame): LogEntry[] {
+  const index = entries.findIndex((e) => e.kind === "narrative" && e.frame.id === frame.id)
+  if (index === -1) {
+    const draft: NarrativeFrame = {
+      type: "narrative",
+      id: frame.id,
+      speaker: frame.speaker,
+      ...(frame.name ? { name: frame.name } : {}),
+      text: frame.text.slice(0, MAX_STREAM_TEXT),
+      format: "markdown",
+    }
+    return pushEntry(entries, { kind: "narrative", frame: draft, draft: true })
+  }
+  const existing = entries[index] as Extract<LogEntry, { kind: "narrative" }>
+  const merged: NarrativeFrame = {
+    ...existing.frame,
+    text: (existing.frame.text + frame.text).slice(0, MAX_STREAM_TEXT),
+  }
+  const next = [...entries]
+  next[index] = { ...existing, frame: merged, draft: true }
+  return next
 }
 
 /**
@@ -144,6 +154,9 @@ export const useSessionStore = create<SessionState>((set) => ({
         return
       case "narrative":
         set((s) => ({ entries: ingestNarrative(s.entries, frame) }))
+        return
+      case "narrative_delta":
+        set((s) => ({ entries: ingestDelta(s.entries, frame) }))
         return
       case "dice":
         set((s) => ({ entries: pushEntry(s.entries, { kind: "dice", frame }) }))

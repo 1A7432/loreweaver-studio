@@ -1,18 +1,17 @@
 import { stripControlChars, type DiceFrame } from "@loreweaver/protocol"
-import { diceRankClass } from "./rank"
+import { diceOutcomeClass } from "./rank"
 
 export default function DiceLine({ frame }: { frame: DiceFrame }) {
-  const hasOutcome = typeof frame.level === "string" || typeof frame.success === "boolean"
-  const level = frame.level ?? (frame.success ? "SUCCESS" : "FAIL")
+  const outcome = frame.outcome
   return (
-    <div className={`dice-line ${diceRankClass(frame.rank)}`} data-kind={frame.kind}>
+    <div className={`dice-line ${diceOutcomeClass(outcome)}`} data-kind={frame.kind}>
       <span className="dice-glyph" aria-hidden="true">
         ⚄
       </span>
       <span className="dice-text">
         {stripControlChars(`${frame.actor} ${frame.expr} = ${frame.total}`)}
         {typeof frame.target === "number" ? ` vs ${frame.target}` : ""}
-        {hasOutcome ? ` → ${stripControlChars(level)}` : ""}
+        {outcome ? ` → ${stripControlChars(outcome.label)}` : ""}
       </span>
       {frame.rolls.length > 0 ? <span className="dice-rolls">[{frame.rolls.join(", ")}]</span> : null}
     </div>

@@ -3,11 +3,42 @@ import {
   stripControlChars,
   type CharacterState,
   type ModuleVariable,
+  type ResourceState,
   type StateFrame,
 } from "@loreweaver/protocol"
 import { useSessionStore } from "../../store/session"
-import Meter from "./Meter"
+import Meter, { type MeterTone } from "./Meter"
 import UiBlocks from "./UiBlocks"
+
+/**
+ * Color a vital resource by its pack-declared id (protocol 2.0 `resources`).
+ * The well-known vital ids keep their dedicated tones; anything else a rule
+ * pack invents falls back to the generic accent.
+ */
+function resourceTone(id: string): MeterTone {
+  if (id === "hp" || id === "mp" || id === "san") return id
+  return "accent"
+}
+
+/**
+ * Protocol 2.0 vitals: one generic `resources` entry each — bounded entries
+ * render as meters, unbounded ones as plain stat rows, and a `max` of zero
+ * means the pool does not apply to this character (hidden, like 1.x MP/SAN).
+ * Labels arrive pre-localized to the room locale.
+ */
+export function ResourceRow({ resource }: { resource: ResourceState }) {
+  const label = stripControlChars(resource.label)
+  if (typeof resource.max === "number") {
+    if (resource.max <= 0) return null
+    return <Meter label={label} value={resource.value} max={resource.max} tone={resourceTone(resource.id)} />
+  }
+  return (
+    <div className="var-row" data-kind="number">
+      <span className="var-label">{label}</span>
+      <span className="var-value">{resource.value}</span>
+    </div>
+  )
+}
 
 function CharacterCard({ character }: { character: CharacterState }) {
   const { t } = useTranslation()
@@ -17,11 +48,9 @@ function CharacterCard({ character }: { character: CharacterState }) {
         {stripControlChars(character.name)}
         <span className="desk-tag">{stripControlChars(character.system)}</span>
       </header>
-      <Meter label="HP" value={character.hp} max={character.hpmax} tone="hp" />
-      {character.mpmax > 0 ? <Meter label="MP" value={character.mp} max={character.mpmax} tone="mp" /> : null}
-      {character.sanmax > 0 ? (
-        <Meter label="SAN" value={character.san} max={character.sanmax} tone="san" />
-      ) : null}
+      {character.resources.map((resource) => (
+        <ResourceRow key={resource.id} resource={resource} />
+      ))}
       {character.status_effects.length > 0 ? (
         <div className="chip-row">
           {character.status_effects.map((effect) => (
@@ -134,11 +163,12 @@ function PartyCard({ game }: { game: StateFrame }) {
             <span className={`presence-dot ${member.online ? "online" : "offline"}`} aria-hidden="true" />
             <span className="party-name">{stripControlChars(member.name)}</span>
             {member.ai ? <span className="chip chip-ai">AI</span> : null}
-            {typeof member.hp === "number" && typeof member.hpMax === "number" ? (
-              <span className="party-stat">
-                {member.hp}/{member.hpMax}
+            {(member.resources ?? []).map((resource) => (
+              <span key={resource.id} className="party-stat">
+                {stripControlChars(resource.label)} {resource.value}
+                {typeof resource.max === "number" && resource.max > 0 ? `/${resource.max}` : ""}
               </span>
-            ) : null}
+            ))}
           </li>
         ))}
       </ul>

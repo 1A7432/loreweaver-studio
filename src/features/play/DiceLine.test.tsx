@@ -1,25 +1,31 @@
 import { render } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
-import type { DiceFrame } from "@loreweaver/protocol"
+import type { DiceFrame, DiceOutcome } from "@loreweaver/protocol"
 import DiceLine from "./DiceLine"
-import { diceRankClass } from "./rank"
+import { diceOutcomeClass } from "./rank"
 
-describe("diceRankClass", () => {
-  it("maps every rank of -2..4 onto the reference ramp", () => {
-    expect(diceRankClass(-2)).toBe("rank-fumble")
-    expect(diceRankClass(-1)).toBe("rank-fail")
-    expect(diceRankClass(0)).toBe("rank-neutral")
-    expect(diceRankClass(undefined)).toBe("rank-neutral")
-    expect(diceRankClass(1)).toBe("rank-success")
-    expect(diceRankClass(2)).toBe("rank-hard")
-    expect(diceRankClass(3)).toBe("rank-extreme")
-    expect(diceRankClass(4)).toBe("rank-crit")
-    expect(diceRankClass(9)).toBe("rank-crit")
+const outcome = (extra: Partial<DiceOutcome>): DiceOutcome => ({
+  id: "regular",
+  label: "Success",
+  success: true,
+  critical: false,
+  fumble: false,
+  tier: 2,
+  ...extra,
+})
+
+describe("diceOutcomeClass", () => {
+  it("colors by the semantic flags, matching the reference TUI", () => {
+    expect(diceOutcomeClass(undefined)).toBe("rank-neutral")
+    expect(diceOutcomeClass(outcome({ critical: true, tier: 5 }))).toBe("rank-crit")
+    expect(diceOutcomeClass(outcome({ fumble: true, success: false, tier: 0 }))).toBe("rank-fumble")
+    expect(diceOutcomeClass(outcome({}))).toBe("rank-success")
+    expect(diceOutcomeClass(outcome({ success: false, tier: 1 }))).toBe("rank-fail")
   })
 })
 
 describe("DiceLine", () => {
-  it("renders the roll with target, level, and rank color class", () => {
+  it("renders the roll with target, outcome label, and color class", () => {
     const frame: DiceFrame = {
       type: "dice",
       actor: "Nyx",
@@ -28,15 +34,28 @@ describe("DiceLine", () => {
       rolls: [3],
       total: 3,
       target: 50,
-      rank: 3,
-      level: "EXTREME",
-      success: true,
+      outcome: outcome({ id: "extreme", label: "EXTREME", tier: 4 }),
     }
     const { container } = render(<DiceLine frame={frame} />)
     const line = container.querySelector(".dice-line")
-    expect(line).toHaveClass("rank-extreme")
+    expect(line).toHaveClass("rank-success")
     expect(line).toHaveTextContent("Nyx 1d100 = 3 vs 50 → EXTREME")
     expect(line).toHaveTextContent("[3]")
+  })
+
+  it("colors a critical success with the crit class", () => {
+    const frame: DiceFrame = {
+      type: "dice",
+      actor: "Nyx",
+      kind: "check",
+      expr: "1d100",
+      rolls: [1],
+      total: 1,
+      target: 50,
+      outcome: outcome({ id: "crit", label: "CRITICAL", critical: true, tier: 5 }),
+    }
+    const { container } = render(<DiceLine frame={frame} />)
+    expect(container.querySelector(".dice-line")).toHaveClass("rank-crit")
   })
 
   it("strips control characters from server-supplied fields", () => {
