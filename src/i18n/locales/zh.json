@@ -193,6 +193,7 @@
       "card": "卡面",
       "variables": "变量",
       "worldbook": "世界书",
+      "pregens": "预设调查员",
       "hooks": "Hooks"
     },
     "card": {
@@ -244,6 +245,9 @@
       "keysPlaceholder": "逗号或换行分隔",
       "content": "内容",
       "condition": "条件（失败即关闭）",
+      "stableId": "稳定条目 id（可选）",
+      "stableIdPlaceholder": "fifth-floor-rules",
+      "stableIdHint": "跨包引用句柄：其他包可以用 <包 id>#<条目 id> 指向此条目。在本卡内保持唯一。",
       "enabled": "启用",
       "constant": "常驻",
       "secret": "仅守秘人",
@@ -273,6 +277,16 @@
     "hooks": {
       "hint": "沙箱化房间 hooks（服务端 QuickJS 执行）。事件：turn_start、reply_ready、dice_rolled、variables_changed。效果：inject、narrate、rewriteReply、emitUI、log、setvar/getvar。"
     },
+    "pregens": {
+      "hint": "预设调查员是模组可供认领的调查员阵容（.pc list / .pc claim）。人物卡由系统默认值加上这里的技能覆盖确定性生成，不经过 LLM。最多 8 名。",
+      "add": "添加预设调查员",
+      "name": "姓名",
+      "concept": "概念",
+      "conceptPlaceholder": "放不下的退休刑警",
+      "notes": "守秘人备注",
+      "skills": "技能覆盖（每行一条：技能名 + 数值）",
+      "skillsPlaceholder": "侦查 60\n图书馆使用 55"
+    },
     "err": {
       "idInvalid": "Id 须为 1-64 个 a-z、0-9、_ 字符（空格/连字符会转为 _）。",
       "idDuplicate": "Id「{{id}}」重复。",
@@ -283,7 +297,12 @@
       "nameRequired": "卡片需要一个名称。",
       "tooManyVariables": "最多 {{max}} 个变量。",
       "entryEmpty": "条目既无标题也无内容。",
-      "conditionTooLong": "条件超过 {{max}} 个字符。"
+      "conditionTooLong": "条件超过 {{max}} 个字符。",
+      "stableIdDuplicate": "稳定条目 id「{{id}}」重复——跨包引用会产生歧义。",
+      "pregenNameRequired": "预设调查员需要姓名。",
+      "tooManyPregens": "最多 {{max}} 名预设调查员。",
+      "pregenTooManySkills": "每名预设调查员最多 {{max}} 条技能覆盖。",
+      "pregenSkillInvalid": "技能行「{{line}}」须为技能名加整数，如：侦查 60。"
     },
     "viewsLabel": "工作台视图",
     "views": {

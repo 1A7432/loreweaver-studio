@@ -193,6 +193,7 @@
       "card": "Card",
       "variables": "Variables",
       "worldbook": "Worldbook",
+      "pregens": "Pregens",
       "hooks": "Hooks"
     },
     "card": {
@@ -244,6 +245,9 @@
       "keysPlaceholder": "comma or newline separated",
       "content": "Content",
       "condition": "Condition (fails closed)",
+      "stableId": "Stable entry id (optional)",
+      "stableIdPlaceholder": "fifth-floor-rules",
+      "stableIdHint": "The cross-pack reference handle: other packs can point at this entry as <pack-id>#<entry-id>. Keep it unique within the card.",
       "enabled": "Enabled",
       "constant": "Constant",
       "secret": "Keeper-only",
@@ -273,6 +277,16 @@
     "hooks": {
       "hint": "Sandboxed room hooks (QuickJS server-side). Events: turn_start, reply_ready, dice_rolled, variables_changed. Effects: inject, narrate, rewriteReply, emitUI, log, setvar/getvar."
     },
+    "pregens": {
+      "hint": "Pregenerated investigators are the module's claimable cast (.pc list / .pc claim). Sheets are built from the system's defaults plus these skill overrides — deterministic, no LLM. At most 8.",
+      "add": "Add pregen",
+      "name": "Name",
+      "concept": "Concept",
+      "conceptPlaceholder": "Retired police detective who cannot let go",
+      "notes": "Keeper notes",
+      "skills": "Skill overrides (one per line: name + value)",
+      "skillsPlaceholder": "侦查 60\n图书馆使用 55"
+    },
     "err": {
       "idInvalid": "Id must be 1-64 chars of a-z, 0-9, _ (spaces/hyphens become _).",
       "idDuplicate": "Duplicate id \"{{id}}\".",
@@ -283,7 +297,12 @@
       "nameRequired": "The card needs a name.",
       "tooManyVariables": "At most {{max}} variables.",
       "entryEmpty": "Entry has neither title nor content.",
-      "conditionTooLong": "Condition exceeds {{max}} characters."
+      "conditionTooLong": "Condition exceeds {{max}} characters.",
+      "stableIdDuplicate": "Duplicate stable entry id \"{{id}}\" — cross-pack references would be ambiguous.",
+      "pregenNameRequired": "Pregen needs a name.",
+      "tooManyPregens": "At most {{max}} pregens.",
+      "pregenTooManySkills": "At most {{max}} skill overrides per pregen.",
+      "pregenSkillInvalid": "Skill line \"{{line}}\" must be a name followed by an integer, e.g. 侦查 60."
     },
     "viewsLabel": "Studio views",
     "views": {

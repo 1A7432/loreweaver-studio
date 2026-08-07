@@ -15,12 +15,13 @@ import { embedCardIntoPng } from "./pngCard"
 import HooksTab from "./HooksTab"
 import { validateProject } from "./model"
 import PackWizard from "./pack/PackWizard"
+import PregensTab from "./PregensTab"
 import SplitView from "./split/SplitView"
 import VariablesTab from "./VariablesTab"
 import WizardView from "./wizard/WizardView"
 import WorldbookTab from "./WorldbookTab"
 
-const TABS: StudioTab[] = ["card", "variables", "worldbook", "hooks"]
+const TABS: StudioTab[] = ["card", "variables", "worldbook", "pregens", "hooks"]
 const VIEWS: StudioViewName[] = ["forge", "wizard", "split", "pack"]
 
 export default function StudioView() {
@@ -219,6 +220,9 @@ export default function StudioView() {
                 ) : null}
                 {tab === "worldbook" ? (
                   <WorldbookTab project={project} issues={validation?.lorebook ?? new Map()} />
+                ) : null}
+                {tab === "pregens" ? (
+                  <PregensTab project={project} issues={validation?.pregens ?? new Map()} />
                 ) : null}
                 {tab === "hooks" ? <HooksTab project={project} /> : null}
               </div>

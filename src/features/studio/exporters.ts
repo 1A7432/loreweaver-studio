@@ -1,6 +1,7 @@
 // Dual export, per the M14 card-forge draft:
 //  - a Loreweaver-native bundle (lossless: keeps keeper-only variables and
-//    secret lore; typed specs ride verbatim);
+//    secret lore; typed specs ride verbatim) — format v1, the frozen M16
+//    consolidation shape parsed by the engine's `core/lorecard.py`;
 //  - a SillyTavern V3 card (plays in stock ST *and* imports back into
 //    Loreweaver): typed specs become a generated [InitVar] entry, `condition`
 //    becomes an `@@if` decorator line, hooks ride extensions.loreweaver_hooks.
@@ -8,8 +9,13 @@
 // docs/FORMATS.md documents both shapes.
 
 import {
+  MAX_PREGEN_CONCEPT_LEN,
+  MAX_PREGEN_NAME_LEN,
+  MAX_PREGEN_NOTES_LEN,
+  parsePregenSkills,
   splitKeys,
   type ForgeLoreEntry,
+  type ForgePregen,
   type ForgeProject,
   type ModvarSpec,
   type SelectiveLogic,
@@ -27,7 +33,11 @@ export const SELECTIVE_LOGIC_TO_INT: Record<SelectiveLogic, number> = {
 const clamp = (value: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.trunc(value)))
 
 function loreToNative(entry: ForgeLoreEntry): Record<string, unknown> {
+  const stableId = entry.stableId?.trim() ?? ""
   return {
+    // The stable entry id rides first when set — the cross-pack reference
+    // handle (`<pack-id>#<entry-id>`), carried verbatim by the engine.
+    ...(stableId ? { id: stableId } : {}),
     title: entry.title.trim() || "Untitled Lore",
     content: entry.content,
     keys: splitKeys(entry.keys),
@@ -50,24 +60,46 @@ function loreToNative(entry: ForgeLoreEntry): Record<string, unknown> {
   }
 }
 
+/** One pregen → the native cast row. Lengths are capped to the engine's
+ * truncation limits so the export parses back to exactly what we wrote;
+ * invalid skill lines are dropped here and surfaced by `validateProject`. */
+function pregenToNative(pregen: ForgePregen): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    name: pregen.name.trim().slice(0, MAX_PREGEN_NAME_LEN),
+  }
+  const concept = pregen.concept.trim().slice(0, MAX_PREGEN_CONCEPT_LEN)
+  if (concept) out["concept"] = concept
+  const notes = pregen.notes.trim().slice(0, MAX_PREGEN_NOTES_LEN)
+  if (notes) out["notes"] = notes
+  const { skills } = parsePregenSkills(pregen.skillsText)
+  if (Object.keys(skills).length > 0) out["skills"] = skills
+  return out
+}
+
 export function exportNativeBundle(project: ForgeProject, specs: ModvarSpec[]): Record<string, unknown> {
+  const hooks = project.hooks.trim()
+  const pregens = (project.pregens ?? []).map(pregenToNative)
   return {
     format: "loreweaver.card",
-    // Provisional: the upstream native-bundle importer is M14 (not landed).
-    // Versioned so a future importer can migrate whatever we emitted.
-    format_version: 0,
+    // Format v1: the frozen M16 consolidation shape — native field names,
+    // top-level `hooks`, entry `id`s, and the `pregens` cast. v0 (the
+    // pre-freeze provisional shape) is deliberately unmigratable engine-side.
+    format_version: 1,
     name: project.name.trim(),
     description: project.description,
     personality: project.personality,
     scenario: project.scenario,
-    first_mes: project.firstMes,
-    mes_example: project.mesExample,
-    alternate_greetings: (project.alternateGreetings ?? []).filter((g) => g.trim().length > 0),
-    creator_notes: project.creatorNotes,
+    opening: project.firstMes,
+    dialogue_examples: project.mesExample,
+    alternate_openings: (project.alternateGreetings ?? []).filter((g) => g.trim().length > 0),
+    author_notes: project.creatorNotes,
     tags: splitKeys(project.tags),
     variables: specs,
     worldbook: project.lorebook.map(loreToNative),
-    extensions: project.hooks.trim() ? { loreweaver_hooks: [project.hooks] } : {},
+    // Both sections are optional engine-side; omitting empty keys keeps the
+    // document cleaner than writing `"hooks": []` / `"pregens": []`.
+    ...(hooks ? { hooks: [project.hooks] } : {}),
+    ...(pregens.length > 0 ? { pregens } : {}),
   }
 }
 

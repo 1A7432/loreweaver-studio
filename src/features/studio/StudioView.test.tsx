@@ -56,4 +56,19 @@ describe("StudioView", () => {
     const project = useStudioStore.getState().projects[0]
     expect(project.lorebook[0].title).toBe("The Well")
   })
+
+  it("adds a pregen with inline validation", async () => {
+    const user = userEvent.setup()
+    render(<StudioView />)
+    await user.click(screen.getByRole("button", { name: "New card" }))
+    await user.click(screen.getByRole("button", { name: "Pregens" }))
+    await user.click(screen.getByRole("button", { name: "Add pregen" }))
+    // A fresh pregen has an empty (required) name.
+    expect(screen.getByText(/Pregen needs a name/)).toBeInTheDocument()
+    await user.type(screen.getByLabelText("Name"), "林晚")
+    expect(screen.queryByText(/Pregen needs a name/)).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText(/Skill overrides/), "侦查 60")
+    const project = useStudioStore.getState().projects[0]
+    expect(project.pregens[0]).toMatchObject({ name: "林晚", skillsText: "侦查 60" })
+  })
 })

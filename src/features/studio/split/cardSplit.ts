@@ -10,6 +10,9 @@ import { asText, isRecord, type StCharacterCard } from "./charcard"
 import { isInitvarEntry } from "./mvu"
 
 export const HOOKS_EXTENSION_KEY = "loreweaver_hooks"
+/** The native lorecard's (format v1) top-level hooks list — mirrors the
+ * engine's `core.card_split.NATIVE_HOOKS_KEY`. */
+export const NATIVE_HOOKS_KEY = "hooks"
 
 const EJS_SPAN_RE = /<%[\s\S]*?%>/g
 const EJS_DANGLING_RE = /<%[\s\S]*$/
@@ -83,15 +86,20 @@ export function isVariableDeclarationEntry(raw: Record<string, unknown>): boolea
   )
 }
 
-/** The card's `extensions.loreweaver_hooks` scripts — v2/v3 `data.extensions`
- * first, then a root-level `extensions`; string entries or `{code}` dicts. */
+/** The card's hook scripts. A native lorecard (format v1) carries them as the
+ * top-level `hooks` list; ST-shaped cards use `extensions.loreweaver_hooks` in
+ * both the v2/v3 `data.extensions` and root-level `extensions` locations.
+ * Entries may be code strings or `{code}` dicts. Mirrors `card_hook_codes`. */
 export function cardHookCodes(raw: Record<string, unknown>): string[] {
-  const data = raw.data
-  let extensions = isRecord(data) ? data.extensions : undefined
-  if (!isRecord(extensions)) {
-    extensions = isRecord(raw.extensions) ? raw.extensions : {}
+  let entries: unknown = raw[NATIVE_HOOKS_KEY]
+  if (!Array.isArray(entries)) {
+    const data = raw.data
+    let extensions = isRecord(data) ? data.extensions : undefined
+    if (!isRecord(extensions)) {
+      extensions = isRecord(raw.extensions) ? raw.extensions : {}
+    }
+    entries = (extensions as Record<string, unknown>)[HOOKS_EXTENSION_KEY]
   }
-  const entries = (extensions as Record<string, unknown>)[HOOKS_EXTENSION_KEY]
   if (!Array.isArray(entries)) return []
   const codes: string[] = []
   for (const entry of entries) {
@@ -101,10 +109,12 @@ export function cardHookCodes(raw: Record<string, unknown>): string[] {
   return codes
 }
 
-/** A per-level shallow copy of `raw` with `extensions.loreweaver_hooks`
- * dropped from both the v2/v3 `data.extensions` and root `extensions` spots. */
+/** A per-level shallow copy of `raw` with hook scripts dropped: the native
+ * top-level `hooks` list, plus `extensions.loreweaver_hooks` in both the
+ * v2/v3 `data.extensions` and root `extensions` spots. */
 function rawWithoutHooks(raw: Record<string, unknown>): Record<string, unknown> {
   const clean: Record<string, unknown> = { ...raw }
+  delete clean[NATIVE_HOOKS_KEY]
   for (const holderKey of ["data", null] as const) {
     const holder = holderKey === null ? clean : clean[holderKey]
     if (!isRecord(holder)) continue

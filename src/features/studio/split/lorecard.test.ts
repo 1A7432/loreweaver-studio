@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest"
 import { exportNativeBundle } from "../exporters"
-import { newLoreEntry, newProject, newVariable, validateProject } from "../model"
+import { newLoreEntry, newPregen, newProject, newVariable, validateProject } from "../model"
 import { splitCard } from "./cardSplit"
 import { looksLikeLorecard, lorecardToCard, lorecardToProject } from "./lorecard"
 
@@ -52,6 +52,7 @@ function sampleProject() {
   open.selectiveLogic = "and_any"
   open.probability = 90
   open.sticky = 2
+  open.stableId = "harumi-block"
   const truth = newLoreEntry()
   truth.title = "真相层：手帐"
   truth.content = "句帐夹在 2020 年 11 月号的装订样里。"
@@ -59,6 +60,15 @@ function sampleProject() {
   truth.constant = true
   truth.condition = "证据链完整度 >= 6"
   project.lorebook = [open, truth]
+
+  const detective = newPregen()
+  detective.name = "林晚"
+  detective.concept = "放不下的退休刑警"
+  detective.notes = "知道得太多。"
+  detective.skillsText = "侦查 60\n图书馆使用 55"
+  const rookie = newPregen()
+  rookie.name = "阿灿"
+  project.pregens = [detective, rookie]
   return project
 }
 
@@ -96,9 +106,46 @@ describe("lorecard round trip", () => {
     expect(reOpen?.secondaryKeys).toBe("地价, 鉴定")
     expect(reOpen?.probability).toBe(90)
     expect(reOpen?.sticky).toBe(2)
+    expect(reOpen?.stableId).toBe("harumi-block")
+
+    expect(back.pregens).toHaveLength(2)
+    expect(back.pregens[0]).toMatchObject({
+      name: "林晚",
+      concept: "放不下的退休刑警",
+      notes: "知道得太多。",
+      skillsText: "侦查 60\n图书馆使用 55",
+    })
+    expect(back.pregens[1]).toMatchObject({ name: "阿灿", skillsText: "" })
 
     // The round-tripped specs are identical — the bundle is the source of truth.
     expect(validateProject(back).specs).toEqual(specs)
+  })
+
+  it("still imports v0 bundles (the studio's own historical exports, refused engine-side)", () => {
+    const v0 = {
+      format: "loreweaver.card",
+      format_version: 0,
+      name: "旧卡",
+      first_mes: "开场。",
+      mes_example: "<START>……",
+      alternate_greetings: ["另一开场。"],
+      creator_notes: "legacy",
+      worldbook: [{ title: "井", content: "别碰。", keys: ["well"] }],
+      extensions: { loreweaver_hooks: ["on('turn_start', f)"] },
+    }
+    const { card, alternateGreetings, hooks } = lorecardToCard(v0)
+    expect(card.firstMes).toBe("开场。")
+    expect(card.mesExample).toBe("<START>……")
+    expect(card.creatorNotes).toBe("legacy")
+    expect(alternateGreetings).toEqual(["另一开场。"])
+    expect(hooks).toEqual(["on('turn_start', f)"])
+
+    const { project, warnings } = lorecardToProject(v0)
+    expect(warnings).toEqual([])
+    expect(project.firstMes).toBe("开场。")
+    expect(project.alternateGreetings).toEqual(["另一开场。"])
+    expect(project.hooks).toBe("on('turn_start', f)")
+    expect(project.lorebook[0].title).toBe("井")
   })
 
   it("refuses a wrong format tag and an unsupported version", () => {
@@ -128,6 +175,32 @@ describe("lorecard as a pack card (engine-aligned classification)", () => {
 
     const truthEntry = card.characterBook.find((entry) => entry.secret === true)
     expect(String(truthEntry?.content)).toMatch(/^@@if 证据链完整度 >= 6\n/)
+    // v1 hooks ride the top-level `hooks` list; the stable id rides the
+    // importer-shaped entry dict verbatim (engine `_parse_entry` parity).
+    expect(split.hooks).toEqual(["on('turn_start', () => { /* pulse */ })"])
+    const openEntry = card.characterBook.find((entry) => entry.comment === "晴海第II街区")
+    expect(openEntry?.id).toBe("harumi-block")
+  })
+
+  it("tolerates {code} hook dicts and skips junk pregens with warnings", () => {
+    const { card, hooks } = lorecardToCard({
+      format: "loreweaver.card",
+      format_version: 1,
+      name: "X",
+      hooks: [{ code: "one()" }, "two()", "  ", 42],
+    })
+    expect(hooks).toEqual(["one()", "two()"])
+    expect(card.raw).toHaveProperty("hooks")
+
+    const { project, warnings } = lorecardToProject({
+      format: "loreweaver.card",
+      format_version: 1,
+      name: "X",
+      pregens: [{ name: "林晚", skills: { 侦查: 60, bad: "x" } }, { concept: "no name" }, "not-an-object"],
+    })
+    expect(project.pregens).toHaveLength(1)
+    expect(project.pregens[0].skillsText).toBe("侦查 60")
+    expect(warnings).toHaveLength(3)
   })
 
   it("skips junk rows with warnings instead of failing the bundle", () => {

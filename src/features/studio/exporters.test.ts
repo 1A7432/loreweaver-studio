@@ -6,7 +6,7 @@ import {
   exportSillyTavernCard,
   SELECTIVE_LOGIC_TO_INT,
 } from "./exporters"
-import { newLoreEntry, newProject, validateProject, type ForgeVariable } from "./model"
+import { newLoreEntry, newPregen, newProject, validateProject, type ForgeVariable } from "./model"
 import { newVariable } from "./model"
 
 function project() {
@@ -55,7 +55,7 @@ describe("native bundle export", () => {
     const p = project()
     const { specs } = validateProject(p)
     const bundle = exportNativeBundle(p, specs) as Record<string, never>
-    expect(bundle).toMatchObject({ format: "loreweaver.card", format_version: 0, name: "Deep Pier" })
+    expect(bundle).toMatchObject({ format: "loreweaver.card", format_version: 1, name: "Deep Pier" })
     expect(bundle["tags"]).toEqual(["coc", "horror"])
 
     const variables = bundle["variables"] as Record<string, unknown>[]
@@ -74,7 +74,65 @@ describe("native bundle export", () => {
       probability: 80,
     })
     expect(worldbook[1]).toMatchObject({ secret: true })
-    expect(bundle["extensions"]).toEqual({ loreweaver_hooks: ["on('turn_start', () => {})"] })
+    // v1: hooks are the first-class top-level list, not an extensions key.
+    expect(bundle["hooks"]).toEqual(["on('turn_start', () => {})"])
+    expect(bundle).not.toHaveProperty("extensions")
+  })
+
+  it("uses the v1 prose field names", () => {
+    const p = project()
+    p.firstMes = "潮水拍打着栈桥。"
+    p.mesExample = "<START>……"
+    p.creatorNotes = "keeper first"
+    const bundle = exportNativeBundle(p, validateProject(p).specs)
+    expect(bundle["opening"]).toBe("潮水拍打着栈桥。")
+    expect(bundle["dialogue_examples"]).toBe("<START>……")
+    expect(bundle["author_notes"]).toBe("keeper first")
+    for (const legacy of ["first_mes", "mes_example", "creator_notes", "alternate_greetings"]) {
+      expect(bundle).not.toHaveProperty(legacy)
+    }
+  })
+
+  it("omits the hooks and pregens keys when empty", () => {
+    const p = project()
+    p.hooks = "  "
+    const bundle = exportNativeBundle(p, validateProject(p).specs)
+    expect(bundle).not.toHaveProperty("hooks")
+    expect(bundle).not.toHaveProperty("pregens")
+  })
+
+  it("rides a non-empty stable entry id and omits it otherwise", () => {
+    const p = project()
+    p.lorebook[0].stableId = "the-well"
+    const bundle = exportNativeBundle(p, validateProject(p).specs)
+    const worldbook = bundle["worldbook"] as Record<string, unknown>[]
+    expect(worldbook[0]["id"]).toBe("the-well")
+    expect(worldbook[1]).not.toHaveProperty("id")
+  })
+
+  it("exports the pregen cast with parsed skill overrides", () => {
+    const p = project()
+    p.pregens = [
+      {
+        ...newPregen(),
+        name: "林晚",
+        concept: "放不下的退休刑警",
+        notes: "知道得太多。",
+        skillsText: "侦查 60\n图书馆使用 55\njunk line\n斗殴 -5",
+      },
+      { ...newPregen(), name: "阿灿" },
+    ]
+    const bundle = exportNativeBundle(p, validateProject(p).specs)
+    expect(bundle["pregens"]).toEqual([
+      {
+        name: "林晚",
+        concept: "放不下的退休刑警",
+        notes: "知道得太多。",
+        // The junk line drops out here; validateProject surfaces it instead.
+        skills: { 侦查: 60, 图书馆使用: 55, 斗殴: -5 },
+      },
+      { name: "阿灿" },
+    ])
   })
 })
 
@@ -136,8 +194,8 @@ describe("alternate greetings", () => {
     const p = project()
     p.alternateGreetings = ["涨潮那晚。", "   "]
     const { specs } = validateProject(p)
-    const native = exportNativeBundle(p, specs) as { alternate_greetings: string[] }
-    expect(native.alternate_greetings).toEqual(["涨潮那晚。"])
+    const native = exportNativeBundle(p, specs) as { alternate_openings: string[] }
+    expect(native.alternate_openings).toEqual(["涨潮那晚。"])
     const st = exportSillyTavernCard(p, specs) as { data: { alternate_greetings: string[] } }
     expect(st.data.alternate_greetings).toEqual(["涨潮那晚。"])
   })

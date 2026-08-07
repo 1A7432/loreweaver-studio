@@ -44,6 +44,16 @@ function EntryEditor({ entry, issues }: { entry: ForgeLoreEntry; issues: Issue[]
           spellCheck={false}
         />
       </label>
+      <label className="field">
+        {t("studio.wb.stableId")}
+        <input
+          value={entry.stableId ?? ""}
+          onChange={(e) => patch({ stableId: e.target.value })}
+          placeholder={t("studio.wb.stableIdPlaceholder")}
+          spellCheck={false}
+        />
+        <span className="studio-hint">{t("studio.wb.stableIdHint")}</span>
+      </label>
 
       <div className="wb-flag-row">
         <label className="flag">

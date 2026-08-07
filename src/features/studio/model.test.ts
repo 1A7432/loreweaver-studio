@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest"
 import {
   buildSpec,
   MAX_OPTIONS,
+  MAX_PREGENS,
+  MAX_PREGEN_SKILLS,
   MAX_TEXT_LEN,
   MAX_VARS,
   newLoreEntry,
+  newPregen,
   newProject,
   newVariable,
   normalizeVarId,
+  parsePregenSkills,
   validateProject,
   type ForgeVariable,
 } from "./model"
@@ -141,6 +145,62 @@ describe("validateProject", () => {
     expect(result.lorebook.get(long.uid)).toContainEqual({
       key: "conditionTooLong",
       params: { max: 500 },
+    })
+  })
+
+  it("warns on duplicate stable entry ids, like the engine does", () => {
+    const project = newProject("x")
+    const first = { ...newLoreEntry(), title: "a", stableId: "the-well" }
+    const second = { ...newLoreEntry(), title: "b", stableId: " the-well " }
+    const third = { ...newLoreEntry(), title: "c", stableId: "other" }
+    project.lorebook = [first, second, third]
+    const result = validateProject(project)
+    expect(result.lorebook.get(first.uid) ?? []).toEqual([])
+    expect(result.lorebook.get(second.uid)).toContainEqual({
+      key: "stableIdDuplicate",
+      params: { id: "the-well" },
+    })
+    expect(result.lorebook.get(third.uid) ?? []).toEqual([])
+  })
+})
+
+describe("pregens", () => {
+  it("parses skill lines, tolerating CJK names and negatives", () => {
+    const { skills, errors } = parsePregenSkills("侦查 60\n图书馆使用 55\n斗殴 -5\n\n")
+    expect(errors).toEqual([])
+    expect(skills).toEqual({ 侦查: 60, 图书馆使用: 55, 斗殴: -5 })
+  })
+
+  it("flags junk skill lines with the offending line", () => {
+    const { skills, errors } = parsePregenSkills("侦查\n斗殴 abc")
+    expect(skills).toEqual({})
+    expect(errors).toEqual([
+      { key: "pregenSkillInvalid", params: { line: "侦查" } },
+      { key: "pregenSkillInvalid", params: { line: "斗殴 abc" } },
+    ])
+  })
+
+  it("validates the cast: name required, caps enforced", () => {
+    const project = newProject("x")
+    const nameless = newPregen()
+    const bloated = { ...newPregen(), name: "ok" }
+    bloated.skillsText = Array.from({ length: MAX_PREGEN_SKILLS + 1 }, (_, i) => `s${i} ${i}`).join("\n")
+    project.pregens = [nameless, bloated]
+    const result = validateProject(project)
+    expect(result.pregens.get(nameless.uid)).toContainEqual({ key: "pregenNameRequired" })
+    expect(result.pregens.get(bloated.uid)).toContainEqual({
+      key: "pregenTooManySkills",
+      params: { max: MAX_PREGEN_SKILLS },
+    })
+
+    const crowded = newProject("x")
+    crowded.pregens = Array.from({ length: MAX_PREGENS + 1 }, (_, i) => ({
+      ...newPregen(),
+      name: `p${i}`,
+    }))
+    expect(validateProject(crowded).project).toContainEqual({
+      key: "tooManyPregens",
+      params: { max: MAX_PREGENS },
     })
   })
 })

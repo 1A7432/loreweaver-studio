@@ -8,22 +8,29 @@ of ≤50 chars, labels ≤50 chars, text defaults ≤200 chars, conditions ≤50
 
 ## 1. Loreweaver native bundle — `*.lorecard.json`
 
-Lossless authoring output. **Provisional** (`format_version: 0`): the upstream
-native-bundle importer is the not-yet-started M14 milestone, so this shape is
-our proposal — typed variable specs exactly as `core.modvars.build_spec` emits
-them, worldbook entries exactly as `LoreEntry.from_dict` accepts them.
+Lossless authoring output, `format_version: 1` — the frozen M16 consolidation
+shape parsed by the engine's `core/lorecard.py`: typed variable specs exactly
+as `core.modvars.build_spec` emits them, worldbook entries exactly as
+`LoreEntry.from_dict` accepts them. v1 renamed the ST-copied prose fields
+(`opening` / `alternate_openings` / `dialogue_examples` / `author_notes`
+replace `first_mes` / `alternate_greetings` / `mes_example` / `creator_notes`)
+and made hook scripts the first-class top-level `hooks` list. v0 (the
+pre-freeze provisional shape) is deliberately unmigratable engine-side; the
+studio still READS v0 for importing its own historical exports, but never
+writes it.
 
 ```jsonc
 {
   "format": "loreweaver.card",
-  "format_version": 0,
+  "format_version": 1,
   "name": "…",
   "description": "…",
   "personality": "…",
   "scenario": "…",
-  "first_mes": "…",
-  "mes_example": "…",
-  "creator_notes": "…",
+  "opening": "…",
+  "dialogue_examples": "…",
+  "alternate_openings": ["…"],
+  "author_notes": "…",
   "tags": ["…"],
   "variables": [
     {
@@ -38,6 +45,9 @@ them, worldbook entries exactly as `LoreEntry.from_dict` accepts them.
   ],
   "worldbook": [
     {
+      // Optional STABLE entry id — the cross-pack reference handle
+      // (`<pack-id>#<entry-id>`); carried verbatim, collisions warned about.
+      "id": "the-well",
       "title": "…",
       "content": "…",
       "keys": ["…"],
@@ -59,7 +69,19 @@ them, worldbook entries exactly as `LoreEntry.from_dict` accepts them.
       "delay": 0,
     },
   ],
-  "extensions": { "loreweaver_hooks": ["…hooks.js source…"] },
+  // Top-level hook sources; the key is omitted when empty.
+  "hooks": ["…hooks.js source…"],
+  // The module's claimable investigator cast (`.pc list` / `.pc claim`), at
+  // most 8; sheets are built downstream from system defaults + these skill
+  // overrides — deterministic, no LLM. Omitted when empty.
+  "pregens": [
+    {
+      "name": "…", // ≤60 chars, required
+      "concept": "…", // ≤200 chars, optional
+      "notes": "…", // ≤400 chars, optional
+      "skills": { "侦查": 60 }, // ≤32 entries, integer values, optional
+    },
+  ],
 }
 ```
 

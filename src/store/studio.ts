@@ -2,14 +2,16 @@ import { create } from "zustand"
 import { createJSONStorage, persist } from "zustand/middleware"
 import {
   newLoreEntry,
+  newPregen,
   newProject,
   newVariable,
   type ForgeLoreEntry,
+  type ForgePregen,
   type ForgeProject,
   type ForgeVariable,
 } from "../features/studio/model"
 
-export type StudioTab = "card" | "variables" | "worldbook" | "hooks"
+export type StudioTab = "card" | "variables" | "worldbook" | "pregens" | "hooks"
 
 /** Studio sub-views: the forge editor, the co-creation wizard, the card
  * splitter, the pack wizard. */
@@ -31,7 +33,7 @@ interface StudioState {
   replaceProject: (project: ForgeProject) => void
   deleteProject: (uid: string) => void
   selectProject: (uid: string) => void
-  updateProject: (patch: Partial<Omit<ForgeProject, "uid" | "variables" | "lorebook">>) => void
+  updateProject: (patch: Partial<Omit<ForgeProject, "uid" | "variables" | "lorebook" | "pregens">>) => void
 
   addVariable: () => void
   updateVariable: (uid: string, patch: Partial<ForgeVariable>) => void
@@ -41,6 +43,10 @@ interface StudioState {
   updateLoreEntry: (uid: string, patch: Partial<ForgeLoreEntry>) => void
   removeLoreEntry: (uid: string) => void
   selectLoreEntry: (uid: string | null) => void
+
+  addPregen: () => void
+  updatePregen: (uid: string, patch: Partial<ForgePregen>) => void
+  removePregen: (uid: string) => void
 }
 
 function touch(project: ForgeProject): ForgeProject {
@@ -138,6 +144,17 @@ export const useStudioStore = create<StudioState>()(
         },
 
         selectLoreEntry: (uid) => set({ selectedEntryUid: uid }),
+
+        addPregen: () => mutateActive((p) => ({ ...p, pregens: [...(p.pregens ?? []), newPregen()] })),
+
+        updatePregen: (uid, patch) =>
+          mutateActive((p) => ({
+            ...p,
+            pregens: (p.pregens ?? []).map((g) => (g.uid === uid ? { ...g, ...patch } : g)),
+          })),
+
+        removePregen: (uid) =>
+          mutateActive((p) => ({ ...p, pregens: (p.pregens ?? []).filter((g) => g.uid !== uid) })),
       }
     },
     {

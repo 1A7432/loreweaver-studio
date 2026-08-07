@@ -1,5 +1,5 @@
 // Loreweaver native bundle (`*.lorecard.json`) — the studio-side reader,
-// mirroring the engine's `core/lorecard.py` (M14). Two consumers:
+// mirroring the engine's `core/lorecard.py`. Two consumers:
 //
 //  - the pack bench turns a bundle into an `StCharacterCard` whose
 //    `characterBook` holds importer-shaped entry dicts and whose `raw` is the
@@ -10,15 +10,25 @@
 //    keeper-only visibility, native `condition`/`secret` fields), closing the
 //    round trip with `exportNativeBundle`.
 //
+// Versions: v1 is the frozen M16 consolidation shape (native field names,
+// top-level `hooks`, entry `id`s, `pregens`). We ALSO read v0 — the studio's
+// own historical exports — even though the engine deliberately refuses it:
+// the studio is an authoring tool, and importing its old exports losslessly
+// is the author's expectation. That asymmetry is intentional.
+//
 // Junk rows are skipped and reported as warnings, never fatal — same tolerance
 // as the engine. Structural garbage (wrong format tag / version) throws.
 
 import { asText, isRecord, type StCharacterCard } from "./charcard"
 import {
+  MAX_PREGENS,
+  MAX_PREGEN_SKILLS,
   newLoreEntry,
+  newPregen,
   newProject,
   newVariable,
   type ForgeLoreEntry,
+  type ForgePregen,
   type ForgeProject,
   type ForgeVariable,
   type LorePosition,
@@ -28,7 +38,7 @@ import {
 } from "../model"
 
 export const LORECARD_FORMAT = "loreweaver.card"
-export const SUPPORTED_FORMAT_VERSIONS = new Set<number>([0])
+export const SUPPORTED_FORMAT_VERSIONS = new Set<number>([0, 1])
 
 const SELECTIVE_LOGICS = new Set<string>(["and_any", "and_all", "not_any", "not_all"])
 const VAR_KINDS = new Set<string>(["number", "bool", "text", "enum"])
@@ -43,11 +53,12 @@ export function looksLikeLorecard(parsed: unknown): boolean {
   return isRecord(parsed) && parsed.format === LORECARD_FORMAT
 }
 
-function requireVersion(raw: Record<string, unknown>): void {
+function requireVersion(raw: Record<string, unknown>): number {
   const version = raw.format_version
   if (typeof version !== "number" || !SUPPORTED_FORMAT_VERSIONS.has(version)) {
     throw new Error(`unsupported lorecard format_version ${String(version)}`)
   }
+  return version
 }
 
 function textList(value: unknown): string[] {
@@ -62,9 +73,9 @@ function intOr(value: unknown, fallback: number, low?: number, high?: number): n
   return parsed
 }
 
-function hookCodes(raw: Record<string, unknown>): string[] {
-  const extensions = isRecord(raw.extensions) ? raw.extensions : {}
-  let entries = extensions.loreweaver_hooks
+/** Hook sources out of a raw hooks list — code strings or `{code}` dicts,
+ * matching the engine's `_parse_hooks` / `card_hook_codes` tolerance. */
+function codesFromList(entries: unknown): string[] {
   if (typeof entries === "string") entries = [entries]
   if (!Array.isArray(entries)) return []
   const codes: string[] = []
@@ -73,6 +84,14 @@ function hookCodes(raw: Record<string, unknown>): string[] {
     if (typeof code === "string" && code.trim()) codes.push(code)
   }
   return codes
+}
+
+/** v1 carries hooks as the top-level `hooks` list; v0 hid them under
+ * `extensions.loreweaver_hooks`. */
+function hookCodes(raw: Record<string, unknown>, version: number): string[] {
+  if (version >= 1) return codesFromList(raw.hooks)
+  const extensions = isRecord(raw.extensions) ? raw.extensions : {}
+  return codesFromList(extensions.loreweaver_hooks)
 }
 
 /** One native worldbook row → the importer-shaped ST entry dict (the same
@@ -91,7 +110,11 @@ function entryToStDict(raw: unknown, index: number, warnings: string[]): Record<
   const body = condition ? `@@if ${condition}\n${content}` : content
   const secondaryKeys = textList(raw.secondary_keys)
   const logic = asText(raw.selective_logic).trim()
+  // The optional stable entry id — the cross-pack reference handle
+  // (`<pack-id>#<entry-id>`). Carried verbatim, like the engine.
+  const id = asText(raw.id).trim()
   return {
+    ...(id ? { id } : {}),
     comment: asText(raw.title).trim() || "Untitled Lore",
     content: body,
     keys: textList(raw.keys),
@@ -125,7 +148,8 @@ export interface ParsedLorecard {
  * on a wrong format tag or unsupported version; skips junk rows with warnings. */
 export function lorecardToCard(raw: Record<string, unknown>): ParsedLorecard {
   if (!looksLikeLorecard(raw)) throw new Error(`not a Loreweaver native card (format tag missing)`)
-  requireVersion(raw)
+  const version = requireVersion(raw)
+  const v1 = version >= 1
   const warnings: string[] = []
   const worldbook = Array.isArray(raw.worldbook) ? raw.worldbook : []
   const entries: Record<string, unknown>[] = []
@@ -133,19 +157,22 @@ export function lorecardToCard(raw: Record<string, unknown>): ParsedLorecard {
     const entry = entryToStDict(item, index, warnings)
     if (entry !== null) entries.push(entry)
   }
+  // v1's native prose names map onto the same CharacterCard slots the engine
+  // fills (`opening` → `first_mes` etc.); v0 used the ST-era names directly.
   const card: StCharacterCard = {
     name: asText(raw.name).trim(),
     description: asText(raw.description),
     personality: asText(raw.personality),
     scenario: asText(raw.scenario),
-    firstMes: asText(raw.first_mes),
-    mesExample: asText(raw.mes_example),
-    creatorNotes: asText(raw.creator_notes),
+    firstMes: asText(v1 ? raw.opening : raw.first_mes),
+    mesExample: asText(v1 ? raw.dialogue_examples : raw.mes_example),
+    creatorNotes: asText(v1 ? raw.author_notes : raw.creator_notes),
     tags: textList(raw.tags),
     characterBook: entries,
     raw,
   }
-  return { card, alternateGreetings: textList(raw.alternate_greetings), hooks: hookCodes(raw), warnings }
+  const alternateGreetings = textList(v1 ? raw.alternate_openings : raw.alternate_greetings)
+  return { card, alternateGreetings, hooks: hookCodes(raw, version), warnings }
 }
 
 /** One engine-shaped variable spec → the forge's raw form state. */
@@ -196,6 +223,8 @@ function entryToForgeLore(raw: unknown, index: number, warnings: string[]): Forg
   }
   const entry = newLoreEntry()
   entry.title = asText(raw.title).trim()
+  const stableId = asText(raw.id).trim()
+  if (stableId) entry.stableId = stableId
   entry.content = content
   entry.keys = textList(raw.keys).join(", ")
   entry.secondaryKeys = textList(raw.secondary_keys).join(", ")
@@ -223,20 +252,55 @@ export interface ImportedLorecard {
   warnings: string[]
 }
 
+/** One native pregen row → the forge editor's form state, mirroring the
+ * engine's `_parse_pregens` tolerance (caps, int skills, junk skipped with
+ * warnings). The skills mapping flattens back to one `name value` per line. */
+function pregenToForge(raw: unknown, index: number, warnings: string[]): ForgePregen | null {
+  if (!isRecord(raw)) {
+    warnings.push(`pregens[${index}]: skipped (entry must be a JSON object)`)
+    return null
+  }
+  const name = asText(raw.name).trim()
+  if (!name) {
+    warnings.push(`pregens[${index}]: skipped (missing name)`)
+    return null
+  }
+  const pregen = newPregen()
+  pregen.name = name
+  // v1 writes `concept`; the engine also accepts `blurb`.
+  pregen.concept = asText(raw.concept ?? raw.blurb).trim()
+  pregen.notes = asText(raw.notes).trim()
+  const skillsRaw = raw.skills
+  if (isRecord(skillsRaw)) {
+    const lines: string[] = []
+    for (const [key, value] of Object.entries(skillsRaw).slice(0, MAX_PREGEN_SKILLS)) {
+      const parsed = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null
+      if (parsed === null) {
+        warnings.push(`pregens[${index}].skills.${key}: skipped (not an integer)`)
+        continue
+      }
+      lines.push(`${key.trim()} ${parsed}`)
+    }
+    pregen.skillsText = lines.join("\n")
+  }
+  return pregen
+}
+
 /** Native bundle → a ForgeProject, losslessly (the inverse of
  * `exportNativeBundle`). Throws on structural garbage; junk rows warn. */
 export function lorecardToProject(raw: Record<string, unknown>): ImportedLorecard {
   if (!looksLikeLorecard(raw)) throw new Error(`not a Loreweaver native card (format tag missing)`)
-  requireVersion(raw)
+  const version = requireVersion(raw)
+  const v1 = version >= 1
   const warnings: string[] = []
   const project = newProject(asText(raw.name).trim() || "Imported card")
   project.description = asText(raw.description)
   project.personality = asText(raw.personality)
   project.scenario = asText(raw.scenario)
-  project.firstMes = asText(raw.first_mes)
-  project.mesExample = asText(raw.mes_example)
-  project.alternateGreetings = textList(raw.alternate_greetings)
-  project.creatorNotes = asText(raw.creator_notes)
+  project.firstMes = asText(v1 ? raw.opening : raw.first_mes)
+  project.mesExample = asText(v1 ? raw.dialogue_examples : raw.mes_example)
+  project.alternateGreetings = textList(v1 ? raw.alternate_openings : raw.alternate_greetings)
+  project.creatorNotes = asText(v1 ? raw.author_notes : raw.creator_notes)
   project.tags = textList(raw.tags).join(", ")
 
   const variables: ForgeVariable[] = []
@@ -255,7 +319,19 @@ export function lorecardToProject(raw: Record<string, unknown>): ImportedLorecar
   }
   project.lorebook = lorebook
 
-  const hooks = hookCodes(raw)
+  const pregens: ForgePregen[] = []
+  const rawPregens = Array.isArray(raw.pregens) ? raw.pregens : []
+  for (const [index, item] of rawPregens.entries()) {
+    if (pregens.length >= MAX_PREGENS) {
+      warnings.push(`pregens: truncated to ${MAX_PREGENS} entries`)
+      break
+    }
+    const pregen = pregenToForge(item, index, warnings)
+    if (pregen !== null) pregens.push(pregen)
+  }
+  project.pregens = pregens
+
+  const hooks = hookCodes(raw, version)
   if (hooks.length > 0) project.hooks = hooks.join("\n\n")
   return { project, warnings }
 }

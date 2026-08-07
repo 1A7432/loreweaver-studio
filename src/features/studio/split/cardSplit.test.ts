@@ -75,6 +75,16 @@ describe("cardHookCodes", () => {
   it("falls back to root-level extensions", () => {
     expect(cardHookCodes({ extensions: { loreweaver_hooks: ["root hook"] } })).toEqual(["root hook"])
   })
+
+  it("reads the native lorecard v1 top-level hooks list first", () => {
+    const raw = {
+      format: "loreweaver.card",
+      format_version: 1,
+      hooks: ["native()", { code: "second()" }],
+      extensions: { loreweaver_hooks: ["ignored"] },
+    }
+    expect(cardHookCodes(raw)).toEqual(["native()", "second()"])
+  })
 })
 
 function heavyCardRaw(): Record<string, unknown> {
