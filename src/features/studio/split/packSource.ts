@@ -6,6 +6,7 @@
 // Field names and constraints mirror `core/pack.py`.
 
 import { parse, stringify } from "yaml"
+import { evaluate } from "@loreweaver/protocol"
 import type { Issue } from "../model"
 
 export const PACK_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
@@ -22,6 +23,34 @@ const MAX_PANEL_EXTRA_ASSETS = 8
 const PANEL_SLOTS = new Set(["sidebar", "tray", "modal"])
 const PANEL_AUDIENCES = new Set(["all", "player", "keeper"])
 const PANEL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
+
+// M19 (protocol 2.1) template additions, mirroring `core/panels.py`: the
+// `image` kind, the four performance kinds' required/optional fields with
+// their per-field caps (`core/hooks.py`), and the `visible_when` portable
+// subset (`core/condexpr.py` — MAX_EXPR_LEN included).
+const MAX_UI_LABEL_CHARS = 120
+const MAX_UI_CAPTION_CHARS = 300
+const MAX_UI_BODY_CHARS = 4_000
+const MAX_VISIBLE_WHEN_CHARS = 500
+const PERFORMANCE_KIND_FIELDS: Record<string, { required: string[]; optional: string[] }> = {
+  letter: { required: ["body"], optional: ["from", "to", "date"] },
+  clipping: { required: ["headline", "body"], optional: ["source", "date"] },
+  map_pin: { required: ["src", "label", "x", "y"], optional: ["note"] },
+  title_card: { required: ["title"], optional: ["subtitle", "act"] },
+}
+const PERFORMANCE_FIELD_CAPS: Record<string, number> = {
+  body: MAX_UI_BODY_CHARS,
+  headline: MAX_UI_LABEL_CHARS,
+  label: MAX_UI_LABEL_CHARS,
+  title: MAX_UI_LABEL_CHARS,
+  from: MAX_UI_LABEL_CHARS,
+  to: MAX_UI_LABEL_CHARS,
+  date: MAX_UI_LABEL_CHARS,
+  source: MAX_UI_LABEL_CHARS,
+  act: MAX_UI_LABEL_CHARS,
+  note: MAX_UI_CAPTION_CHARS,
+  subtitle: MAX_UI_CAPTION_CHARS,
+}
 
 export interface PackCardDraft {
   /** File name under `cards/` (already sanitized, extension included). */
@@ -187,12 +216,161 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
   return issues
 }
 
+/** The block-level 2.1 helpers. Everything else deep stays the ENGINE's job;
+ * its build error lands in the wizard terminal. The two things the wizard CAN
+ * be actionable about: the five new block kinds' required fields, and
+ * `visible_when`, which the engine refuses at pack build
+ * (`core.panels._validated_visible_when`) so the wizard must catch it FIRST. */
+
+function isBindingShape(value: unknown): boolean {
+  return typeof value === "object" && value !== null && ("$var" in value || "$leaf" in value)
+}
+
+/** A localized text field, mirroring `core/panels.py::_localized`: a plain
+ * string, an `{en,zh}` map, or a binding (checked only against the room). */
+function checkLocalized(value: unknown, cap: number): string | null {
+  if (isBindingShape(value)) return null
+  if (typeof value === "string") {
+    return value.trim().length > 0 && value.length <= cap
+      ? null
+      : `must be a non-empty string of at most ${cap} chars`
+  }
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value as Record<string, unknown>)
+    const unknown = entries.map(([key]) => key).filter((key) => key !== "en" && key !== "zh")
+    if (unknown.length > 0) return `unknown locale keys ${unknown.sort().join(", ")}`
+    if (entries.length === 0) return "needs at least one of en, zh"
+    for (const [locale, text] of entries) {
+      if (typeof text !== "string" || !text.trim() || text.length > cap) {
+        return `${locale}: must be a non-empty string of at most ${cap} chars`
+      }
+    }
+    return null
+  }
+  return "expected a string or an en/zh mapping"
+}
+
+/** A bindable number, mirroring `core/panels.py::_scalar(types=(int, float))`. */
+function checkBindableNumber(value: unknown): string | null {
+  if (isBindingShape(value)) return null
+  return typeof value === "number" && Number.isFinite(value) ? null : "expected a number or a $var binding"
+}
+
+/** A pack-relative asset path, mirroring `core/panels.py::_validated_asset_path`. */
+function checkAssetPath(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return "must be a relative path string"
+  const path = value.trim()
+  if (path.startsWith("/") || path.split("/").some((part) => part === ".." || part === "." || !part.trim())) {
+    return "must be a plain relative path (no .. segments)"
+  }
+  return null
+}
+
+/** One `visible_when` condition, mirroring `core/panels.py::_validated_visible_when`
+ * (which pairs `compile_expression(probe="1")` with `check_subset`). The shipped
+ * evaluator IS the portable subset, so a dry run rejects syntax errors AND
+ * out-of-subset constructs in one pass; the `"1"` probe coerces as a number
+ * AND orders as a string, so a type only the runtime can know never fails the
+ * build-time check. */
+function checkVisibleWhen(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return "must be a non-empty condition string"
+  const condition = value.trim()
+  if (condition.length > MAX_VISIBLE_WHEN_CHARS) {
+    return `condition exceeds ${MAX_VISIBLE_WHEN_CHARS} chars`
+  }
+  try {
+    evaluate(condition, () => "1")
+    return null
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return `${message} (visible_when is the portable subset: comparisons, boolean logic, literals, dotted references — no arithmetic, calls or brackets)`
+  }
+}
+
+/** The 2.1 block-level checks: `visible_when` on ANY block (a repeat wrapper
+ * and its inner template included), and the five new kinds' required fields.
+ * Returns the image/map_pin `src` paths — the engine folds those into the ONE
+ * content-addressed asset pipeline (`core.pack._validate_pack_panels`), so the
+ * caller counts them as panel file references exactly like tier-2 assets. */
+function validateTemplateBlocks(
+  blocks: readonly unknown[],
+  label: string,
+  bad: (detail: string) => void,
+  inRepeat = false,
+): string[] {
+  const srcs: string[] = []
+  for (const [index, block] of blocks.entries()) {
+    const here = `${label}[${index}]`
+    if (typeof block !== "object" || block === null) {
+      bad(`${here}: each block must be a mapping`)
+      continue
+    }
+    const record = block as Record<string, unknown>
+    if ("visible_when" in record) {
+      const problem = checkVisibleWhen(record.visible_when)
+      if (problem) bad(`${here}.visible_when: ${problem}`)
+    }
+    if ("repeat" in record) {
+      if (inRepeat) {
+        bad(`${here}: repeat does not nest`)
+        continue
+      }
+      const spec = record.repeat as Record<string, unknown> | null
+      if (typeof spec !== "object" || spec === null) {
+        bad(`${here}.repeat: must be a mapping`)
+        continue
+      }
+      if (typeof spec.prefix !== "string" || !spec.prefix.trim()) {
+        bad(`${here}.repeat.prefix: must be a non-empty string`)
+      }
+      srcs.push(...validateTemplateBlocks([spec.block], `${here}.repeat.block`, bad, true))
+      continue
+    }
+    const kind = record.kind
+    if (kind === "image") {
+      const problem = checkAssetPath(record.src)
+      if (problem) bad(`${here}.src: ${problem}`)
+      else srcs.push((record.src as string).trim())
+      for (const field of ["caption", "alt"] as const) {
+        if (record[field] === undefined) continue
+        const issue = checkLocalized(
+          record[field],
+          field === "caption" ? MAX_UI_CAPTION_CHARS : MAX_UI_LABEL_CHARS,
+        )
+        if (issue) bad(`${here}.${field}: ${issue}`)
+      }
+      continue
+    }
+    if (typeof kind !== "string" || !(kind in PERFORMANCE_KIND_FIELDS)) continue
+    const fields = PERFORMANCE_KIND_FIELDS[kind]
+    for (const field of fields.required) {
+      if (record[field] === undefined) {
+        bad(`${here}: missing ${field}`)
+        continue
+      }
+      const problem =
+        field === "src"
+          ? checkAssetPath(record[field])
+          : field === "x" || field === "y"
+            ? checkBindableNumber(record[field])
+            : checkLocalized(record[field], PERFORMANCE_FIELD_CAPS[field])
+      if (problem) bad(`${here}.${field}: ${problem}`)
+      else if (field === "src") srcs.push((record[field] as string).trim())
+    }
+    for (const field of fields.optional) {
+      if (record[field] === undefined) continue
+      const problem = checkLocalized(record[field], PERFORMANCE_FIELD_CAPS[field])
+      if (problem) bad(`${here}.${field}: ${problem}`)
+    }
+  }
+  return srcs
+}
+
 /** Structural mirror of `core/panels.py::parse_panels_text` — the shape-level
  * rules that decide whether the engine will even look at the file (slug/slot/
- * audience enums, tier-1 vs tier-2 key sets, asset confinement, caps). Deep
- * block validation stays the ENGINE's job; its build error lands in the wizard
- * terminal. Detail strings are author diagnostics, technical English on
- * purpose (same stance as the engine's). */
+ * audience enums, tier-1 vs tier-2 key sets, asset confinement, caps), plus
+ * the 2.1 block checks above. Detail strings are author diagnostics,
+ * technical English on purpose (same stance as the engine's). */
 function validatePanelsDraft(panels: PackPanelsDraft, seenFiles: Set<string>): Issue[] {
   const issues: Issue[] = []
   const filePaths = new Set<string>()
@@ -239,6 +417,17 @@ function validatePanelsDraft(panels: PackPanelsDraft, seenFiles: Set<string>): I
 
   const referenced = new Set<string>()
   const seenIds = new Set<string>()
+  // Image/map_pin `src`s join the same content-addressed pipeline as tier-2
+  // assets (`core.pack`): referenced (never orphaned), and an error when the
+  // source tree does not ship them.
+  const noteImageSrcs = (srcs: readonly string[], panelRef: string) => {
+    for (const src of srcs) {
+      referenced.add(src)
+      if (!filePaths.has(src)) {
+        issues.push({ key: "packPanelMissingFile", params: { panel: panelRef, file: src } })
+      }
+    }
+  }
   for (const [index, rawPanel] of list.entries()) {
     const panel = rawPanel as Record<string, unknown> | null
     const bad = (detail: string) =>
@@ -271,7 +460,10 @@ function validatePanelsDraft(panels: PackPanelsDraft, seenFiles: Set<string>): I
       }
       const blocks = panel.blocks
       if (!Array.isArray(blocks) || blocks.length === 0) bad("a tier-1 panel needs blocks")
-      else if (blocks.length > MAX_PANEL_BLOCKS) bad(`at most ${MAX_PANEL_BLOCKS} blocks`)
+      else {
+        if (blocks.length > MAX_PANEL_BLOCKS) bad(`at most ${MAX_PANEL_BLOCKS} blocks`)
+        noteImageSrcs(validateTemplateBlocks(blocks, "blocks", bad), id || `#${index + 1}`)
+      }
       continue
     }
 
@@ -299,6 +491,13 @@ function validatePanelsDraft(panels: PackPanelsDraft, seenFiles: Set<string>): I
     }
     if (!("fallback" in panel))
       bad("fallback is required for a tier-2 panel (write `fallback: null` to opt out)")
+    else if (Array.isArray(panel.fallback)) {
+      if (panel.fallback.length === 0) bad("fallback must be a non-empty list of blocks (or null)")
+      else {
+        if (panel.fallback.length > MAX_PANEL_BLOCKS) bad(`fallback: at most ${MAX_PANEL_BLOCKS} blocks`)
+        noteImageSrcs(validateTemplateBlocks(panel.fallback, "fallback", bad), id || `#${index + 1}`)
+      }
+    }
   }
 
   for (const path of filePaths) {

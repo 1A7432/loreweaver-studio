@@ -2,6 +2,13 @@ import { stripControlChars, type UiBlock, type UiChoiceOption, type UiFrame } fr
 import { transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import Meter from "./Meter"
+import {
+  ClippingBlockView,
+  ImageBlockView,
+  LetterBlockView,
+  MapPinBlockView,
+  TitleCardBlockView,
+} from "./UiRichBlocks"
 
 /**
  * One concrete v1.7 block. `onChoose` overrides what picking a choices option
@@ -62,6 +69,16 @@ export function Block({
           </div>
         </div>
       )
+    case "image":
+      return <ImageBlockView block={block} />
+    case "letter":
+      return <LetterBlockView block={block} />
+    case "clipping":
+      return <ClippingBlockView block={block} />
+    case "map_pin":
+      return <MapPinBlockView block={block} />
+    case "title_card":
+      return <TitleCardBlockView block={block} />
     default:
       // Additive protocol: block kinds we don't know yet are skipped.
       return null

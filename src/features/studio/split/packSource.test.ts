@@ -315,6 +315,146 @@ describe("panels (M15)", () => {
   })
 })
 
+describe("panels 2.1 (M19): new block kinds + visible_when", () => {
+  const YAML_21 = `panels:
+  - id: handouts
+    title: {en: Handouts, zh: 手边物}
+    slot: tray
+    blocks:
+      - {kind: image, src: ui/handouts/page.png, caption: {en: "Torn page", zh: 残页}, alt: {en: "Nine lanterns"}}
+      - {kind: letter, body: {en: "Meet at the pier."}, from: "K.", date: {en: "March 3"}}
+      - {kind: clipping, headline: {en: "Nine lanterns vanish"}, body: {en: "The tide took them."}, source: {en: Gazette}}
+      - {kind: map_pin, src: ui/handouts/map.png, label: {en: "Tide mark"}, x: 0.25, y: {$var: pin_y}, note: {en: "went out here"}}
+      - {kind: title_card, title: {en: "The Send-Off"}, act: {en: "Act III"}, subtitle: {en: "what the tide keeps"}}
+      - {kind: text, style: warning, visible_when: "祭典日 >= 3", text: {en: "Tonight they burn."}}
+      - repeat: {prefix: "mvu.线索.", block: {kind: badge, label: {$leaf: label}, visible_when: "stage === 2"}}
+`
+
+  it("accepts the five new block kinds with visible_when gates", () => {
+    const issues = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: YAML_21,
+          files: [
+            { path: "ui/handouts/page.png", base64: "eA==" },
+            { path: "ui/handouts/map.png", base64: "eA==" },
+          ],
+        },
+      }),
+    )
+    expect(issues).toEqual([])
+  })
+
+  it("counts an image src as a panel file reference (never orphaned, flagged when missing)", () => {
+    // The engine folds image srcs into the ONE asset pipeline: a src whose
+    // file the source tree does not ship fails the build
+    // (`core.pack._enforce_panel_images`), so the wizard says it first.
+    const missing = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: YAML_21,
+          files: [{ path: "ui/handouts/page.png", base64: "eA==" }],
+        },
+      }),
+    )
+    expect(missing.map((issue) => issue.key)).toContain("packPanelMissingFile")
+    expect(
+      missing.some(
+        (issue) => issue.key === "packPanelMissingFile" && issue.params?.file === "ui/handouts/map.png",
+      ),
+    ).toBe(true)
+
+    const orphan = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: YAML_21,
+          files: [
+            { path: "ui/handouts/page.png", base64: "eA==" },
+            { path: "ui/handouts/map.png", base64: "eA==" },
+            { path: "ui/handouts/stray.png", base64: "eA==" },
+          ],
+        },
+      }),
+    )
+    expect(orphan.map((issue) => issue.key)).toEqual(["packPanelFileOrphan"])
+    expect(orphan[0].params?.file).toBe("ui/handouts/stray.png")
+  })
+
+  it("flags a new-kind block missing a required field, with the engine's field names", () => {
+    const issues = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: `panels:
+  - id: handouts
+    title: Handouts
+    slot: tray
+    blocks:
+      - {kind: clipping, headline: {en: "Nine lanterns vanish"}}
+      - {kind: map_pin, src: ui/m.png, label: {en: Pin}, x: 0.5}
+      - {kind: image, caption: {en: "no src"}}
+`,
+          files: [],
+        },
+      }),
+    )
+    const details = issues
+      .filter((issue) => issue.key === "packPanelInvalid")
+      .map((issue) => String(issue.params?.detail))
+    expect(details.some((detail) => detail.includes("blocks[0]: missing body"))).toBe(true)
+    expect(details.some((detail) => detail.includes("blocks[1]: missing y"))).toBe(true)
+    expect(details.some((detail) => detail.includes("blocks[2].src"))).toBe(true)
+  })
+
+  it("catches out-of-subset visible_when BEFORE the engine build — repeat inner blocks included", () => {
+    const issues = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: `panels:
+  - id: gated
+    title: Gated
+    slot: sidebar
+    blocks:
+      - {kind: text, text: hi, visible_when: "day + 1 > 46"}
+      - repeat: {prefix: "mvu.", block: {kind: badge, label: x, visible_when: "clues[0] === 'ash'"}}
+`,
+          files: [],
+        },
+      }),
+    )
+    const details = issues
+      .filter((issue) => issue.key === "packPanelInvalid")
+      .map((issue) => String(issue.params?.detail))
+      .filter((detail) => detail.includes("visible_when"))
+    expect(details).toHaveLength(2)
+    expect(details[0]).toContain("blocks[0].visible_when")
+    expect(details[1]).toContain("repeat.block")
+    expect(details[0]).toContain("portable subset")
+  })
+
+  it("validates a tier-2 panel's fallback blocks the same way", () => {
+    const issues = validatePackDraft(
+      draft({
+        panels: {
+          yamlText: `panels:
+  - id: board
+    title: Board
+    slot: modal
+    entry: ui/board/index.html
+    assets: [ui/board/index.html]
+    fallback:
+      - {kind: letter, from: "K."}
+`,
+          files: [{ path: "ui/board/index.html", contents: "<main></main>" }],
+        },
+      }),
+    )
+    const details = issues
+      .filter((issue) => issue.key === "packPanelInvalid")
+      .map((issue) => String(issue.params?.detail))
+    expect(details.some((detail) => detail.includes("fallback[0]: missing body"))).toBe(true)
+  })
+})
+
 describe("safeFileName", () => {
   it("keeps unicode letters and falls back when nothing survives", () => {
     expect(safeFileName("深渊码头 v2", "card")).toBe("深渊码头_v2")

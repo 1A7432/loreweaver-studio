@@ -38,6 +38,7 @@ pub fn run() {
             llm::llm_chat,
             asset_cache::asset_cache_status,
             asset_cache::asset_fetch,
+            asset_cache::asset_read_base64,
             panel_serve::panel_serve_register,
             panel_serve::panel_serve_unregister
         ])

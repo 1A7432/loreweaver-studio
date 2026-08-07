@@ -151,3 +151,186 @@ describe("resolvePanelBlocks", () => {
     expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([{ kind: "divider" }])
   })
 })
+
+describe("protocol 2.1 blocks (image + performance templates)", () => {
+  const HASH = "a".repeat(64)
+
+  it("resolves an image block's wire triple with localized caption/alt", () => {
+    const blocks: PanelTemplateBlock[] = [
+      {
+        kind: "image",
+        hash: HASH,
+        mime: "image/png",
+        size: 1234,
+        caption: { en: "Lantern manual, torn page", zh: "灯谱残页" },
+        alt: { en: "Nine lanterns, one unlit" },
+      } as PanelTemplateBlock,
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "zh")).toEqual([
+      {
+        kind: "image",
+        hash: HASH,
+        mime: "image/png",
+        size: 1234,
+        caption: "灯谱残页",
+        alt: "Nine lanterns, one unlit",
+      },
+    ])
+  })
+
+  it("omits an image/map_pin that only carries the authored src (unaddressable fails closed)", () => {
+    // The wire NEVER carries `src` — the pack build rewrites it to the
+    // {hash,mime,size} triple. A hand-built fixture without a hash cannot be
+    // fetched, so the block is omitted rather than half-rendered.
+    const blocks = [
+      { kind: "image", src: "ui/dengzhen/canlye.png", caption: { en: "x" } },
+      { kind: "map_pin", src: "ui/map.png", label: { en: "dock" }, x: 0.5, y: 0.5 },
+      { kind: "divider" },
+    ] as unknown as PanelTemplateBlock[]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([{ kind: "divider" }])
+  })
+
+  it("resolves letter/clipping/title_card with localized + bound fields", () => {
+    const blocks: PanelTemplateBlock[] = [
+      {
+        kind: "letter",
+        body: { en: "Meet at the pier.", zh: "码头见。" },
+        from: { en: "K.", zh: "K" },
+        date: { $var: "mvu.线索.blood" },
+      },
+      {
+        kind: "clipping",
+        headline: { en: "Nine lanterns vanish", zh: "九灯失踪" },
+        body: { en: "The tide took them.", zh: "潮水卷走了灯。" },
+        source: { en: "Pier Gazette" },
+      },
+      { kind: "title_card", title: { en: "The Send-Off", zh: "送灯" }, act: { en: "Act III" } },
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "zh")).toEqual([
+      { kind: "letter", body: "码头见。", from: "K", date: "已发现" },
+      { kind: "clipping", headline: "九灯失踪", body: "潮水卷走了灯。", source: "Pier Gazette" },
+      { kind: "title_card", title: "送灯", act: "Act III" },
+    ])
+  })
+
+  it("omits a performance block whose required field binding misses", () => {
+    const blocks: PanelTemplateBlock[] = [
+      { kind: "letter", body: { $var: "nope" }, from: { en: "K." } },
+      { kind: "title_card", title: { en: "still here" } },
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([{ kind: "title_card", title: "still here" }])
+  })
+
+  it("resolves a map_pin with bound coordinates, clamped to the image box", () => {
+    const blocks: PanelTemplateBlock[] = [
+      {
+        kind: "map_pin",
+        hash: HASH,
+        mime: "image/png",
+        size: 99,
+        label: { en: "Tide mark", zh: "潮位点" },
+        x: { $var: "town_fear" }, // 6 → clamps to 1
+        y: 0.25,
+        note: { en: "where the lantern went out" },
+      } as PanelTemplateBlock,
+      {
+        kind: "map_pin",
+        hash: HASH,
+        label: { en: "bad pin" },
+        x: { $var: "alarm" }, // a bool is not a coordinate
+        y: 0.5,
+      } as PanelTemplateBlock,
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([
+      {
+        kind: "map_pin",
+        hash: HASH,
+        mime: "image/png",
+        size: 99,
+        label: "Tide mark",
+        x: 1,
+        y: 0.25,
+        note: "where the lantern went out",
+      },
+    ])
+  })
+})
+
+describe("visible_when (protocol 2.1)", () => {
+  it("renders when the gate passes, omits when it says hide", () => {
+    const blocks: PanelTemplateBlock[] = [
+      { kind: "text", text: { en: "late game" }, visible_when: "town_fear >= 5" },
+      { kind: "text", text: { en: "too early" }, visible_when: "town_fear > 46" },
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([{ kind: "text", text: "late game" }])
+  })
+
+  it("fails CLOSED on an unorderable comparison (evaluation error hides)", () => {
+    const blocks: PanelTemplateBlock[] = [
+      { kind: "text", text: { en: "x" }, visible_when: "town_fear > 'abc'" },
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([])
+  })
+
+  it("drops hidden variables before evaluation (a gate can never surface them)", () => {
+    // `secret` is hidden for this viewer: the condition sees null, and
+    // `null > 5` is an error — fail-closed, exactly like an unresolved $var.
+    const blocks: PanelTemplateBlock[] = [
+      { kind: "text", text: { en: "x" }, visible_when: "secret > 2" },
+      { kind: "text", text: { en: "y" }, visible_when: "secret === null" },
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([{ kind: "text", text: "y" }])
+  })
+
+  it("fails closed on a malformed (non-string) condition", () => {
+    const blocks = [
+      { kind: "text", text: { en: "x" }, visible_when: 42 },
+      { kind: "text", text: { en: "y" }, visible_when: "   " },
+      { kind: "text", text: { en: "z" }, visible_when: "town_fear >= 5 &&" },
+    ] as unknown as PanelTemplateBlock[]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([])
+  })
+
+  it("evaluates the gate BEFORE bindings: a passing gate still omits a broken block", () => {
+    const blocks: PanelTemplateBlock[] = [
+      { kind: "stat", label: { en: "S" }, value: { $var: "nope" }, visible_when: "town_fear >= 5" },
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([])
+  })
+
+  it("a gate on the repeat suppresses the WHOLE expansion", () => {
+    const blocks: PanelTemplateBlock[] = [
+      {
+        repeat: {
+          prefix: "mvu.线索.",
+          block: { kind: "badge", label: { $leaf: "label" } },
+        },
+        visible_when: "town_fear > 46",
+      } as PanelTemplateBlock,
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([])
+
+    const shown: PanelTemplateBlock[] = [
+      {
+        repeat: {
+          prefix: "mvu.线索.",
+          block: { kind: "badge", label: { $leaf: "label" } },
+        },
+        visible_when: "town_fear >= 5",
+      } as PanelTemplateBlock,
+    ]
+    expect(resolvePanelBlocks(shown, VARS, "zh")).toHaveLength(2)
+  })
+
+  it("a gate on the repeat's inner template suppresses each instance", () => {
+    const blocks: PanelTemplateBlock[] = [
+      {
+        repeat: {
+          prefix: "mvu.线索.",
+          block: { kind: "badge", label: { $leaf: "label" }, visible_when: "town_fear > 46" },
+        },
+      } as PanelTemplateBlock,
+    ]
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toEqual([])
+  })
+})

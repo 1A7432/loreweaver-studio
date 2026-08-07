@@ -69,6 +69,8 @@
     "loading": "Loading panel…",
     "stalled": "This panel never started (its code may be blocked). Showing its fallback.",
     "assetError": "Panel assets failed to load.",
+    "imageLoading": "Loading image…",
+    "imageUnavailable": "image unavailable",
     "retry": "Retry",
     "collapse": "Collapse panel",
     "expand": "Expand panel",

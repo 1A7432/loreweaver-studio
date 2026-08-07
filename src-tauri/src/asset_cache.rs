@@ -12,6 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use base64::Engine as _;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime, State};
 
@@ -160,6 +161,27 @@ pub async fn asset_fetch(
     Ok(blob.bytes.len() as u64)
 }
 
+/// Read one verified cache entry back as base64. Tier-1 `image`/`map_pin`
+/// blocks are INERT pictures — unlike tier-2 code they may enter the WebView,
+/// which wraps them in a `data:` URL its CSP already allows. Only content
+/// that passed sha256 verification is ever returned, and only by its hash.
+pub fn read_cached_base64(dir: &Path, hash: &str) -> Result<String, String> {
+    let path = lookup(dir, hash).ok_or_else(|| format!("asset not cached: {hash:?}"))?;
+    let bytes = fs::read(&path).map_err(|err| format!("cache read failed: {err}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// The WebView's read half of [`asset_fetch`]: pull-then-read turns a wire
+/// `{hash,mime,size}` block into a displayable picture.
+#[tauri::command]
+pub async fn asset_read_base64(app: AppHandle, hash: String) -> Result<String, String> {
+    let hash = hash.to_ascii_lowercase();
+    if !is_sha256_hex(&hash) {
+        return Err(format!("not a sha256 hex hash: {hash:?}"));
+    }
+    read_cached_base64(&cache_dir(&app)?, &hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +236,24 @@ mod tests {
         verify_and_store(&dir, &hash, bytes).expect("store verified bytes");
         let path = lookup(&dir, &hash).expect("cache hit");
         assert_eq!(fs::read(&path).expect("read cached"), bytes);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_cached_base64_roundtrips_verified_bytes() {
+        let dir = temp_dir("readb64");
+        let bytes = b"\x89PNG fake image bytes";
+        let hash = sha256_hex(bytes);
+        verify_and_store(&dir, &hash, bytes).expect("store verified bytes");
+        let encoded = read_cached_base64(&dir, &hash).expect("read back");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("valid base64");
+        assert_eq!(decoded, bytes);
+        assert!(
+            read_cached_base64(&dir, &sha256_hex(b"absent")).is_err(),
+            "a miss is an error, never unverified content"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

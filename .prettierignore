@@ -5,3 +5,5 @@ src-tauri/gen/
 src-tauri/icons/
 bun.lock
 Cargo.lock
+# Vendored VERBATIM from the engine repo (LWF conformance table) — never reformat.
+src/features/play/panels/fixtures/visible_when_vectors.json

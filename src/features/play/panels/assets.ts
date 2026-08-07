@@ -20,6 +20,12 @@ export function assetFetch(hash: string): Promise<number> {
   return invoke<number>("asset_fetch", { hash })
 }
 
+/** Read a CACHED blob back as base64 — the read half of {@link assetFetch},
+ * for tier-1 `image`/`map_pin` blocks (inert pictures, unlike tier-2 code). */
+export function assetReadBase64(hash: string): Promise<string> {
+  return invoke<string>("asset_read_base64", { hash })
+}
+
 export function panelServeRegister(args: {
   token: string
   entryHash: string

@@ -69,6 +69,8 @@
     "loading": "面板加载中…",
     "stalled": "该面板没有启动（代码可能被拦截），下面显示它的降级内容。",
     "assetError": "面板资源加载失败。",
+    "imageLoading": "图片加载中…",
+    "imageUnavailable": "图片不可用",
     "retry": "重试",
     "collapse": "折叠面板",
     "expand": "展开面板",
