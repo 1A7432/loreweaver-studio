@@ -121,31 +121,19 @@ describe("lorecard round trip", () => {
     expect(validateProject(back).specs).toEqual(specs)
   })
 
-  it("still imports v0 bundles (the studio's own historical exports, refused engine-side)", () => {
+  it("refuses v0 outright — one format, the same one the engine reads", () => {
     const v0 = {
       format: "loreweaver.card",
       format_version: 0,
       name: "旧卡",
       first_mes: "开场。",
-      mes_example: "<START>……",
       alternate_greetings: ["另一开场。"],
       creator_notes: "legacy",
       worldbook: [{ title: "井", content: "别碰。", keys: ["well"] }],
       extensions: { loreweaver_hooks: ["on('turn_start', f)"] },
     }
-    const { card, alternateGreetings, hooks } = lorecardToCard(v0)
-    expect(card.firstMes).toBe("开场。")
-    expect(card.mesExample).toBe("<START>……")
-    expect(card.creatorNotes).toBe("legacy")
-    expect(alternateGreetings).toEqual(["另一开场。"])
-    expect(hooks).toEqual(["on('turn_start', f)"])
-
-    const { project, warnings } = lorecardToProject(v0)
-    expect(warnings).toEqual([])
-    expect(project.firstMes).toBe("开场。")
-    expect(project.alternateGreetings).toEqual(["另一开场。"])
-    expect(project.hooks).toBe("on('turn_start', f)")
-    expect(project.lorebook[0].title).toBe("井")
+    expect(() => lorecardToCard(v0)).toThrow(/format_version/)
+    expect(() => lorecardToProject(v0)).toThrow(/format_version/)
   })
 
   it("refuses a wrong format tag and an unsupported version", () => {
@@ -206,7 +194,7 @@ describe("lorecard as a pack card (engine-aligned classification)", () => {
   it("skips junk rows with warnings instead of failing the bundle", () => {
     const { card, warnings } = lorecardToCard({
       format: "loreweaver.card",
-      format_version: 0,
+      format_version: 1,
       name: "X",
       worldbook: [{ title: "empty" }, "not-an-object", { title: "ok", content: "fine" }],
     })

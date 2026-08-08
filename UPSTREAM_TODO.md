@@ -25,9 +25,9 @@ catch-up itself.
    the local casts are gone (`StatePanel.tsx` reads it directly; the templates
    filter uses the typed field).
 4. **M14 native-bundle importer** — consumed, and now load-bearing: the studio emits
-   lorecard **format v1** (the frozen M16 shape) and nothing else; the engine's v0
-   refusal no longer bites because the studio never writes v0 (it still READS its
-   own historical v0 exports).
+   lorecard **format v1** (the frozen M16 shape) and nothing else, and as of the
+   2026-08-08 audit no longer READS v0 either — one format, the same one the
+   engine parses.
 5. **Pregen roster on the wire** — `state.pregens` rides the tier-2 bridge
    (`PanelStateSnapshot.pregens`); the forge authors the cast as lorecard v1
    `pregens[]`. Rendering a claim UI in play mode remains a studio-side idea, not an

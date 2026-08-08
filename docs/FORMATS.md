@@ -15,9 +15,10 @@ as `core.modvars.build_spec` emits them, worldbook entries exactly as
 (`opening` / `alternate_openings` / `dialogue_examples` / `author_notes`
 replace `first_mes` / `alternate_greetings` / `mes_example` / `creator_notes`)
 and made hook scripts the first-class top-level `hooks` list. v0 (the
-pre-freeze provisional shape) is deliberately unmigratable engine-side; the
-studio still READS v0 for importing its own historical exports, but never
-writes it.
+pre-freeze provisional shape) is dead on BOTH sides: the engine refuses it and
+the studio no longer reads it. A shape only the editor understands is drift the
+round-trip gate cannot pin — and the pre-adoption break window exists precisely
+so v0 does not have to survive anywhere.
 
 ```jsonc
 {
