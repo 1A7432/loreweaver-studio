@@ -40,6 +40,7 @@ function EntryEditor({ entry, issues }: { entry: ForgeLoreEntry; issues: Issue[]
         <input
           value={entry.condition}
           onChange={(e) => patch({ condition: e.target.value })}
+          // i18n-exempt: a condexpr sample — code, identical in every locale.
           placeholder="suspicion >= 5 && !alerted"
           spellCheck={false}
         />

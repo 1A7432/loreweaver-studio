@@ -45,6 +45,7 @@ export default function App() {
           onChange={(e) => void i18n.changeLanguage(e.target.value)}
         >
           <option value="en">English</option>
+          {/* i18n-exempt: a language is offered in its OWN name, never translated. */}
           <option value="zh">中文</option>
         </select>
       </header>

@@ -212,6 +212,8 @@ export function exportSillyTavernCard(
     index += 1
   }
   if (options.updateRules?.trim()) {
+    // i18n-exempt: the SillyTavern-side entry title is card CONTENT, a fixed
+    // convention like `[InitVar]` above — the reader is the model, not our UI.
     entries.push(plainStEntry(index, "变量更新规则", options.updateRules))
     index += 1
   }

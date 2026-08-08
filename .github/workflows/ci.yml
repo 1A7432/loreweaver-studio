@@ -40,6 +40,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run lint
+      # The i18n red line: no user-facing string may skip locales/{en,zh}.json.
+      - run: bun run i18n:lint
       - run: bun run format:check
       - run: bun run typecheck
       - run: bun run test

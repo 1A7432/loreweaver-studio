@@ -1,0 +1,13 @@
+# Whole files exempt from scripts/i18n_lint.ts.
+#
+# Only for files whose strings are not studio UI at all. A single hardcoded
+# label in a component is NEVER allowlisted here — it goes into
+# src/i18n/locales/{en,zh}.json. Prefer an inline `// i18n-exempt <reason>`
+# over a whole-file entry: it survives the file growing a real UI string.
+#
+# One path per line, relative to the repo root.
+
+# Model-facing prompt bodies for the card wizard. The reader is an LLM, not a
+# person; the CJK inside is the anti-pattern vocabulary the prompt bans by
+# example, which only means anything in the language it bans.
+src/features/studio/wizard/prompts.ts

@@ -669,6 +669,7 @@ export default function PackWizard() {
                 rows={4}
                 value={store.metadata.rulepackPatch}
                 onChange={(e) => store.setMetadata({ rulepackPatch: e.target.value })}
+                // i18n-exempt: a YAML sample — code, identical in every locale.
                 placeholder={"extends: coc7\ndefaults:\n  San: 60"}
                 spellCheck={false}
               />
@@ -685,6 +686,8 @@ export default function PackWizard() {
                 value={store.panels?.yamlText ?? ""}
                 onChange={(e) => store.setPanelsYaml(e.target.value)}
                 placeholder={
+                  // i18n-exempt: a panels YAML sample — code. Its own {en, zh}
+                  // labels are the point: panel text is authored bilingual.
                   "panels:\n  - id: hud\n    title: {en: HUD, zh: 状态板}\n    slot: sidebar\n    blocks:\n      - {kind: meter, label: {en: Fear, zh: 恐慌}, value: {$var: fear}, min: 0, max: 10}"
                 }
                 spellCheck={false}
@@ -767,6 +770,7 @@ export default function PackWizard() {
                     rows={8}
                     value={skill.skillMd ?? ""}
                     onChange={(e) => store.updateManualSkill(index, { skillMd: e.target.value })}
+                    // i18n-exempt: a SKILL.md frontmatter sample — code.
                     placeholder={"---\nname: …\ndescription: …\nmetadata:\n  scope: room\n---\n\n…"}
                     spellCheck={false}
                   />

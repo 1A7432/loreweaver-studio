@@ -240,6 +240,8 @@ export function applyStage(
       result = upsertStageLore(project, contract, "exegesis", [
         {
           slot: "exegesis",
+          // i18n-exempt: lorebook entry titles are card CONTENT the model reads,
+          // not studio chrome — they ship inside the exported card verbatim.
           title: "二次解释 · Author's Exegesis",
           content: draft.text,
           keys: [],
@@ -256,6 +258,7 @@ export function applyStage(
       const entries: WizardLoreDraft[] = [
         {
           slot: "nsfw:motivation",
+          // i18n-exempt: card CONTENT, see the exegesis entry above.
           title: "亲密动机 · Intimacy Core",
           content: draft.motivation,
           keys: [],
@@ -285,6 +288,7 @@ export function applyStage(
       result = upsertStageLore(project, contract, "overview", [
         {
           slot: "overview",
+          // i18n-exempt: card CONTENT, see the exegesis entry above.
           title: "角色速览 · Quick Reference",
           content: draft.content,
           keys: [],

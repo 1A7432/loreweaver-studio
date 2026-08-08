@@ -840,9 +840,12 @@
         "style": {
           "title": "Style guide (carried on every image request)",
           "keywordsZh": "Style keywords (zh)",
+          "keywordsZhPlaceholder": "水墨淡彩, 靛青与赭石, 一九二五年浙东渔镇",
           "keywordsEn": "Style keywords (en)",
+          "keywordsEnPlaceholder": "ink wash with muted color, indigo and ochre, 1925 coastal Zhejiang",
           "keywordsHint": "Palette, medium, era, texture — the shared look. Up to 400 characters each.",
           "banned": "Banned elements (one per line)",
+          "bannedPlaceholder": "text overlays\nmodern clothing",
           "bannedHint": "What must never appear. Up to 24 entries."
         },
         "subjects": {
@@ -854,7 +857,9 @@
           "id": "Subject id (slug)",
           "kind": "Kind",
           "nameZh": "Display name (zh)",
+          "nameZhPlaceholder": "顾晚棠",
           "nameEn": "Display name (en)",
+          "nameEnPlaceholder": "Gu Wantang",
           "refUpload": "Upload the 定妆 reference image…",
           "refReplace": "Replace the reference…",
           "refRemove": "Remove the reference",
@@ -880,6 +885,7 @@
           "id": "Cue id (slug)",
           "layer": "Layer",
           "title": "Title (optional)",
+          "titlePlaceholder": "Tide surge",
           "assetUpload": "Upload the audio file…",
           "assetReplace": "Replace the audio…",
           "assetRemove": "Remove the audio",

@@ -126,7 +126,7 @@ function SubjectCard({ subject, issues }: { subject: PackPresentationSubjectDraf
           <input
             value={subject.nameZh}
             onChange={(e) => store.updatePresentationSubject(subject.uid, { nameZh: e.target.value })}
-            placeholder="顾晚棠"
+            placeholder={t("studio.pack.presentation.subject.nameZhPlaceholder")}
           />
         </label>
         <label className="field">
@@ -134,7 +134,7 @@ function SubjectCard({ subject, issues }: { subject: PackPresentationSubjectDraf
           <input
             value={subject.nameEn}
             onChange={(e) => store.updatePresentationSubject(subject.uid, { nameEn: e.target.value })}
-            placeholder="Gu Wantang"
+            placeholder={t("studio.pack.presentation.subject.nameEnPlaceholder")}
           />
         </label>
       </div>
@@ -242,7 +242,7 @@ function CueCard({ cue, issues }: { cue: PackPresentationAudioDraft; issues: Iss
           <input
             value={cue.title}
             onChange={(e) => store.updatePresentationCue(cue.uid, { title: e.target.value })}
-            placeholder="潮涌"
+            placeholder={t("studio.pack.presentation.cue.titlePlaceholder")}
           />
         </label>
         <div className="header-spacer" />
@@ -374,7 +374,7 @@ export default function PresentationStage({ issues }: { issues: Issue[] }) {
             <input
               value={kit.keywordsZh}
               onChange={(e) => store.updatePresentation({ keywordsZh: e.target.value })}
-              placeholder="水墨淡彩, 靛青与赭石, 一九二五年浙东渔镇"
+              placeholder={t("studio.pack.presentation.style.keywordsZhPlaceholder")}
             />
           </label>
           <label className="field">
@@ -382,7 +382,7 @@ export default function PresentationStage({ issues }: { issues: Issue[] }) {
             <input
               value={kit.keywordsEn}
               onChange={(e) => store.updatePresentation({ keywordsEn: e.target.value })}
-              placeholder="ink wash with muted color, indigo and ochre, 1925 coastal Zhejiang"
+              placeholder={t("studio.pack.presentation.style.keywordsEnPlaceholder")}
             />
           </label>
         </div>
@@ -394,7 +394,7 @@ export default function PresentationStage({ issues }: { issues: Issue[] }) {
             rows={3}
             value={kit.bannedText}
             onChange={(e) => store.updatePresentation({ bannedText: e.target.value })}
-            placeholder={"text overlays\nmodern clothing"}
+            placeholder={t("studio.pack.presentation.style.bannedPlaceholder")}
             spellCheck={false}
           />
         </label>

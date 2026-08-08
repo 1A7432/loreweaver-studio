@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "i18n:lint": "bun scripts/i18n_lint.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",

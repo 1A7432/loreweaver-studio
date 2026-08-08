@@ -840,9 +840,12 @@
         "style": {
           "title": "画风（每次出图都携带）",
           "keywordsZh": "画风关键词（中文）",
+          "keywordsZhPlaceholder": "水墨淡彩, 靛青与赭石, 一九二五年浙东渔镇",
           "keywordsEn": "画风关键词（英文）",
+          "keywordsEnPlaceholder": "ink wash with muted color, indigo and ochre, 1925 coastal Zhejiang",
           "keywordsHint": "色板、媒介、年代、质感——统一的模样。每条至多 400 字符。",
           "banned": "禁区元素（每行一条）",
+          "bannedPlaceholder": "文字叠加\n现代服饰",
           "bannedHint": "绝不允许出现的东西。至多 24 条。"
         },
         "subjects": {
@@ -854,7 +857,9 @@
           "id": "主体 id（slug）",
           "kind": "种类",
           "nameZh": "显示名（中文）",
+          "nameZhPlaceholder": "顾晚棠",
           "nameEn": "显示名（英文）",
+          "nameEnPlaceholder": "Gu Wantang",
           "refUpload": "上传定妆参考图…",
           "refReplace": "更换参考图…",
           "refRemove": "移除参考图",
@@ -880,6 +885,7 @@
           "id": "cue id（slug）",
           "layer": "层",
           "title": "标题（可选）",
+          "titlePlaceholder": "潮涌",
           "assetUpload": "上传音频文件…",
           "assetReplace": "更换音频…",
           "assetRemove": "移除音频",
