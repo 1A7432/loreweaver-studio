@@ -78,12 +78,11 @@ catch-up itself.
     schema (versioned bump) or strike the promise from the spec; the studio ships
     whichever lands.
 
-13. **Pack asset MIME is guessed by file EXTENSION, not sniffed.**
-    `core/pack.py:981` uses `mimetypes.guess_type(path)`, so `_enforce_kit_assets`
-    accepts only extensions the build machine's mimetypes db maps into
-    `UI_IMAGE_MIMES`/`AUDIO_MIMES` — on a stock python, `.wav` → `audio/x-wav`,
-    `.flac` → `audio/x-flac`, `.m4a`/` `.aac`similarly miss`AUDIO_MIMES`, and the
-result is platform-dependent. The studio's wizard now steers authors to mp3/ogg
-only. Ask: sniff magic bytes (or normalize the `x-`variants) so the documented
-audio list in`docs/protocol.md` is actually buildable, and pin it with a
-    per-extension pack-build test.
+13. ~~**Pack asset MIME was guessed by the build machine's mimetypes db.**~~ **FIXED
+    upstream, same day.** `core/pack.py` had used `mimetypes.guess_type`, which on a
+    stock python returns `audio/x-wav` / `audio/x-flac` / `audio/mp4a-latm` /
+    `audio/x-aac` — none in `AUDIO_MIMES` — so four of the six documented audio
+    formats were unbuildable and the result depended on where you built. The engine
+    now owns an extension→MIME table (`_ASSET_MIME_BY_SUFFIX`), pinned per extension
+    by `tests/core/test_pack_asset_mime.py`. The wizard's audio hint is back to the
+    full documented list.

@@ -38,15 +38,14 @@ const MAX_PRESENTATION_PROMPT_CHARS = 1_000
 export const PRESENTATION_GENERATION_MODES = ["allow", "pack_only"] as const
 export const PRESENTATION_SUBJECT_KINDS = ["npc", "location", "item"] as const
 export const PRESENTATION_AUDIO_LAYERS = ["bgm", "ambience", "sfx"] as const
-/** Soft editor hints only — the engine takes each asset's MIME from
- * `mimetypes.guess_type` (EXTENSION, not byte-sniffing) at build and checks it
- * against `core/hooks.py::UI_IMAGE_MIMES` / `core/presentation.py::AUDIO_MIMES`
- * (`core/pack.py::_enforce_kit_assets`). The audio list is deliberately narrow:
- * only .mp3/.ogg map into AUDIO_MIMES reliably across platforms (a stock
- * python mimetypes db gives .wav → audio/x-wav, .flac → audio/x-flac, … — all
- * rejected at build), so the hint steers authors to the safe two. */
+/** Soft editor hints only — the engine takes each asset's MIME from the file
+ * EXTENSION (`core/pack.py::_ASSET_MIME_BY_SUFFIX`, a table it owns rather than
+ * the build machine's mimetypes db) and checks it against
+ * `core/hooks.py::UI_IMAGE_MIMES` / `core/presentation.py::AUDIO_MIMES`
+ * (`core/pack.py::_enforce_kit_assets`). These two lists are that table's
+ * documented surface, pinned upstream by `tests/core/test_pack_asset_mime.py`. */
 export const PRESENTATION_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "svg"] as const
-export const PRESENTATION_AUDIO_EXTENSIONS = ["mp3", "ogg"] as const
+export const PRESENTATION_AUDIO_EXTENSIONS = ["mp3", "ogg", "wav", "flac", "m4a", "aac"] as const
 
 // M19 (protocol 2.1) template additions, mirroring `core/panels.py`: the
 // `image` kind, the four performance kinds' required/optional fields with
