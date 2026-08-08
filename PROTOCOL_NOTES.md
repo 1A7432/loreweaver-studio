@@ -11,6 +11,12 @@ outside — feedback for upstream, not workarounds we expect to keep forever.
 > `narrative_delta` chunks closed by one full-text `narrative`); the corresponding local
 > workarounds (source alias, stream/done merging) have been removed.
 
+> **Update — the major-version check.** The shared package grew the compatibility
+> predicate (`protocolMajor` / `protocolMismatch`) on 2026-08-08, hours after 2.1.0 was
+> published; **2.1.1** carries it, and the studio pins that. The studio REFUSES a
+> different-major `welcome` — the library only warns, and choosing to refuse is the
+> app's call. Nothing about the check is reimplemented here.
+
 ## Package consumption
 
 1. **`@loreweaver/protocol` exports point at an unbuilt `dist/`.** The package's

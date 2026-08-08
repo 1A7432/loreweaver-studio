@@ -1,5 +1,6 @@
 import { create } from "zustand"
-import { isServerFrame, type WelcomeFrame } from "@loreweaver/protocol"
+import { isServerFrame, protocolMismatch, type WelcomeFrame } from "@loreweaver/protocol"
+import i18n from "../i18n"
 import {
   isTauri,
   transportConnect,
@@ -34,7 +35,7 @@ interface ConnectionState {
   handleEvent: (event: TransportEvent) => void
 }
 
-export const useConnectionStore = create<ConnectionState>((set) => ({
+export const useConnectionStore = create<ConnectionState>((set, get) => ({
   status: "offline",
   attempt: 0,
   lastError: null,
@@ -78,6 +79,24 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
     // downstream consumer can crash on a missing field.
     if (!isServerFrame(frame)) return
     if (frame.type === "welcome") {
+      // The MAJOR version is the compatibility contract, and the shared package ships
+      // the predicate so no client has to write it. A client that keeps talking to a
+      // different-major server misreads frames rather than failing, which is much
+      // harder to diagnose than a refusal — and with no backward compatibility promised
+      // before adoption, a stale client WILL meet a server that moved. So: refuse, name
+      // both versions, and drop the connection instead of letting the Rust bridge
+      // reconnect into the same wall. (The library only warns; refusing is the app's
+      // call, and this is the app.)
+      const mismatch = protocolMismatch(frame.protocol)
+      if (mismatch) {
+        set({
+          status: "offline",
+          welcome: null,
+          lastError: i18n.t("connect.protocolMismatch", { ...mismatch }),
+        })
+        void get().disconnect()
+        return
+      }
       set({ welcome: frame })
       return
     }

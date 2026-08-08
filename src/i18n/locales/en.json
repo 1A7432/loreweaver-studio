@@ -20,6 +20,7 @@
     "namePlaceholder": "advisory — the keystore name wins",
     "submit": "Connect",
     "disconnect": "Disconnect",
+    "protocolMismatch": "Protocol {{server}} ≠ {{client}}: the major version is the compatibility contract, so the connection was refused. Update whichever side is behind.",
     "hostLocal": {
       "button": "Host locally & play",
       "starting": "Bringing the server up…",

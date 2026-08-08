@@ -20,6 +20,7 @@
     "namePlaceholder": "仅供参考——以密钥登记名为准",
     "submit": "连接",
     "disconnect": "断开",
+    "protocolMismatch": "协议 {{server}} ≠ {{client}}：主版本号即兼容契约，已拒绝连接。请升级落后的一方。",
     "hostLocal": {
       "button": "本地托管并游玩",
       "starting": "正在启动服务器…",

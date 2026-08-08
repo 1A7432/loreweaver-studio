@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest"
+import { PROTOCOL_VERSION } from "@loreweaver/protocol"
 import { sanitizeTicket, useConnectionStore } from "./connection"
 
 const WELCOME = {
   type: "welcome",
-  protocol: "2.1",
+  protocol: PROTOCOL_VERSION,
   room: "r1",
   you: { id: "u1", name: "Nyx", role: "player" },
   locale: "en",
@@ -64,6 +65,30 @@ describe("connection store", () => {
     expect(state.status).toBe("offline")
     expect(state.lastError).toContain("bad_key")
     expect(state.welcome).toBeNull()
+  })
+
+  it("refuses a welcome announcing a different protocol MAJOR", () => {
+    const handle = useConnectionStore.getState().handleEvent
+    handle({ kind: "status", status: "connecting", attempt: 0 })
+    handle({ kind: "frame", frame: { ...WELCOME, protocol: "4.0" } })
+
+    const state = useConnectionStore.getState()
+    // Refused: never online, no welcome to render a room from, and the reason names
+    // both versions so the operator knows which side to move.
+    expect(state.status).toBe("offline")
+    expect(state.welcome).toBeNull()
+    expect(state.lastError).toContain("4.0")
+    expect(state.lastError).toContain(PROTOCOL_VERSION)
+  })
+
+  it("accepts a newer minor on the same major", () => {
+    const handle = useConnectionStore.getState().handleEvent
+    const major = PROTOCOL_VERSION.split(".")[0]
+    handle({ kind: "frame", frame: { ...WELCOME, protocol: `${major}.999` } })
+
+    const state = useConnectionStore.getState()
+    expect(state.welcome?.room).toBe("r1")
+    expect(state.lastError).toBeNull()
   })
 
   it("tracks redial attempts while reconnecting", () => {
