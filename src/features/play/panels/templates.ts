@@ -35,7 +35,7 @@ type Resolved<T> = T | typeof OMIT
  * identically for every role a variable is visible to.
  */
 export function visibleVariables(variables: readonly ModuleVariable[]): ModuleVariable[] {
-  return variables.filter((variable) => (variable as { hidden?: boolean }).hidden !== true)
+  return variables.filter((variable) => variable.hidden !== true)
 }
 
 export function isZhLocale(locale: string | undefined): boolean {

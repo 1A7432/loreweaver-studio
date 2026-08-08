@@ -5,80 +5,85 @@ engine/tooling interface the card-split + AI-forge + auto-pack work wanted but d
 find. Studio-side we did NOT work around any of these with hacks — the features ship
 without them and get better when they land.
 
-**2026-08-05 status: items 1–7 have LANDED upstream** (engine commits `b72def7`,
-`67be7b6`, `761d0c7`). The shapes below are what actually shipped — wire the studio to
-them and delete each entry as it's consumed. Item 8 remains the one open ask.
+**2026-08-08 re-audit against the landed M14–M19 line** (engine specs
+`docs/specs/M16`–`M19`; audit evidence in git history): items 1–8.5 are fully settled
+— landed upstream AND consumed here during the studio's 2.x catch-up (protocol
+2.1.0, lorecard v1 exporter, pack manifest v2, panels 2.1, presentation kit,
+round-trip gate). They are closed out below in one block. Items 9–11 remain open,
+refreshed with post-consolidation evidence. Two NEW asks (12, 13) came out of the
+catch-up itself.
 
-1. ✅ **Machine-readable `--pack` output** — `--pack <dir> [--out <file>] --json` emits
-   exactly ONE JSON object on stdout: `{"ok": true, "path", "id", "version", "sha256",
-"trust": {...}}` on success, `{"ok": false, "error"}` on failure (exit 1). Human
-   lines (including the trust card) stay on stderr. The pack wizard can render the
-   trust card natively now.
+## Settled (kept for the record; no action left on either side)
 
-2. ✅ **`--version` probe** — `loreweaver-server --version` / `python -m app --version`
-   prints a bare semver on stdout, no side effects, no locale variance.
-   (`probe_engine_cli` should start consuming it.)
+1. **Machine-readable `--pack --json`** — consumed: the pack wizard builds through
+   `python -m app --pack --json` and renders the trust card natively from the JSON
+   trust object (phase ③).
+2. **`--version` probe** — landed upstream. The studio's `probe_engine_cli` does not
+   call it yet (candidate display could); that is a studio-side nicety, not an
+   upstream ask.
+3. **`ModuleVariable.hidden?: boolean`** — typed since 1.9.0, still typed at 2.1.0;
+   the local casts are gone (`StatePanel.tsx` reads it directly; the templates
+   filter uses the typed field).
+4. **M14 native-bundle importer** — consumed, and now load-bearing: the studio emits
+   lorecard **format v1** (the frozen M16 shape) and nothing else; the engine's v0
+   refusal no longer bites because the studio never writes v0 (it still READS its
+   own historical v0 exports).
+5. **Pregen roster on the wire** — `state.pregens` rides the tier-2 bridge
+   (`PanelStateSnapshot.pregens`); the forge authors the cast as lorecard v1
+   `pregens[]`. Rendering a claim UI in play mode remains a studio-side idea, not an
+   upstream ask.
+6. **Pack-relative `.import`** — engine-side; nothing for the studio to consume.
+7. **`StateVariable` phantom type** — `ModuleVariable` everywhere.
+   8.5. **Native bundles as first-class pack cards — including the residual nuance**:
+   upstream DECIDED typed `variables` specs alone force `kind: world`
+   (`core/pack.py:644-652`, `docs/plugins.md:580`, commit `7036df6`); the studio
+   mirrors it (`countVariableSpecs` folds spec counts into pack-bench detection).
 
-3. ✅ **`ModuleVariable.hidden?: boolean`** — typed in `loreweaver-protocol` 1.9.0
-   (servers have sent it to keeper connections since v1.7). Drop the local cast in the
-   variables panel. npm publish of 1.9.0 pending (maintainer's interactive 2FA).
+## Still open
 
-4. ✅ **M14 native-bundle importer** — the engine parses `*.lorecard.json`
-   (`core/lorecard.py`) through the same `.import` command: player imports strip
-   machinery structurally (typed specs, secret lore — the split now also counts
-   `secret_entries`), keeper `world` imports land typed specs as real `core.modvars`
-   trackers (CJK ids like `理智` are now first-class engine-side). Round-tripping is
-   no longer forced through the lossy ST shape.
+9. **Keeper-style prompt presets as pack assets** — HALF landed and unchanged by the
+   consolidation: `core/preset.py` parser + `core/preset_store.py` + the keeper
+   `.preset` surface + the bounded v0 style-fold in `agent/prompt_builder.py:360-383`
+   all exist. Still missing: a `contents.presets` pack-asset convention (install →
+   `data_dir/presets/`, and `.preset import` understanding the pack-relative
+   `packId/path` resolver from item 6 — it reads literal server paths only,
+   `gateway/commands.py:984`), and the finer marker→section mapping contract
+   (prompt_builder's own comment still calls the single-fold policy v0).
 
-5. ✅ **Pregen roster on the wire** — `state.pregens?: [{name, claimed_by}]` (protocol
-   v1.9, omitted when no roster exists, public to every viewer). The play mode can
-   render "claimable characters" right after `--install` + world import.
+10. **A world card's PROSE has nowhere to go.** Still true post-M17/M18:
+    `import_world_card` (`agent/kp_tools_charcard.py:288-418`) uses prose only for
+    the persona check and the pregen-sheet build; `description` / `personality` /
+    `scenario` / openings seed no document. Lorecard v1 made it no better —
+    `opening` / `alternate_openings` map onto the same `CharacterCard` fields and
+    `Lorecard.alternate_greetings` has no consumer outside tests. The ask stands:
+    seed a module brief from the world card's prose at import (or document the
+    constant-entry rule loudly in `docs/cards.md` + the card-forge templates).
 
-6. ✅ **Pack-relative `.import`** — the shipped syntax is `.import <packId>/<relative
-path>` (no `pack:` prefix): resolves against the newest installed
-   `data_dir/packs/<id>@<version>/`, traversal-confined, falling through to the
-   literal path when not pack-shaped.
+11. **`.var` has no keeper-side write.** Still `list|expose|hide` only
+    (`gateway/commands.py:1801-1859`); the validated primitives
+    (`core/modvars.set_modvar`/`adjust_modvar`) exist and are called from agent-side
+    code, only the command surface is missing. Narrowed by M15: `panel_intent`
+    already routes panel input through the real command engine, so the ask is now
+    exactly one keeper-gated `.var set <id> <value>` / `.var add <id> <delta>` (or a
+    panel-writable var op) over `core.modvars` validation.
 
-7. ✅ **`StateVariable` phantom type** — the canonical spec already reads
-   `ModuleVariable`; refresh the studio's M15 snapshot from canonical if it still
-   shows the old name.
+## New asks from the 2.x catch-up
 
-8.5. ✅ **Native bundles as first-class pack cards** — landed ENGINE-side in-session
-(2026-08-06, user-directed): `core/pack.py::_validate_card_bytes` dispatches
-`looks_like_lorecard` → `parse_lorecard_bytes`, so `cards/*.lorecard.json` gets honest
-machinery detection (hooks / `secret` lore / declaration entries) and the same
-`kind: world` enforcement + trust counts as ST cards. Studio consumed it the same day
-(pack bench classifies native bundles; forge imports them). Remaining nuance, noted
-deliberately: `detect_world_payloads` does NOT count typed `variables` — a bundle whose
-ONLY machinery is typed specs still passes as `character` (both sides mirror this;
-player import strips specs anyway, so nothing leaks — but trust's `world_cards` can
-undercount that edge). Decide upstream whether typed specs alone should force world.
+12. **The M19 presentation schema never shipped the spec's template list + palette.**
+    `docs/specs/M19-stage-director.md` promises the kit carries "allowed template
+    list + palette", but `core/presentation.py` is strict — unknown keys are build
+    errors — and defines only `version` / `generation` / `style.{keywords,banned}` /
+    `subjects` / `audio`. The studio's kit wizard therefore has no 模板配色 UI (style
+    keywords carry palette/medium today). Decide upstream: either extend the kit
+    schema (versioned bump) or strike the promise from the spec; the studio ships
+    whichever lands.
 
-9. **Keeper-style prompt presets as pack assets** — HALF landed: the engine now has the
-   authoritative preset parser (`core/preset.py`, matrix/marker/macro semantics matching
-   `src/features/studio/ai/stPreset.ts`), disk store (`data_dir/presets/`), the keeper
-   `.preset list|import|enable|disable|show` surface, and a bounded style-layer fold in
-   the prompt builder (markers are boundaries-only in v0; sampling params are reported,
-   not applied). Still needed before a client can advertise "preset-aware" play:
-   a pack-asset convention (path + manifest flag) so a pack can SHIP a preset through
-   `--install`, and the finer marker→section mapping contract if v0's single-fold
-   proves too coarse in play.
-
-10. **A world card's PROSE has nowhere to go.** `.import <card> world`
-    (`agent/kp_tools_charcard.py::import_world_card`) consumes the worldbook, the
-    typed specs, the hooks and the persona-derived pregen sheet — and drops
-    `description` / `personality` / `scenario` / `first_mes` / `alternate_greetings`
-    on the floor. For a MODULE card those four fields are the pitch, the keeper's
-    voice, the opening situation and the alternate openings; authors are forced to
-    duplicate all of it into `constant: true` worldbook entries (found the hard way:
-    without that duplication the KP told players "模组文档还没有上传到这场游戏里").
-    Ask: seed a module brief from the world card's prose at import (or document the
-    rule loudly in `docs/cards.md` + the card-forge templates).
-
-11. **`.var` has no keeper-side write.** The surface is `list|expose|hide`, so a
-    keeper cannot move a module variable without asking the KP to call its tool.
-    That makes module-shipped keeper UI (M15 `audience: keeper` panels) unable to
-    offer deterministic state controls — panel `choices` have to send prose the
-    model may or may not honor. Ask: a keeper-gated `.var set <id> <value>` /
-    `.var add <id> <delta>` going through the same `core.modvars` validation the
-    tool path uses.
+13. **Pack asset MIME is guessed by file EXTENSION, not sniffed.**
+    `core/pack.py:981` uses `mimetypes.guess_type(path)`, so `_enforce_kit_assets`
+    accepts only extensions the build machine's mimetypes db maps into
+    `UI_IMAGE_MIMES`/`AUDIO_MIMES` — on a stock python, `.wav` → `audio/x-wav`,
+    `.flac` → `audio/x-flac`, `.m4a`/` `.aac`similarly miss`AUDIO_MIMES`, and the
+result is platform-dependent. The studio's wizard now steers authors to mp3/ogg
+only. Ask: sniff magic bytes (or normalize the `x-`variants) so the documented
+audio list in`docs/protocol.md` is actually buildable, and pin it with a
+    per-extension pack-build test.
