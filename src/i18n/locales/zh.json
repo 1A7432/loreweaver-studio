@@ -884,7 +884,8 @@
           "assetReplace": "更换音频…",
           "assetRemove": "移除音频",
           "assetFileName": "包内文件名（assets/ 下）",
-          "assetBadType": "⚠ 引擎只接受 mp3 / ogg / wav / flac / m4a / aac 音频——构建时会拒绝这个文件。"
+          "assetBadType": "⚠ 引擎只能稳定接受 mp3 / ogg 音频（构建时按扩展名判定 MIME）——这个文件会被拒绝。",
+          "hint": "每条 cue 绑定一个包内音频文件（mp3 或 ogg——引擎在构建时按扩展名判定类型，只有这两种能被稳定接受）。文件必填。"
         },
         "layers": {
           "bgm": "bgm（背景音乐）",

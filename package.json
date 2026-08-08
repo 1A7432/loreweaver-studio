@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "roundtrip": "bash scripts/check_roundtrip.sh",
     "tauri": "tauri"
   },
   "dependencies": {

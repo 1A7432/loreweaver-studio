@@ -884,7 +884,8 @@
           "assetReplace": "Replace the audio…",
           "assetRemove": "Remove the audio",
           "assetFileName": "File name in the pack (under assets/)",
-          "assetBadType": "⚠ The engine only accepts mp3 / ogg / wav / flac / m4a / aac audio — it will refuse this file at build."
+          "assetBadType": "⚠ The engine reliably accepts only mp3 / ogg audio (it maps MIME by file extension at build) — it will refuse this file.",
+          "hint": "Each cue binds one pack audio file (mp3 or ogg — the engine maps types by extension at build, and only those two are accepted reliably). The file is required."
         },
         "layers": {
           "bgm": "bgm (music)",

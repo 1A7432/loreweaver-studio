@@ -37,8 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Clone the loreweaver main repo for the @loreweaver/protocol file dependency
-        run: git clone --depth 1 https://github.com/1A7432/loreweaver.git ../trpg_kp
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run lint
@@ -46,3 +44,24 @@ jobs:
       - run: bun run typecheck
       - run: bun run test
       - run: bun run build
+
+  roundtrip:
+    name: Cross-repo round-trip gate (lorecard v1 + pack manifest v2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The gate builds the studio's REAL emission with the engine's REAL
+      # parsers (and diffs against its pinned fixtures), so the engine repo
+      # must sit at the script's default sibling path ../trpg_kp.
+      - name: Clone the loreweaver engine repo for the round-trip gate
+        run: git clone --depth 1 https://github.com/1A7432/loreweaver.git ../trpg_kp
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Run the round-trip gate
+        run: bash scripts/check_roundtrip.sh
+        env:
+          TRPG_KP_REPO: ../trpg_kp

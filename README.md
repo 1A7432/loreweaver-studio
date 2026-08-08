@@ -38,7 +38,7 @@ Two modes, one app:
 - **Frontend**: React + TypeScript + Vite, `zustand` state, `i18next` (en/zh from day one).
 - **Shared frame types** come from
   [`@loreweaver/protocol`](https://github.com/1A7432/loreweaver/tree/main/clients/protocol),
-  consumed as a `file:` dependency until that package is published to npm.
+  consumed as the published `loreweaver-protocol` npm package.
 
 ## Status
 
@@ -58,11 +58,9 @@ Two modes, one app:
 
 ## Development
 
-Prerequisites: Rust stable, [Bun](https://bun.sh), and a sibling checkout of the main
-repo — the `file:` protocol dependency resolves to `../trpg_kp/clients/protocol`:
+Prerequisites: Rust stable and [Bun](https://bun.sh):
 
 ```sh
-git clone https://github.com/1A7432/loreweaver.git ../trpg_kp   # sibling path; the name matters
 bun install
 bun tauri dev
 ```
@@ -73,6 +71,33 @@ Checks (all run in CI):
 bun run lint && bun run format:check && bun run typecheck && bun run test && bun run build
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
+
+### Cross-repo round-trip gate
+
+`bun run roundtrip` (`scripts/check_roundtrip.sh`) fails when the studio's real
+output and the engine's real parsers drift apart. It pins three things:
+
+- **lorecard v1 byte drift** — the real `exportNativeBundle` output, regenerated
+  on the spot, must stay byte-identical to the engine's pinned
+  `tests/fixtures/studio_export.lorecard.json`;
+- **pack manifest v2 full-tree build** — a full-surface module pack (world
+  lorecard, ST character card, lorebook, skill, rulepack patch, tier-1/2
+  panels, presentation kit, assets) is laid out by the real
+  `buildPackSourcePlan` (`scripts/gen_roundtrip_pack.ts`) and must build clean
+  through the engine's `python -m app --pack --json`, with the expected
+  detection results in the returned `trust` object;
+- **the engine's conformance suites** for the pinned fixtures
+  (`test_studio_export_fixture`, `test_lorecard`, `test_visible_when_vectors`).
+
+It needs a checkout of the engine repo (default `../trpg_kp`, override with
+`TRPG_KP_REPO`) with `uv` available:
+
+```sh
+git clone https://github.com/1A7432/loreweaver.git ../trpg_kp   # once
+bun run roundtrip
+```
+
+Generated trees land in the gitignored `target/roundtrip/` for inspection.
 
 ## License
 
