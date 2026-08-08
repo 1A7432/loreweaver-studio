@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest"
 import {
   buildManifestYaml,
   buildPackSourcePlan,
+  buildPresentationYaml,
   buildSkillMd,
   safeFileName,
   validatePackDraft,
+  type PackPresentationDraft,
   type WorldPackDraft,
 } from "./packSource"
 
@@ -32,6 +34,7 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
     rulepacks: [],
     assets: [],
     panels: null,
+    presentation: null,
     ...overrides,
   }
 }
@@ -459,5 +462,361 @@ describe("safeFileName", () => {
   it("keeps unicode letters and falls back when nothing survives", () => {
     expect(safeFileName("深渊码头 v2", "card")).toBe("深渊码头_v2")
     expect(safeFileName("///", "card")).toBe("card")
+  })
+})
+
+describe("presentation kit (M19)", () => {
+  function presentationDraft(overrides: Partial<PackPresentationDraft> = {}): PackPresentationDraft {
+    return {
+      generation: "allow",
+      keywordsEn: "ink wash, muted indigo",
+      keywordsZh: "水墨, 靛青",
+      bannedText: "text overlays\nmodern clothing",
+      subjects: [
+        {
+          uid: "s1",
+          id: "wantang",
+          kind: "npc",
+          nameEn: "Gu Wantang",
+          nameZh: "顾晚棠",
+          refFileName: "wantang.png",
+          refBase64: "aGk=",
+          prompt: "a woman in her thirties, plain dark coat, wet hair",
+        },
+        {
+          uid: "s2",
+          id: "the-quay",
+          kind: "location",
+          nameEn: "The quay",
+          nameZh: "石埠",
+          refFileName: "",
+          refBase64: "",
+          prompt: "",
+        },
+      ],
+      audio: [
+        {
+          uid: "a1",
+          id: "tide",
+          layer: "bgm",
+          assetFileName: "tide.mp3",
+          assetBase64: "bXA=",
+          title: "潮涌",
+        },
+      ],
+      ...overrides,
+    }
+  }
+
+  it("emits the exact kit shape `core/presentation.py` parses, wired into manifest + plan", () => {
+    const kit = presentationDraft()
+    expect(parse(buildPresentationYaml(kit))).toEqual({
+      version: 1,
+      generation: "allow",
+      style: {
+        keywords: { en: "ink wash, muted indigo", zh: "水墨, 靛青" },
+        banned: ["text overlays", "modern clothing"],
+      },
+      subjects: [
+        {
+          id: "wantang",
+          kind: "npc",
+          name: { en: "Gu Wantang", zh: "顾晚棠" },
+          ref: "assets/wantang.png",
+          prompt: "a woman in her thirties, plain dark coat, wet hair",
+        },
+        // Ref-less is LEGAL (nameable, never generated) — no ref/prompt keys.
+        { id: "the-quay", kind: "location", name: { en: "The quay", zh: "石埠" } },
+      ],
+      audio: [{ id: "tide", layer: "bgm", asset: "assets/tide.mp3", title: "潮涌" }],
+    })
+
+    const withKit = draft({ presentation: kit })
+    expect(validatePackDraft(withKit)).toEqual([])
+    const manifest = parse(buildManifestYaml(withKit)) as {
+      contents: Record<string, unknown>
+      assets: unknown
+    }
+    expect(manifest.contents.presentation).toEqual(["ui/presentation.yaml"])
+    // Refs/cues MUST join the asset block (`core/pack.py::_enforce_kit_assets`).
+    expect(manifest.assets).toEqual([{ path: "assets/wantang.png" }, { path: "assets/tide.mp3" }])
+
+    const plan = buildPackSourcePlan(withKit)
+    expect(plan.files.map((file) => file.path)).toContain("ui/presentation.yaml")
+    expect(plan.binaries).toContainEqual({ path: "assets/wantang.png", base64: "aGk=" })
+    expect(plan.binaries).toContainEqual({ path: "assets/tide.mp3", base64: "bXA=" })
+  })
+
+  it("reproduces the flagship kit (汐浦送灯 ui/presentation.yaml) exactly", () => {
+    // VENDORED from the engine repo's flagship module (tests never read
+    // outside this repo) — the full-surface reference: subjects with and
+    // without refs, bilingual style, banned list, three audio layers.
+    const FLAGSHIP_YAML = `version: 1
+generation: allow
+style:
+  keywords:
+    zh: "水墨淡彩, 靛青与赭石, 一九二五年浙东渔镇, 湿冷海雾, 纸本质感"
+    en: "ink wash with muted color, indigo and ochre, 1925 coastal Zhejiang fishing town, damp sea fog, paper grain"
+  banned:
+    - text overlays
+    - modern clothing
+    - photographic realism
+    - visible light sources beyond lanterns
+subjects:
+  - id: gu-wantang
+    kind: npc
+    name: {zh: 顾晚棠, en: Gu Wantang}
+    ref: assets/gu-wantang.png
+    prompt: "a woman in her thirties, dark plain jacket over a pale collar, hair damp, standing very still"
+  - id: bai-yusheng
+    kind: npc
+    name: {zh: 白榆生, en: Bai Yusheng}
+    ref: assets/bai-yusheng.png
+    prompt: "a slight young scholar in a worn long gown, ink-stained fingers, glasses fogged by sea air"
+  - id: chen-jiuli
+    kind: npc
+    name: {zh: 陈九鲤, en: Chen Jiuli}
+    ref: assets/chen-jiuli.png
+    prompt: "a weathered boatman past fifty, oilskin cape, one hand always on a mooring rope"
+  - id: shipu
+    kind: location
+    name: {zh: 石埠, en: The stone quay}
+  - id: zhu-deng
+    kind: item
+    name: {zh: 主灯, en: The head lantern}
+audio:
+  - {id: chao-yong, layer: bgm, asset: assets/chao-yong.mp3, title: 潮涌}
+  - {id: ye-wu, layer: ambience, asset: assets/ye-wu.mp3, title: 夜雾港湾}
+  - {id: jing-xian, layer: sfx, asset: assets/jing-xian.mp3, title: 惊弦}
+`
+    const npc = (uid: string, id: string, zh: string, en: string, prompt: string) => ({
+      uid,
+      id,
+      kind: "npc",
+      nameEn: en,
+      nameZh: zh,
+      refFileName: `${id}.png`,
+      refBase64: "cG5n",
+      prompt,
+    })
+    const flagship = presentationDraft({
+      keywordsZh: "水墨淡彩, 靛青与赭石, 一九二五年浙东渔镇, 湿冷海雾, 纸本质感",
+      keywordsEn:
+        "ink wash with muted color, indigo and ochre, 1925 coastal Zhejiang fishing town, damp sea fog, paper grain",
+      bannedText:
+        "text overlays\nmodern clothing\nphotographic realism\nvisible light sources beyond lanterns",
+      subjects: [
+        npc(
+          "s1",
+          "gu-wantang",
+          "顾晚棠",
+          "Gu Wantang",
+          "a woman in her thirties, dark plain jacket over a pale collar, hair damp, standing very still",
+        ),
+        npc(
+          "s2",
+          "bai-yusheng",
+          "白榆生",
+          "Bai Yusheng",
+          "a slight young scholar in a worn long gown, ink-stained fingers, glasses fogged by sea air",
+        ),
+        npc(
+          "s3",
+          "chen-jiuli",
+          "陈九鲤",
+          "Chen Jiuli",
+          "a weathered boatman past fifty, oilskin cape, one hand always on a mooring rope",
+        ),
+        {
+          uid: "s4",
+          id: "shipu",
+          kind: "location",
+          nameEn: "The stone quay",
+          nameZh: "石埠",
+          refFileName: "",
+          refBase64: "",
+          prompt: "",
+        },
+        {
+          uid: "s5",
+          id: "zhu-deng",
+          kind: "item",
+          nameEn: "The head lantern",
+          nameZh: "主灯",
+          refFileName: "",
+          refBase64: "",
+          prompt: "",
+        },
+      ],
+      audio: [
+        {
+          uid: "a1",
+          id: "chao-yong",
+          layer: "bgm",
+          assetFileName: "chao-yong.mp3",
+          assetBase64: "bXAz",
+          title: "潮涌",
+        },
+        {
+          uid: "a2",
+          id: "ye-wu",
+          layer: "ambience",
+          assetFileName: "ye-wu.mp3",
+          assetBase64: "bXAz",
+          title: "夜雾港湾",
+        },
+        {
+          uid: "a3",
+          id: "jing-xian",
+          layer: "sfx",
+          assetFileName: "jing-xian.mp3",
+          assetBase64: "bXAz",
+          title: "惊弦",
+        },
+      ],
+    })
+    // Emission is faithful: the wizard's kit round-trips to the flagship's own file.
+    expect(parse(buildPresentationYaml(flagship))).toEqual(parse(FLAGSHIP_YAML))
+    // …and the flagship passes the author-side validator with zero issues.
+    expect(validatePackDraft(draft({ presentation: flagship }))).toEqual([])
+  })
+
+  it("omits empty optional sections; keeps version + generation explicit", () => {
+    const bare = presentationDraft({
+      keywordsEn: "",
+      keywordsZh: "",
+      bannedText: "",
+      subjects: [],
+      audio: [],
+      generation: "pack_only",
+    })
+    expect(parse(buildPresentationYaml(bare))).toEqual({ version: 1, generation: "pack_only" })
+    const zhOnly = presentationDraft({ keywordsEn: "", subjects: [], audio: [] })
+    expect(parse(buildPresentationYaml(zhOnly))).toEqual({
+      version: 1,
+      generation: "allow",
+      style: { keywords: { zh: "水墨, 靛青" }, banned: ["text overlays", "modern clothing"] },
+    })
+  })
+
+  it("mirrors the engine's subject rules (slug, kind enum, name, caps, ref pairing)", () => {
+    const kit = presentationDraft()
+    const issues = validatePackDraft(
+      draft({
+        presentation: presentationDraft({
+          subjects: [
+            {
+              ...kit.subjects[0],
+              id: "Gu Wantang",
+              kind: "scene",
+              nameEn: "",
+              nameZh: "",
+              prompt: "x".repeat(1001),
+            },
+            { ...kit.subjects[0], uid: "s2", id: "ok-id", refFileName: "a/b.png" },
+            { ...kit.subjects[0], uid: "s3", id: "ok-id-2", refFileName: "x.png", refBase64: "" },
+          ],
+        }),
+      }),
+    )
+    const byField = (uid: string, field: string) =>
+      issues.filter((issue) => issue.params?.uid === uid && issue.params?.field === field)
+    expect(String(byField("s1", "id")[0].params?.detail)).toContain("lowercase slug")
+    expect(String(byField("s1", "kind")[0].params?.detail)).toContain("npc, location, item")
+    expect(String(byField("s1", "nameEn")[0].params?.detail)).toContain("at least one of en, zh")
+    expect(String(byField("s1", "prompt")[0].params?.detail)).toContain("1000")
+    expect(String(byField("s2", "refFileName")[0].params?.detail)).toContain("plain file name")
+    expect(String(byField("s3", "ref")[0].params?.detail)).toContain("incomplete")
+    // Over-long localized names flag the specific locale field.
+    const longName = validatePackDraft(
+      draft({
+        presentation: presentationDraft({
+          subjects: [{ ...kit.subjects[0], nameEn: "x".repeat(401) }],
+        }),
+      }),
+    )
+    expect(longName.some((issue) => issue.params?.field === "nameEn")).toBe(true)
+  })
+
+  it("flags duplicate ids and the subjects/audio count caps", () => {
+    const kit = presentationDraft()
+    const dupes = validatePackDraft(
+      draft({
+        presentation: presentationDraft({
+          subjects: [
+            { ...kit.subjects[0], uid: "s1", id: "same" },
+            { ...kit.subjects[0], uid: "s2", id: "same" },
+          ],
+          audio: [
+            { ...kit.audio[0], uid: "a1", id: "same-cue" },
+            { ...kit.audio[0], uid: "a2", id: "same-cue" },
+          ],
+        }),
+      }),
+    )
+    expect(dupes.map((issue) => issue.key)).toContain("packPresentationDuplicateSubject")
+    expect(dupes.map((issue) => issue.key)).toContain("packPresentationDuplicateCue")
+
+    const many = validatePackDraft(
+      draft({
+        presentation: presentationDraft({
+          subjects: Array.from({ length: 65 }, (_, i) => ({
+            ...kit.subjects[0],
+            uid: `s${i}`,
+            id: `sub-${i}`,
+          })),
+          audio: Array.from({ length: 33 }, (_, i) => ({ ...kit.audio[0], uid: `a${i}`, id: `cue-${i}` })),
+        }),
+      }),
+    )
+    const keys = many.map((issue) => issue.key)
+    expect(keys).toContain("packPresentationSubjectsCount")
+    expect(keys).toContain("packPresentationAudioCount")
+  })
+
+  it("mirrors the style + generation rules (keywords/banned caps, mode enum)", () => {
+    const issues = validatePackDraft(
+      draft({
+        presentation: presentationDraft({
+          generation: "sometimes",
+          keywordsEn: "x".repeat(401),
+          bannedText: `${"x".repeat(401)}\n${Array.from({ length: 25 }, (_, i) => `b${i}`).join("\n")}`,
+        }),
+      }),
+    )
+    const keys = issues.map((issue) => issue.key)
+    expect(keys).toContain("packPresentationGeneration")
+    expect(keys).toContain("packPresentationKeywordsTooLong")
+    expect(keys).toContain("packPresentationBannedCount")
+    expect(keys).toContain("packPresentationBannedTooLong")
+  })
+
+  it("mirrors the audio cue rules (layer enum, required asset, title cap)", () => {
+    const kit = presentationDraft()
+    const issues = validatePackDraft(
+      draft({
+        presentation: presentationDraft({
+          audio: [
+            { ...kit.audio[0], layer: "score", assetFileName: "", assetBase64: "", title: "x".repeat(401) },
+          ],
+        }),
+      }),
+    )
+    const byField = (field: string) => issues.filter((issue) => issue.params?.field === field)
+    expect(String(byField("layer")[0].params?.detail)).toContain("bgm, ambience, sfx")
+    expect(String(byField("asset")[0].params?.detail)).toContain("needs its audio file")
+    expect(String(byField("title")[0].params?.detail)).toContain("400")
+  })
+
+  it("flags kit files colliding with other pack paths, tagged for the presentation step", () => {
+    const issues = validatePackDraft(
+      draft({
+        assets: [{ fileName: "wantang.png", base64: "aGk=" }],
+        presentation: presentationDraft(),
+      }),
+    )
+    const collision = issues.find((issue) => issue.key === "packDuplicatePath")
+    expect(collision?.params?.file).toBe("assets/wantang.png")
+    expect(collision?.params?.from).toBe("presentation")
   })
 })

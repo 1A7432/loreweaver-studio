@@ -24,6 +24,26 @@ const PANEL_SLOTS = new Set(["sidebar", "tray", "modal"])
 const PANEL_AUDIENCES = new Set(["all", "player", "keeper"])
 const PANEL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 
+// M19 presentation kit (演出资料包), mirroring `core/presentation.py` — the
+// single schema authority; the engine re-parses the emitted file at pack
+// build (`core/pack.py::_validate_pack_presentation`), so these enums/caps
+// are copied from it, not invented.
+export const PRESENTATION_FILE_NAME = "ui/presentation.yaml"
+const MAX_PRESENTATION_FILE_BYTES = 128 * 1024
+const MAX_PRESENTATION_SUBJECTS = 64
+const MAX_PRESENTATION_AUDIO = 32
+const MAX_PRESENTATION_BANNED = 24
+const MAX_PRESENTATION_TEXT_CHARS = 400
+const MAX_PRESENTATION_PROMPT_CHARS = 1_000
+export const PRESENTATION_GENERATION_MODES = ["allow", "pack_only"] as const
+export const PRESENTATION_SUBJECT_KINDS = ["npc", "location", "item"] as const
+export const PRESENTATION_AUDIO_LAYERS = ["bgm", "ambience", "sfx"] as const
+/** Soft editor hints only — the engine sniffs real bytes at build and checks
+ * them against `core/hooks.py::UI_IMAGE_MIMES` / `core/presentation.py::AUDIO_MIMES`
+ * (`core/pack.py::_enforce_kit_assets`). Extensions mirror those MIME lists. */
+export const PRESENTATION_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "svg"] as const
+export const PRESENTATION_AUDIO_EXTENSIONS = ["mp3", "ogg", "wav", "flac", "m4a", "aac"] as const
+
 // M19 (protocol 2.1) template additions, mirroring `core/panels.py`: the
 // `image` kind, the four performance kinds' required/optional fields with
 // their per-field caps (`core/hooks.py`), and the `visible_when` portable
@@ -91,6 +111,43 @@ export interface PackPanelsDraft {
   files: PackPanelFileDraft[]
 }
 
+/** One picturable subject (the 定妆 convention). An empty ref is LEGAL — it
+ * means "nameable in captions, never generated" (`core/presentation.py`:
+ * ref-mandatory is doctrine enforced by the runtime, not by the schema). */
+export interface PackPresentationSubjectDraft {
+  uid: string
+  id: string
+  kind: string
+  nameEn: string
+  nameZh: string
+  /** Basename under `assets/` + bytes; both empty = no reference image. */
+  refFileName: string
+  refBase64: string
+  prompt: string
+}
+
+/** One audio cue the Director may call for, bound to a pack audio asset. */
+export interface PackPresentationAudioDraft {
+  uid: string
+  id: string
+  layer: string
+  /** Basename under `assets/` + bytes; a cue without its file is invalid. */
+  assetFileName: string
+  assetBase64: string
+  title: string
+}
+
+/** The pack's Stage Director brief: `ui/presentation.yaml` + its media files. */
+export interface PackPresentationDraft {
+  generation: string
+  keywordsEn: string
+  keywordsZh: string
+  /** Banned elements, one per line. */
+  bannedText: string
+  subjects: PackPresentationSubjectDraft[]
+  audio: PackPresentationAudioDraft[]
+}
+
 export interface PackRulepackDraft {
   /** Becomes `rulepacks/<id>.yaml`; the id must be a slug. */
   id: string
@@ -125,6 +182,9 @@ export interface WorldPackDraft {
   assets: PackAssetDraft[]
   /** M15 module-UI panels; null when the pack ships none. */
   panels: PackPanelsDraft | null
+  /** M19 presentation kit; null when the pack ships none — the Stage Director
+   * is kit-gated, so null means "no staged beats for rooms of this module". */
+  presentation: PackPresentationDraft | null
 }
 
 export interface PackTextFile {
@@ -213,6 +273,7 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
     seenFiles.add(path)
   }
   if (draft.panels !== null) issues.push(...validatePanelsDraft(draft.panels, seenFiles))
+  if (draft.presentation !== null) issues.push(...validatePresentationDraft(draft.presentation, seenFiles))
   return issues
 }
 
@@ -506,6 +567,237 @@ function validatePanelsDraft(panels: PackPanelsDraft, seenFiles: Set<string>): I
   return issues
 }
 
+/** A kit media file ships as `assets/<fileName>`: it must stay a plain
+ * basename so the resulting pack-relative path passes the engine's
+ * confinement check (`core/presentation.py::_asset_path`). */
+function checkKitFileName(fileName: string): string | null {
+  if (fileName.includes("/")) return "must be a plain file name (kit files land directly under assets/, no /)"
+  return checkAssetPath(`assets/${fileName}`)
+}
+
+/** Structural mirror of `core/presentation.py::parse_presentation_text` —
+ * same enums, same caps, same slug rule, so a kit green here survives the
+ * engine's re-parse at build. Subject/cue issues carry `uid` + `field` params
+ * so the wizard stage renders them next to the offending input; duplicate
+ * paths raised here carry `from: "presentation"` for step partitioning. The
+ * pack-layer MIME rules (`core/pack.py::_enforce_kit_assets`) are the
+ * engine's — the editor only soft-hints them by extension. */
+function validatePresentationDraft(kit: PackPresentationDraft, seenFiles: Set<string>): Issue[] {
+  const issues: Issue[] = []
+  type GenerationMode = (typeof PRESENTATION_GENERATION_MODES)[number]
+  type SubjectKind = (typeof PRESENTATION_SUBJECT_KINDS)[number]
+  type AudioLayer = (typeof PRESENTATION_AUDIO_LAYERS)[number]
+
+  const noteKitAssetPath = (path: string) => {
+    if (seenFiles.has(path)) {
+      issues.push({ key: "packDuplicatePath", params: { file: path, from: "presentation" } })
+    }
+    seenFiles.add(path)
+  }
+
+  if (!PRESENTATION_GENERATION_MODES.includes(kit.generation as GenerationMode)) {
+    issues.push({ key: "packPresentationGeneration", params: { value: kit.generation } })
+  }
+  for (const [locale, text] of [
+    ["en", kit.keywordsEn],
+    ["zh", kit.keywordsZh],
+  ] as const) {
+    if (text.trim() && text.length > MAX_PRESENTATION_TEXT_CHARS) {
+      issues.push({
+        key: "packPresentationKeywordsTooLong",
+        params: {
+          locale,
+          max: MAX_PRESENTATION_TEXT_CHARS,
+          field: `keywords${locale === "en" ? "En" : "Zh"}`,
+        },
+      })
+    }
+  }
+  const bannedLines = kit.bannedText.split("\n").filter((line) => line.trim().length > 0)
+  if (bannedLines.length > MAX_PRESENTATION_BANNED) {
+    issues.push({
+      key: "packPresentationBannedCount",
+      params: { max: MAX_PRESENTATION_BANNED, field: "banned" },
+    })
+  }
+  bannedLines.forEach((entry, index) => {
+    if (entry.length > MAX_PRESENTATION_TEXT_CHARS) {
+      issues.push({
+        key: "packPresentationBannedTooLong",
+        params: { index: index + 1, max: MAX_PRESENTATION_TEXT_CHARS, field: "banned" },
+      })
+    }
+  })
+
+  if (kit.subjects.length > MAX_PRESENTATION_SUBJECTS) {
+    issues.push({ key: "packPresentationSubjectsCount", params: { max: MAX_PRESENTATION_SUBJECTS } })
+  }
+  const seenSubjectIds = new Set<string>()
+  for (const [index, subject] of kit.subjects.entries()) {
+    const label = subject.id.trim() || `#${index + 1}`
+    const bad = (field: string, detail: string) =>
+      issues.push({
+        key: "packPresentationSubjectInvalid",
+        params: { uid: subject.uid, subject: label, field, detail },
+      })
+    const id = subject.id.trim()
+    if (!PACK_ID_RE.test(id)) bad("id", "id must be a lowercase slug ([a-z0-9-], max 64)")
+    else if (seenSubjectIds.has(id)) issues.push({ key: "packPresentationDuplicateSubject", params: { id } })
+    else seenSubjectIds.add(id)
+    if (!PRESENTATION_SUBJECT_KINDS.includes(subject.kind as SubjectKind)) {
+      bad("kind", `kind must be one of ${PRESENTATION_SUBJECT_KINDS.join(", ")}`)
+    }
+    if (!subject.nameEn.trim() && !subject.nameZh.trim()) bad("nameEn", "name: needs at least one of en, zh")
+    if (subject.nameEn.trim() && subject.nameEn.length > MAX_PRESENTATION_TEXT_CHARS) {
+      bad("nameEn", `name.en: at most ${MAX_PRESENTATION_TEXT_CHARS} chars`)
+    }
+    if (subject.nameZh.trim() && subject.nameZh.length > MAX_PRESENTATION_TEXT_CHARS) {
+      bad("nameZh", `name.zh: at most ${MAX_PRESENTATION_TEXT_CHARS} chars`)
+    }
+    if (subject.prompt.length > MAX_PRESENTATION_PROMPT_CHARS) {
+      bad("prompt", `prompt: at most ${MAX_PRESENTATION_PROMPT_CHARS} chars`)
+    }
+    const fileName = subject.refFileName.trim()
+    if ((fileName === "") !== (subject.refBase64 === "")) {
+      bad("ref", "ref file incomplete — re-upload the reference image")
+    }
+    if (fileName !== "") {
+      const pathProblem = checkKitFileName(fileName)
+      if (pathProblem) bad("refFileName", pathProblem)
+      else noteKitAssetPath(`assets/${fileName}`)
+    }
+  }
+
+  if (kit.audio.length > MAX_PRESENTATION_AUDIO) {
+    issues.push({ key: "packPresentationAudioCount", params: { max: MAX_PRESENTATION_AUDIO } })
+  }
+  const seenCueIds = new Set<string>()
+  for (const [index, cue] of kit.audio.entries()) {
+    const label = cue.id.trim() || `#${index + 1}`
+    const bad = (field: string, detail: string) =>
+      issues.push({
+        key: "packPresentationCueInvalid",
+        params: { uid: cue.uid, cue: label, field, detail },
+      })
+    const id = cue.id.trim()
+    if (!PACK_ID_RE.test(id)) bad("id", "id must be a lowercase slug ([a-z0-9-], max 64)")
+    else if (seenCueIds.has(id)) issues.push({ key: "packPresentationDuplicateCue", params: { id } })
+    else seenCueIds.add(id)
+    if (!PRESENTATION_AUDIO_LAYERS.includes(cue.layer as AudioLayer)) {
+      bad("layer", `layer must be one of ${PRESENTATION_AUDIO_LAYERS.join(", ")}`)
+    }
+    const fileName = cue.assetFileName.trim()
+    if (fileName === "") {
+      bad("asset", "asset: a cue needs its audio file — upload one (mp3, ogg, wav, flac, m4a, aac)")
+    } else {
+      const pathProblem = checkKitFileName(fileName)
+      if (pathProblem) bad("assetFileName", pathProblem)
+      else noteKitAssetPath(`assets/${fileName}`)
+      if (cue.assetBase64 === "") bad("asset", "asset file incomplete — re-upload the audio")
+    }
+    if (cue.title.length > MAX_PRESENTATION_TEXT_CHARS) {
+      bad("title", `title: at most ${MAX_PRESENTATION_TEXT_CHARS} chars`)
+    }
+  }
+
+  // The emitted file itself is capped (`core/presentation.py:MAX_PRESENTATION_FILE_BYTES`).
+  const bytes = new TextEncoder().encode(buildPresentationYaml(kit)).length
+  if (bytes > MAX_PRESENTATION_FILE_BYTES) {
+    issues.push({ key: "packPresentationTooBig", params: { max: MAX_PRESENTATION_FILE_BYTES } })
+  }
+  return issues
+}
+
+/** `ui/presentation.yaml`, emitted exactly in the shape
+ * `core/presentation.py::parse_presentation_text` accepts: `version: 1` and an
+ * explicit `generation` always; optional sections omitted when empty;
+ * localized fields ride as `{en, zh}` maps with the filled locales only;
+ * media references point at `assets/<fileName>` (the flagship's layout). */
+export function buildPresentationYaml(kit: PackPresentationDraft): string {
+  type GenerationMode = (typeof PRESENTATION_GENERATION_MODES)[number]
+  const doc: Record<string, unknown> = {
+    version: 1,
+    generation: PRESENTATION_GENERATION_MODES.includes(kit.generation as GenerationMode)
+      ? kit.generation
+      : "allow",
+  }
+  const style: Record<string, unknown> = {}
+  const keywords = localized(kit.keywordsEn, kit.keywordsZh)
+  if (Object.keys(keywords).length > 0) style.keywords = keywords
+  const banned = kit.bannedText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (banned.length > 0) style.banned = banned
+  if (Object.keys(style).length > 0) doc.style = style
+  if (kit.subjects.length > 0) {
+    doc.subjects = kit.subjects.map((subject) => {
+      const entry: Record<string, unknown> = {
+        id: subject.id.trim(),
+        kind: subject.kind,
+        name: localized(subject.nameEn, subject.nameZh),
+      }
+      const ref = subject.refFileName.trim()
+      if (ref) entry.ref = `assets/${ref}`
+      const prompt = subject.prompt.trim()
+      if (prompt) entry.prompt = prompt
+      return entry
+    })
+  }
+  if (kit.audio.length > 0) {
+    doc.audio = kit.audio.map((cue) => {
+      const entry: Record<string, unknown> = {
+        id: cue.id.trim(),
+        layer: cue.layer,
+        asset: `assets/${cue.assetFileName.trim()}`,
+      }
+      const title = cue.title.trim()
+      if (title) entry.title = title
+      return entry
+    })
+  }
+  return stringify(doc, { lineWidth: 0 })
+}
+
+/** The kit's media files in declaration order (subject refs, then cue
+ * assets), de-duplicated by file name — folded into the manifest `assets:`
+ * block and the source tree's binaries so every ref/cue passes the asset-block
+ * membership check (`core/pack.py::_enforce_kit_assets`). */
+export function presentationKitFiles(kit: PackPresentationDraft): { fileName: string; base64: string }[] {
+  const files: { fileName: string; base64: string }[] = []
+  const seen = new Set<string>()
+  const note = (fileName: string, base64: string) => {
+    const name = fileName.trim()
+    if (name === "" || base64 === "" || seen.has(name)) return
+    seen.add(name)
+    files.push({ fileName: name, base64 })
+  }
+  for (const subject of kit.subjects) note(subject.refFileName, subject.refBase64)
+  for (const cue of kit.audio) note(cue.assetFileName, cue.assetBase64)
+  return files
+}
+
+/** The kit at a glance — the same numbers the engine's trust card discloses
+ * (`core/pack.py`: `presentation` = subject count; `imagegen` = generation
+ * allowed AND at least one subject ships a ref). */
+export function presentationSummary(kit: PackPresentationDraft): {
+  subjects: number
+  withRefs: number
+  audio: number
+  mode: "allow" | "pack_only"
+  imagegen: boolean
+} {
+  const withRefs = kit.subjects.filter((subject) => subject.refBase64 !== "").length
+  const mode = kit.generation === "pack_only" ? "pack_only" : "allow"
+  return {
+    subjects: kit.subjects.length,
+    withRefs,
+    audio: kit.audio.length,
+    mode,
+    imagegen: mode === "allow" && withRefs > 0,
+  }
+}
+
 function localized(en: string, zh: string): Record<string, string> {
   const out: Record<string, string> = {}
   if (en.trim()) out.en = en.trim()
@@ -535,6 +827,7 @@ export function buildManifestYaml(draft: WorldPackDraft): string {
     contents.lorebooks = draft.lorebooks.map((lorebook) => `lorebooks/${lorebook.fileName}`)
   }
   if (draft.panels !== null) contents.panels = [PANELS_FILE_NAME]
+  if (draft.presentation !== null) contents.presentation = [PRESENTATION_FILE_NAME]
   // NOTE: no `trust` block — it is generated at pack time; a hand-written one
   // is rejected by the engine (`parse_manifest_text(expect_trust=False)`).
   // Same for `files:` (the built archive's generated inventory) and card
@@ -554,9 +847,14 @@ export function buildManifestYaml(draft: WorldPackDraft): string {
     engine: { protocol: "2.0" },
     contents,
   }
-  if (draft.assets.length > 0) {
+  const kitFiles = draft.presentation !== null ? presentationKitFiles(draft.presentation) : []
+  if (draft.assets.length > 0 || kitFiles.length > 0) {
     // Integrity fields (sha256/mime/size) are the engine's to fill at build.
-    manifest.assets = draft.assets.map((asset) => ({ path: `assets/${asset.fileName}` }))
+    // Kit refs/cues MUST sit in this block (`core/pack.py::_enforce_kit_assets`).
+    manifest.assets = [
+      ...draft.assets.map((asset) => ({ path: `assets/${asset.fileName}` })),
+      ...kitFiles.map((file) => ({ path: `assets/${file.fileName}` })),
+    ]
   }
   return stringify(manifest, { lineWidth: 0 })
 }
@@ -617,6 +915,12 @@ export function buildPackSourcePlan(draft: WorldPackDraft): PackSourcePlan {
     for (const file of draft.panels.files) {
       if (file.contents !== undefined) files.push({ path: file.path, contents: file.contents })
       else if (file.base64 !== undefined) binaries.push({ path: file.path, base64: file.base64 })
+    }
+  }
+  if (draft.presentation !== null) {
+    files.push({ path: PRESENTATION_FILE_NAME, contents: buildPresentationYaml(draft.presentation) })
+    for (const file of presentationKitFiles(draft.presentation)) {
+      binaries.push({ path: `assets/${file.fileName}`, base64: file.base64 })
     }
   }
 

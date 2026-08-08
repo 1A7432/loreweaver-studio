@@ -689,6 +689,7 @@
         "review": "Classify",
         "promote": "Variables",
         "metadata": "Metadata",
+        "presentation": "Presentation",
         "build": "Build"
       },
       "reset": "Reset",
@@ -777,7 +778,18 @@
         "packPanelMissingFile": "Panel {{panel}} declares {{file}}, but that file is not in the panel file list.",
         "packPanelPathInvalid": "Panel file path {{file}} must live under ui/ (plain relative path).",
         "packPanelFileBodyMissing": "Panel file {{file}}: file body missing or duplicated.",
-        "packPanelFileOrphan": "Panel file {{file}} is not referenced by any panel — remove it or declare it."
+        "packPanelFileOrphan": "Panel file {{file}} is not referenced by any panel — remove it or declare it.",
+        "packPresentationTooBig": "presentation.yaml exceeds the {{max}}-byte cap — trim prompts and keywords.",
+        "packPresentationGeneration": "generation must be allow | pack_only (got \"{{value}}\").",
+        "packPresentationKeywordsTooLong": "style.keywords.{{locale}}: at most {{max}} characters.",
+        "packPresentationBannedCount": "style.banned: at most {{max}} entries.",
+        "packPresentationBannedTooLong": "style.banned entry {{index}}: at most {{max}} characters.",
+        "packPresentationSubjectsCount": "subjects: at most {{max}} entries.",
+        "packPresentationDuplicateSubject": "subjects: duplicate subject id \"{{id}}\".",
+        "packPresentationSubjectInvalid": "Subject {{subject}}: {{detail}}",
+        "packPresentationAudioCount": "audio: at most {{max}} cues.",
+        "packPresentationDuplicateCue": "audio: duplicate cue id \"{{id}}\".",
+        "packPresentationCueInvalid": "Cue {{cue}}: {{detail}}"
       },
       "panels": {
         "title": "Module UI panels (M15)",
@@ -797,6 +809,88 @@
         "slug": "Skill slug",
         "md": "SKILL.md (verbatim)",
         "hooks": "hooks.js (optional)"
+      },
+      "presentation": {
+        "emptyTitle": "Presentation kit (演出资料包) — the Stage Director's brief",
+        "emptyHint": "The Stage Director stages beats (images, letters, clippings, title cards, audio) only for modules that ship a kit — no kit, no generated staging for this pack's rooms. That gate is the point: a module opts in by saying, once and as data, what it should look and sound like. Adding one is always optional.",
+        "doctrineGated": "Kit-gated and knowledge-scoped: the Director reads only this file, the player-visible stream, and exposed state — never keeper material. Everything written here is safe to be inferred from a player's screen.",
+        "doctrineRef": "Ref-mandatory (定妆): a subject without a reference image can never be generated — no ref, no portrait. The ref and the style keywords ride every image request, because consistency is the hard part.",
+        "doctrinePackOnly": "宁缺毋滥: you may veto generation outright (pack art only). No config flag overrides an atmosphere-first author.",
+        "doctrineWarmup": "慢菜先备 is the runtime's job, not yours: once a subject is nameable here, the engine can warm its art during idle turns.",
+        "add": "Add a presentation kit",
+        "hint": "ui/presentation.yaml — one look per module. The engine re-validates everything here at pack build; the issues below are what it would reject, said early.",
+        "summary": "{{subjects}} subject(s) · {{withRefs}} with 定妆 refs · {{audio}} audio cue(s) · {{mode}}",
+        "modeAllow": "generation allowed",
+        "modePackOnly": "pack art only (宁缺毋滥)",
+        "trustImagegen": "the trust card will disclose image generation",
+        "trustNoImagegen": "the trust card will not flag image generation (pack-only, or no refs yet)",
+        "buildReview": "Presentation kit: {{subjects}} subject(s) ({{withRefs}} with refs) · {{audio}} audio cue(s) · {{mode}}",
+        "removeKit": "Remove the whole kit",
+        "generation": {
+          "title": "Image generation",
+          "allow": {
+            "label": "Allow the Director to paint",
+            "hint": "With refs + style on every request, the Director may fill beats with generated art. The trust card discloses it to every installer."
+          },
+          "pack_only": {
+            "label": "宁缺毋滥 — pack art only, never generate",
+            "hint": "The author's veto: the Director stages with the pack's own art and nothing else. No config flag overrides it."
+          }
+        },
+        "style": {
+          "title": "Style guide (carried on every image request)",
+          "keywordsZh": "Style keywords (zh)",
+          "keywordsEn": "Style keywords (en)",
+          "keywordsHint": "Palette, medium, era, texture — the shared look. Up to 400 characters each.",
+          "banned": "Banned elements (one per line)",
+          "bannedHint": "What must never appear. Up to 24 entries."
+        },
+        "subjects": {
+          "title": "Subjects — who may be pictured (定妆)",
+          "hint": "The Director can only name subjects declared here. A subject WITH a reference image can be painted; one without can still be named in captions.",
+          "add": "Add a subject"
+        },
+        "subject": {
+          "id": "Subject id (slug)",
+          "kind": "Kind",
+          "nameZh": "Display name (zh)",
+          "nameEn": "Display name (en)",
+          "refUpload": "Upload the 定妆 reference image…",
+          "refReplace": "Replace the reference…",
+          "refRemove": "Remove the reference",
+          "refFileName": "File name in the pack (under assets/)",
+          "refEmpty": "no ref",
+          "refMissing": "⚠ No reference image → the Director will never paint this subject (captions only). The 定妆 ref is the generation license.",
+          "refBadType": "⚠ The engine only accepts png / jpeg / webp / gif / svg images — it will refuse this file at build.",
+          "prompt": "Generation brief (prompt, optional)",
+          "promptPlaceholder": "a woman in her thirties, dark plain jacket, hair damp, standing very still",
+          "promptHint": "Appearance, clothing, temperament — rides every generation request alongside the ref. Up to 1000 characters."
+        },
+        "kinds": {
+          "npc": "NPC",
+          "location": "location",
+          "item": "item / prop"
+        },
+        "audio": {
+          "title": "Audio cues the Director may call",
+          "hint": "Each cue binds one pack audio file (mp3 / ogg / wav / flac / m4a / aac). The file is required.",
+          "add": "Add an audio cue"
+        },
+        "cue": {
+          "id": "Cue id (slug)",
+          "layer": "Layer",
+          "title": "Title (optional)",
+          "assetUpload": "Upload the audio file…",
+          "assetReplace": "Replace the audio…",
+          "assetRemove": "Remove the audio",
+          "assetFileName": "File name in the pack (under assets/)",
+          "assetBadType": "⚠ The engine only accepts mp3 / ogg / wav / flac / m4a / aac audio — it will refuse this file at build."
+        },
+        "layers": {
+          "bgm": "bgm (music)",
+          "ambience": "ambience",
+          "sfx": "sfx (sting)"
+        }
       },
       "trust": {
         "title": "Trust card (generated by the engine)",

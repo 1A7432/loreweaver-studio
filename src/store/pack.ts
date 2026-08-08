@@ -20,6 +20,9 @@ import {
   validatePackDraft,
   type PackPanelFileDraft,
   type PackPanelsDraft,
+  type PackPresentationAudioDraft,
+  type PackPresentationDraft,
+  type PackPresentationSubjectDraft,
   type PackSkillDraft,
   type WorldPackDraft,
 } from "../features/studio/split/packSource"
@@ -28,8 +31,8 @@ import type { PackBuildSuccess } from "../features/studio/pack/buildResult"
 import type { Issue } from "../features/studio/model"
 import { bytesToBase64, type EngineCandidate, type EngineRunResult, type PickedFile } from "../lib/native"
 
-export type PackStep = "input" | "review" | "promote" | "metadata" | "build"
-export const PACK_STEPS: PackStep[] = ["input", "review", "promote", "metadata", "build"]
+export type PackStep = "input" | "review" | "promote" | "metadata" | "presentation" | "build"
+export const PACK_STEPS: PackStep[] = ["input", "review", "promote", "metadata", "presentation", "build"]
 
 export type PackItemKind = "card" | "lorebook" | "asset"
 
@@ -275,6 +278,9 @@ interface PackState {
 
   /** M15 module-UI panels: `ui/panels.yaml` + the panel files it references. */
   panels: PackPanelsDraft | null
+  /** M19 presentation kit (演出资料包): the Stage Director's creative brief.
+   * Null = the pack ships no kit and the Director never stages its rooms. */
+  presentation: PackPresentationDraft | null
   /** Hand-authored skills (full SKILL.md + optional hooks.js), alongside the
    * ones extracted from cards. */
   manualSkills: PackSkillDraft[]
@@ -301,6 +307,21 @@ interface PackState {
   updatePanelFilePath: (path: string, nextPath: string) => void
   removePanelFile: (path: string) => void
   clearPanels: () => void
+  addPresentation: () => void
+  clearPresentation: () => void
+  updatePresentation: (
+    patch: Partial<Pick<PackPresentationDraft, "generation" | "keywordsEn" | "keywordsZh" | "bannedText">>,
+  ) => void
+  addPresentationSubject: () => void
+  updatePresentationSubject: (uid: string, patch: Partial<PackPresentationSubjectDraft>) => void
+  removePresentationSubject: (uid: string) => void
+  setPresentationSubjectRef: (uid: string, file: PickedFile) => void
+  clearPresentationSubjectRef: (uid: string) => void
+  addPresentationCue: () => void
+  updatePresentationCue: (uid: string, patch: Partial<PackPresentationAudioDraft>) => void
+  removePresentationCue: (uid: string) => void
+  setPresentationCueAsset: (uid: string, file: PickedFile) => void
+  clearPresentationCueAsset: (uid: string) => void
   addManualSkill: () => void
   updateManualSkill: (index: number, patch: Partial<PackSkillDraft>) => void
   removeManualSkill: (index: number) => void
@@ -335,12 +356,42 @@ function panelFileFromPicked(file: PickedFile, subdir: string): PackPanelFileDra
   return { path, base64: bytesToBase64(file.bytes) }
 }
 
+/** Pack file name for an uploaded kit media file: sanitized stem + original
+ * (lowercased) extension — the same convention as dropped asset items. */
+function kitMediaFileName(name: string, fallback: string): string {
+  const stem = name.replace(/\.[^.]*$/, "")
+  const extension = /\.([^.]+)$/.exec(name.toLowerCase())?.[1] ?? ""
+  return `${safeFileName(stem, fallback)}${extension ? `.${extension}` : ""}`
+}
+
+function newPresentationDraft(): PackPresentationDraft {
+  return { generation: "allow", keywordsEn: "", keywordsZh: "", bannedText: "", subjects: [], audio: [] }
+}
+
+function newPresentationSubject(): PackPresentationSubjectDraft {
+  return {
+    uid: uid(),
+    id: "",
+    kind: "npc",
+    nameEn: "",
+    nameZh: "",
+    refFileName: "",
+    refBase64: "",
+    prompt: "",
+  }
+}
+
+function newPresentationCue(): PackPresentationAudioDraft {
+  return { uid: uid(), id: "", layer: "bgm", assetFileName: "", assetBase64: "", title: "" }
+}
+
 export const usePackStore = create<PackState>()((set) => ({
   step: "input",
   items: [],
   metadata: EMPTY_METADATA,
   loadError: null,
   panels: null,
+  presentation: null,
   manualSkills: [],
   outputDir: null,
   writtenDir: null,
@@ -432,6 +483,158 @@ export const usePackStore = create<PackState>()((set) => ({
 
   clearPanels: () => set({ panels: null }),
 
+  addPresentation: () =>
+    set((state) => (state.presentation !== null ? {} : { presentation: newPresentationDraft() })),
+
+  clearPresentation: () => set({ presentation: null }),
+
+  updatePresentation: (patch) =>
+    set((state) =>
+      state.presentation === null ? {} : { presentation: { ...state.presentation, ...patch } },
+    ),
+
+  addPresentationSubject: () =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              subjects: [...state.presentation.subjects, newPresentationSubject()],
+            },
+          },
+    ),
+
+  updatePresentationSubject: (subjectUid, patch) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              subjects: state.presentation.subjects.map((subject) =>
+                subject.uid === subjectUid ? { ...subject, ...patch } : subject,
+              ),
+            },
+          },
+    ),
+
+  removePresentationSubject: (subjectUid) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              subjects: state.presentation.subjects.filter((subject) => subject.uid !== subjectUid),
+            },
+          },
+    ),
+
+  setPresentationSubjectRef: (subjectUid, file) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              subjects: state.presentation.subjects.map((subject) =>
+                subject.uid === subjectUid
+                  ? {
+                      ...subject,
+                      refFileName: kitMediaFileName(file.name, "reference"),
+                      refBase64: bytesToBase64(file.bytes),
+                    }
+                  : subject,
+              ),
+            },
+          },
+    ),
+
+  clearPresentationSubjectRef: (subjectUid) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              subjects: state.presentation.subjects.map((subject) =>
+                subject.uid === subjectUid ? { ...subject, refFileName: "", refBase64: "" } : subject,
+              ),
+            },
+          },
+    ),
+
+  addPresentationCue: () =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              audio: [...state.presentation.audio, newPresentationCue()],
+            },
+          },
+    ),
+
+  updatePresentationCue: (cueUid, patch) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              audio: state.presentation.audio.map((cue) => (cue.uid === cueUid ? { ...cue, ...patch } : cue)),
+            },
+          },
+    ),
+
+  removePresentationCue: (cueUid) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              audio: state.presentation.audio.filter((cue) => cue.uid !== cueUid),
+            },
+          },
+    ),
+
+  setPresentationCueAsset: (cueUid, file) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              audio: state.presentation.audio.map((cue) =>
+                cue.uid === cueUid
+                  ? {
+                      ...cue,
+                      assetFileName: kitMediaFileName(file.name, "audio"),
+                      assetBase64: bytesToBase64(file.bytes),
+                    }
+                  : cue,
+              ),
+            },
+          },
+    ),
+
+  clearPresentationCueAsset: (cueUid) =>
+    set((state) =>
+      state.presentation === null
+        ? {}
+        : {
+            presentation: {
+              ...state.presentation,
+              audio: state.presentation.audio.map((cue) =>
+                cue.uid === cueUid ? { ...cue, assetFileName: "", assetBase64: "" } : cue,
+              ),
+            },
+          },
+    ),
+
   addManualSkill: () =>
     set((state) => ({
       manualSkills: [
@@ -454,6 +657,7 @@ export const usePackStore = create<PackState>()((set) => ({
       items: [{ ...item, notesZh, notesEn }],
       metadata: { ...EMPTY_METADATA },
       panels: null,
+      presentation: null,
       manualSkills: [],
       writtenDir: null,
       runResult: null,
@@ -478,6 +682,7 @@ export const usePackStore = create<PackState>()((set) => ({
       metadata: EMPTY_METADATA,
       loadError: null,
       panels: null,
+      presentation: null,
       manualSkills: [],
       outputDir: null,
       writtenDir: null,
@@ -508,6 +713,7 @@ export function buildDraftFromState(
   metadata: PackMetadataForm,
   panels: PackPanelsDraft | null = null,
   manualSkills: PackSkillDraft[] = [],
+  presentation: PackPresentationDraft | null = null,
 ): WorldPackDraft {
   const cards = items
     .filter((item) => item.kind === "card")
@@ -559,6 +765,7 @@ export function buildDraftFromState(
       .filter((item) => item.kind === "asset")
       .map((item) => ({ fileName: item.fileName, base64: item.base64 })),
     panels: panels !== null && panels.yamlText.trim() ? panels : null,
+    presentation,
   }
 }
 
@@ -585,6 +792,7 @@ export function packValidationIssues(
   metadata: PackMetadataForm,
   panels: PackPanelsDraft | null = null,
   manualSkills: PackSkillDraft[] = [],
+  presentation: PackPresentationDraft | null = null,
 ): Issue[] {
-  return validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills))
+  return validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills, presentation))
 }

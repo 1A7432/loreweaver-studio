@@ -689,6 +689,7 @@
         "review": "分类",
         "promote": "变量",
         "metadata": "元数据",
+        "presentation": "演出资料包",
         "build": "构建"
       },
       "reset": "重置",
@@ -777,7 +778,18 @@
         "packPanelMissingFile": "面板 {{panel}} 声明了 {{file}}，但面板文件列表里没有它。",
         "packPanelPathInvalid": "面板文件路径 {{file}} 必须位于 ui/ 下（纯相对路径）。",
         "packPanelFileBodyMissing": "面板文件 {{file}}：内容缺失或重复。",
-        "packPanelFileOrphan": "面板文件 {{file}} 未被任何面板引用——请移除或在 panels.yaml 里声明。"
+        "packPanelFileOrphan": "面板文件 {{file}} 未被任何面板引用——请移除或在 panels.yaml 里声明。",
+        "packPresentationTooBig": "presentation.yaml 超过 {{max}} 字节上限——请精简 prompt 与关键词。",
+        "packPresentationGeneration": "generation 必须是 allow | pack_only（当前为「{{value}}」）。",
+        "packPresentationKeywordsTooLong": "style.keywords.{{locale}}：至多 {{max}} 字符。",
+        "packPresentationBannedCount": "style.banned：至多 {{max}} 条。",
+        "packPresentationBannedTooLong": "style.banned 第 {{index}} 条：至多 {{max}} 字符。",
+        "packPresentationSubjectsCount": "subjects：至多 {{max}} 个。",
+        "packPresentationDuplicateSubject": "subjects：主体 id「{{id}}」重复。",
+        "packPresentationSubjectInvalid": "主体 {{subject}}：{{detail}}",
+        "packPresentationAudioCount": "audio：至多 {{max}} 条。",
+        "packPresentationDuplicateCue": "audio：cue id「{{id}}」重复。",
+        "packPresentationCueInvalid": "音频 cue {{cue}}：{{detail}}"
       },
       "panels": {
         "title": "模组 UI 面板（M15）",
@@ -797,6 +809,88 @@
         "slug": "技能 slug",
         "md": "SKILL.md（原样写入）",
         "hooks": "hooks.js（可选）"
+      },
+      "presentation": {
+        "emptyTitle": "演出资料包 —— 舞台导演的创作简报",
+        "emptyHint": "舞台导演只为携带演出资料包的模组运转（图像、信笺、剪报、标题卡、音频节拍）——没有资料包，这个包的房间就不会有自动演出。这道门控正是设计意图：模组用一份数据声明自己应该是什么模样、什么声响，才算选择加入。它永远是可选项。",
+        "doctrineGated": "资料包门控且知识隔离：导演只读这份文件、玩家可见的流与暴露的状态——永远接触不到守秘人材料。写在这里的一切都可以放心被玩家从屏幕上推测出来。",
+        "doctrineRef": "定妆强制：没有定妆参考图的主体永远不会被生成——没定妆，不出图。参考图与画风关键词会跟随每一次出图请求，因为一致性才是真正的难点。",
+        "doctrinePackOnly": "宁缺毋滥：你可以彻底否决生成（只用包内美术）。氛围优先的作者拥有最终决定权，任何配置都无法推翻。",
+        "doctrineWarmup": "慢菜先备是运行时的事，不用你操心：只要主体在这里可以被点名，引擎就能在空闲回合预热它的图。",
+        "add": "添加演出资料包",
+        "hint": "ui/presentation.yaml —— 一个模组一副面孔。引擎在构建时会重新校验这里的一切；下方列出的问题就是它会拒绝的内容，只是提前说给你听。",
+        "summary": "{{subjects}} 个主体 · {{withRefs}} 个有定妆图 · {{audio}} 条音频 cue · {{mode}}",
+        "modeAllow": "允许生成",
+        "modePackOnly": "只用包内美术（宁缺毋滥）",
+        "trustImagegen": "信任卡将披露：允许图像生成",
+        "trustNoImagegen": "信任卡不会标记图像生成（仅限包内，或尚无定妆图）",
+        "buildReview": "演出资料包：{{subjects}} 个主体（{{withRefs}} 个有定妆）· {{audio}} 条音频 cue · {{mode}}",
+        "removeKit": "移除整个资料包",
+        "generation": {
+          "title": "图像生成",
+          "allow": {
+            "label": "允许导演补画",
+            "hint": "导演可在节拍上补画，每次请求都携带定妆图与画风关键词。信任卡会向每位安装者披露这一点。"
+          },
+          "pack_only": {
+            "label": "宁缺毋滥——只用包内美术，绝不生成",
+            "hint": "作者否决权：导演只用包内自带的美术排布演出，别无其他。任何配置都无法推翻。"
+          }
+        },
+        "style": {
+          "title": "画风（每次出图都携带）",
+          "keywordsZh": "画风关键词（中文）",
+          "keywordsEn": "画风关键词（英文）",
+          "keywordsHint": "色板、媒介、年代、质感——统一的模样。每条至多 400 字符。",
+          "banned": "禁区元素（每行一条）",
+          "bannedHint": "绝不允许出现的东西。至多 24 条。"
+        },
+        "subjects": {
+          "title": "定妆主体——谁可以出图",
+          "hint": "导演只能点名这里声明的主体。有定妆图的主体才能出图；没有定妆的主体仍可在字幕与文本里被点名。",
+          "add": "添加主体"
+        },
+        "subject": {
+          "id": "主体 id（slug）",
+          "kind": "种类",
+          "nameZh": "显示名（中文）",
+          "nameEn": "显示名（英文）",
+          "refUpload": "上传定妆参考图…",
+          "refReplace": "更换参考图…",
+          "refRemove": "移除参考图",
+          "refFileName": "包内文件名（assets/ 下）",
+          "refEmpty": "无定妆",
+          "refMissing": "⚠ 没有定妆图 → 导演永远不会为它出图（只能在字幕里点名）。定妆图就是出图许可证。",
+          "refBadType": "⚠ 引擎只接受 png / jpeg / webp / gif / svg 图像——构建时会拒绝这个文件。",
+          "prompt": "生成简报（prompt，可选）",
+          "promptPlaceholder": "三十出头的女子，素色外套，头发微湿，静静站着",
+          "promptHint": "长相、服装、气质——与定妆图一起跟随每次生成。至多 1000 字符。"
+        },
+        "kinds": {
+          "npc": "角色 NPC",
+          "location": "场景",
+          "item": "器物"
+        },
+        "audio": {
+          "title": "音频 cue（导演可点）",
+          "hint": "每条 cue 绑定一个包内音频文件（mp3 / ogg / wav / flac / m4a / aac）。文件必填。",
+          "add": "添加音频 cue"
+        },
+        "cue": {
+          "id": "cue id（slug）",
+          "layer": "层",
+          "title": "标题（可选）",
+          "assetUpload": "上传音频文件…",
+          "assetReplace": "更换音频…",
+          "assetRemove": "移除音频",
+          "assetFileName": "包内文件名（assets/ 下）",
+          "assetBadType": "⚠ 引擎只接受 mp3 / ogg / wav / flac / m4a / aac 音频——构建时会拒绝这个文件。"
+        },
+        "layers": {
+          "bgm": "bgm（背景音乐）",
+          "ambience": "ambience（环境声）",
+          "sfx": "sfx（音效）"
+        }
       },
       "trust": {
         "title": "信任卡（引擎生成）",

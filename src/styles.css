@@ -1948,6 +1948,73 @@ body {
   border-top: 1px solid var(--border-soft);
 }
 
+/* M19 presentation kit stage (演出资料包). */
+
+.pack-kit-empty h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.pack-doctrine {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  max-width: 70ch;
+}
+
+.pack-gen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.pack-gen-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.pack-gen-card.active {
+  border-color: var(--accent-strong);
+  background: var(--bg-raised);
+}
+
+.pack-gen-label {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.pack-ref-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.pack-ref-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.pack-warn {
+  color: var(--warn);
+}
+
 /* Keeper view: unexposed module variables (state frames with hidden:true). */
 
 .var-hidden-row {

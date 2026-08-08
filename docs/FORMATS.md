@@ -140,7 +140,8 @@ detection exactly (same regexes, same entry test, same stripping):
 
 `buildPackSourcePlan` lays out `pack.yaml` + `cards/` + `lorebooks/` +
 `skills/<slug>/{SKILL.md,hooks.js}` + `rulepacks/*.yaml` (+ optional
-`ui/panels.yaml` and its files), mirroring `core/pack.py`'s **v2 author
+`ui/panels.yaml` and its files, and the M19 `ui/presentation.yaml` kit with
+its `assets/` media), mirroring `core/pack.py`'s **v2 author
 manifest** schema:
 
 - localized `name`/`description` (`{en, zh}`), `authors`, `license`, and an
@@ -169,3 +170,44 @@ success, `{"ok": false, "error"}` on failure — while the human lines
 trust card natively from that object (content counts, detected world-card
 count, hooks/EJS/rules-script flags, Stage Director subjects and the
 imagegen veto) and surfaces a failure's `error` prominently.
+
+## 5. Presentation kit — `ui/presentation.yaml` (M19, 演出资料包)
+
+The Stage Director's entire creative brief, authored as data and gated on its
+own existence: the Director stages beats **only** for rooms whose module ships
+a kit (kit-gating). The wizard's "Presentation" step edits this file as forms;
+the schema authority is the engine's `core/presentation.py` and the build
+re-parses it (`core/pack.py::_validate_pack_presentation`, at most one kit per
+pack, `.yaml` only). `contents.presentation: [ui/presentation.yaml]` declares
+it; every ref/cue file lives under `assets/` and MUST sit in the manifest
+`assets:` block (`core/pack.py::_enforce_kit_assets` — a ref must sniff as an
+image, a cue asset as audio).
+
+```yaml
+version: 1 # required, must be 1
+generation:
+  allow # allow | pack_only — pack_only is the 宁缺毋滥
+  # author veto: pack art only, no config overrides
+style: # optional; carried on EVERY image request
+  keywords: { en: "ink wash, muted indigo", zh: "水墨, 靛青" } # ≤400 chars/locale
+  banned: [text overlays, modern clothing] # ≤24 entries, ≤400 chars each
+subjects: # ≤64; id is a slug ^[a-z0-9][a-z0-9-]{0,63}$
+  - id: gu-wantang
+    kind: npc # npc | location | item
+    name: { en: Gu Wantang, zh: 顾晚棠 } # ≥1 locale, ≤400 chars each
+    ref:
+      assets/gu-wantang.png # OPTIONAL per schema — but no ref →
+      # no portrait (ref-mandatory doctrine)
+    prompt: "a woman in her thirties, plain dark coat, wet hair" # ≤1000 chars
+audio: # ≤32 cues; asset is REQUIRED per cue
+  - { id: chao-yong, layer: bgm, asset: assets/chao-yong.mp3, title: 潮涌 }
+    # layer: bgm | ambience | sfx; title ≤400 chars
+```
+
+Doctrine (docs/specs/M19 in the engine repo): **ref-mandatory** — a subject
+without `ref` is nameable in captions but never generated; the ref + style
+keywords ride every image request. **宁缺毋滥** — `generation: pack_only` is
+the author's veto. **慢菜先备** (pre-generation) is a runtime concern; the kit
+only has to make subjects nameable. The trust card discloses the subject count
+(`trust.presentation`) and whether generation is licensed in practice
+(`trust.imagegen` = `allow` AND ≥1 subject ships a ref).

@@ -33,8 +33,10 @@ import { PACK_METADATA_SYSTEM } from "../ai/prompts"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { draftToPackMetadata } from "../ai/schemas"
 import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
-import { buildPackSourcePlan } from "../split/packSource"
+import { buildPackSourcePlan, presentationSummary } from "../split/packSource"
+import PresentationStage from "./PresentationStage"
 import PromoteTable from "../split/PromoteTable"
+import type { Issue } from "../model"
 
 function ItemRow({ item }: { item: PackItem }) {
   const { t } = useTranslation()
@@ -348,7 +350,13 @@ export default function PackWizard() {
   const writeSource = async () => {
     if (store.outputDir === null) return
     setError(null)
-    const draft = buildDraftFromState(store.items, store.metadata, store.panels, store.manualSkills)
+    const draft = buildDraftFromState(
+      store.items,
+      store.metadata,
+      store.panels,
+      store.manualSkills,
+      store.presentation,
+    )
     const plan = buildPackSourcePlan(draft)
     const root = `${store.outputDir}/${plan.dirName}`
     try {
@@ -440,14 +448,28 @@ export default function PackWizard() {
     }
   }
 
-  const issues = packValidationIssues(store.items, store.metadata, store.panels, store.manualSkills)
+  const issues = packValidationIssues(
+    store.items,
+    store.metadata,
+    store.panels,
+    store.manualSkills,
+    store.presentation,
+  )
+  // Kit issues live on the presentation step (every kit key shares the
+  // packPresentation prefix; kit-raised path collisions are tagged `from`) —
+  // the metadata step only gates on its own fields, the build gates on ALL.
+  const isKitIssue = (issue: Issue) =>
+    issue.key.startsWith("packPresentation") || issue.params?.from === "presentation"
+  const kitIssues = issues.filter(isKitIssue)
+  const otherIssues = issues.filter((issue) => !isKitIssue(issue))
   const stepIndex = PACK_STEPS.indexOf(store.step)
   const worldCards = store.items.filter((item) => item.kind === "card" && item.cardKind === "world")
   const canNext: Record<PackStep, boolean> = {
     input: store.items.length > 0,
     review: store.items.length > 0,
     promote: true,
-    metadata: issues.length === 0,
+    metadata: otherIssues.length === 0,
+    presentation: kitIssues.length === 0,
     build: false,
   }
 
@@ -770,9 +792,9 @@ export default function PackWizard() {
             </button>
           </section>
 
-          {issues.length > 0 ? (
+          {otherIssues.length > 0 ? (
             <ul className="issue-list">
-              {issues.map((issue, index) => (
+              {otherIssues.map((issue, index) => (
                 <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params)}</li>
               ))}
             </ul>
@@ -784,9 +806,32 @@ export default function PackWizard() {
         </div>
       ) : null}
 
+      {store.step === "presentation" ? <PresentationStage issues={kitIssues} /> : null}
+
       {store.step === "build" ? (
         <div className="pack-panel">
           <h3>{t("studio.pack.writeTitle")}</h3>
+          {store.presentation !== null ? (
+            // The review the author gets right before the engine speaks: what
+            // the kit stages, and what the trust card will disclose.
+            <p className="studio-hint">
+              {t("studio.pack.presentation.buildReview", {
+                subjects: presentationSummary(store.presentation).subjects,
+                withRefs: presentationSummary(store.presentation).withRefs,
+                audio: presentationSummary(store.presentation).audio,
+                mode: t(
+                  presentationSummary(store.presentation).mode === "allow"
+                    ? "studio.pack.presentation.modeAllow"
+                    : "studio.pack.presentation.modePackOnly",
+                ),
+              })}
+              {` · ${t(
+                presentationSummary(store.presentation).imagegen
+                  ? "studio.pack.presentation.trustImagegen"
+                  : "studio.pack.presentation.trustNoImagegen",
+              )}`}
+            </p>
+          ) : null}
           <div className="dialog-row">
             <button type="button" className="ghost-button" onClick={() => void chooseOutputDir()}>
               {t("studio.pack.chooseDir")}

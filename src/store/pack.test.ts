@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import { buildDraftFromState, classifyJson, initvarLeaves, packExposeLines, usePackStore } from "./pack"
+import {
+  buildDraftFromState,
+  classifyJson,
+  initvarLeaves,
+  packExposeLines,
+  packValidationIssues,
+  usePackStore,
+} from "./pack"
 
 const encoder = new TextEncoder()
 
@@ -184,5 +191,109 @@ describe("pack store pipeline", () => {
       rulepackId: "",
     })
     expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64 }])
+  })
+})
+
+describe("presentation kit (M19) store actions", () => {
+  beforeEach(reset)
+
+  const metadata = {
+    id: "stagekit",
+    version: "0.1.0",
+    nameEn: "Stage Kit",
+    nameZh: "演出资料包",
+    descriptionEn: "d",
+    descriptionZh: "描述",
+    authors: "tests",
+    license: "MIT",
+    rulepackPatch: "",
+    rulepackId: "",
+  }
+
+  it("opts in explicitly (null by default), and addPresentation is idempotent", () => {
+    expect(usePackStore.getState().presentation).toBeNull()
+    usePackStore.getState().addPresentation()
+    const kit = usePackStore.getState().presentation
+    expect(kit).toEqual({
+      generation: "allow",
+      keywordsEn: "",
+      keywordsZh: "",
+      bannedText: "",
+      subjects: [],
+      audio: [],
+    })
+    usePackStore.getState().updatePresentation({ generation: "pack_only" })
+    usePackStore.getState().addPresentation()
+    // A second add must NOT reset the author's veto.
+    expect(usePackStore.getState().presentation?.generation).toBe("pack_only")
+  })
+
+  it("edits subjects: upload names the ref like an asset item, clear removes both halves", () => {
+    usePackStore.getState().addPresentation()
+    usePackStore.getState().addPresentationSubject()
+    const subject = usePackStore.getState().presentation!.subjects[0]
+    expect(subject.kind).toBe("npc")
+
+    usePackStore.getState().updatePresentationSubject(subject.uid, { id: "gu-wantang", nameZh: "顾晚棠" })
+    usePackStore.getState().setPresentationSubjectRef(subject.uid, {
+      name: "Gu Wantang.PNG",
+      bytes: encoder.encode("png-bytes"),
+      path: null,
+    })
+    const withRef = usePackStore.getState().presentation!.subjects[0]
+    expect(withRef.refFileName).toBe("Gu_Wantang.png")
+    expect(withRef.refBase64).not.toBe("")
+
+    usePackStore.getState().clearPresentationSubjectRef(subject.uid)
+    const cleared = usePackStore.getState().presentation!.subjects[0]
+    expect(cleared.refFileName).toBe("")
+    expect(cleared.refBase64).toBe("")
+
+    usePackStore.getState().removePresentationSubject(subject.uid)
+    expect(usePackStore.getState().presentation!.subjects).toEqual([])
+  })
+
+  it("edits audio cues: asset upload/remove and per-cue updates", () => {
+    usePackStore.getState().addPresentation()
+    usePackStore.getState().addPresentationCue()
+    const cue = usePackStore.getState().presentation!.audio[0]
+    expect(cue.layer).toBe("bgm")
+
+    usePackStore.getState().updatePresentationCue(cue.uid, { id: "chao-yong", title: "潮涌" })
+    usePackStore.getState().setPresentationCueAsset(cue.uid, {
+      name: "潮涌 Theme.MP3",
+      bytes: encoder.encode("mp3-bytes"),
+      path: null,
+    })
+    const withAsset = usePackStore.getState().presentation!.audio[0]
+    expect(withAsset.assetFileName).toBe("潮涌_Theme.mp3")
+
+    usePackStore.getState().clearPresentationCueAsset(cue.uid)
+    expect(usePackStore.getState().presentation!.audio[0].assetBase64).toBe("")
+    usePackStore.getState().removePresentationCue(cue.uid)
+    expect(usePackStore.getState().presentation!.audio).toEqual([])
+  })
+
+  it("carries the kit into the draft and its issues carry uid/field for inline display", () => {
+    usePackStore.getState().addPresentation()
+    usePackStore.getState().addPresentationSubject()
+    const subject = usePackStore.getState().presentation!.subjects[0]
+    usePackStore.getState().updatePresentationSubject(subject.uid, { id: "Bad ID" })
+
+    const kit = usePackStore.getState().presentation!
+    const draft = buildDraftFromState([], metadata, null, [], kit)
+    expect(draft.presentation).toBe(kit)
+
+    const issues = packValidationIssues([], metadata, null, [], kit)
+    const idIssue = issues.find((issue) => issue.key === "packPresentationSubjectInvalid")
+    expect(idIssue?.params?.uid).toBe(subject.uid)
+    expect(idIssue?.params?.field).toBe("id")
+    expect(idIssue?.params?.subject).toBe("Bad ID")
+  })
+
+  it("reset drops the kit", () => {
+    usePackStore.getState().addPresentation()
+    usePackStore.getState().reset()
+    expect(usePackStore.getState().presentation).toBeNull()
   })
 })
