@@ -113,12 +113,14 @@ describe("projectStateForPanel", () => {
         { id: "fear", label: "恐慌", kind: "number", value: 4 },
         { id: "secret", label: "暗线", kind: "number", value: 1, hidden: true },
       ],
+      pregens: [{ name: "林晚", claimed_by: "" }],
       reset: true,
     } as unknown as StateFrame
     const snapshot = projectStateForPanel(frame)
     expect(snapshot?.variables.map((v) => v.id)).toEqual(["fear"])
     expect(snapshot?.clock).toEqual({ time: "23:10" })
     expect(snapshot?.online).toBe(3)
+    expect(snapshot?.pregens).toEqual([{ name: "林晚", claimed_by: "" }])
     expect(snapshot && "reset" in snapshot).toBe(false)
     expect(projectStateForPanel(null)).toBeNull()
   })

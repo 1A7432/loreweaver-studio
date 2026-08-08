@@ -17,6 +17,7 @@ import type {
   PanelIntentFrame,
   PanelIntentKind,
   PartyMember,
+  PregenEntry,
   SceneState,
   StateFrame,
   UsageState,
@@ -46,6 +47,7 @@ export interface PanelStateSnapshot {
   initiative: InitiativeEntry[]
   online: number
   usage?: UsageState
+  pregens?: PregenEntry[]
 }
 
 export function projectStateForPanel(frame: StateFrame | null): PanelStateSnapshot | null {
@@ -59,6 +61,7 @@ export function projectStateForPanel(frame: StateFrame | null): PanelStateSnapsh
     initiative: frame.initiative,
     online: frame.online,
     usage: frame.usage,
+    pregens: frame.pregens,
   }
 }
 
