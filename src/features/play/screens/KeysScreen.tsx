@@ -1,13 +1,15 @@
 // Rooms & invites — the TUI KeeperKeys screen's core loop: list every key,
 // mint a new invite (the cleartext arrives exactly ONCE and is shown with a
 // copy button), tweak a key's role inline, delete. Room-level operations
-// (export/import/reset) stay TUI/CLI-side for now.
+// (backup / restore / reset / delete, and the server's self-update) live in
+// `RoomLifecycle` below the roster.
 
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { PlayerRole } from "@loreweaver/protocol"
 import { useAdminStore } from "../../../store/admin"
 import { useConnectionStore } from "../../../store/connection"
+import RoomLifecycle from "./RoomLifecycle"
 import ScreenShell from "./ScreenShell"
 
 export default function KeysScreen({ onBack }: { onBack: () => void }) {
@@ -114,6 +116,8 @@ export default function KeysScreen({ onBack }: { onBack: () => void }) {
         </tbody>
       </table>
       {keys.length === 0 ? <p className="placeholder">{t("play.keys.empty")}</p> : null}
+
+      <RoomLifecycle />
     </ScreenShell>
   )
 }

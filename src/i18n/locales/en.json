@@ -165,6 +165,56 @@
         "phosphor": "Phosphor",
         "paperwhite": "Paperwhite"
       }
+    },
+    "rooms": {
+      "title": "Room lifecycle",
+      "hint": "Backup, restore, reset and delete for “{{room}}” — the room this connection is bound to. Every destructive action asks you to type the room's name first.",
+      "typeName": "Type “{{room}}” to confirm",
+      "dismiss": "Dismiss",
+      "path": "Server-side path",
+      "pathServerDefault": "(leave empty — the server chooses, under room_backups/)",
+      "backup": "Back up the room",
+      "backupHint": "Writes a backup JSON on the SERVER's filesystem, not yours. Everything below can be undone from one of these.",
+      "export": "Write a backup",
+      "restore": "Restore a backup",
+      "restoreHint": "Reads a backup JSON off the server's filesystem and restores it. Give a room name to remap the snapshot into a different room before restoring.",
+      "restoreConfirm": "Restore",
+      "remapRoom": "Restore into room",
+      "reset": "Reset the campaign",
+      "resetKeepsHint": "Keys, channel and keeper bindings, live connections and room settings (language, house rules, enabled skills) all survive — nobody is evicted and no backup is taken. Back up first if you want one.",
+      "resetHint": {
+        "story": "Clears the story and progress. Characters, module, lore and media stay.",
+        "chars": "Clears the story AND rolls new characters. The module stays.",
+        "all": "Erases everything: characters, module, lore and media."
+      },
+      "resetConfirm": "Reset",
+      "scope": "How much",
+      "scopes": {
+        "story": "Story only",
+        "chars": "Story and characters",
+        "all": "Everything"
+      },
+      "deleteData": "Delete the room's data",
+      "deleteDataHint": "Deletes this room's access keys, its room-scoped state, and its document and worldbook vectors.",
+      "deleteDataConfirm": "Delete the data",
+      "backupFirst": "Back up before deleting (deletion only proceeds if the backup write succeeds)",
+      "noBackupWarning": "With this off there is nothing to restore from afterwards.",
+      "deleteKeys": "Delete the room's keys",
+      "deleteKeysHint": "Deletes every access key bound to this room. The room's DATA is left untouched — nobody can get back in until you mint a new key, and you will be disconnected too.",
+      "deleteKeysConfirm": "Delete the keys",
+      "done": {
+        "export": "Backed up “{{room}}” to {{path}} — {{keys}} key(s), {{rows}} state row(s), {{points}} vector(s).",
+        "import": "Restored “{{room}}” — {{keys}} key(s), {{rows}} state row(s), {{points}} vector(s).",
+        "delete": "Deleted “{{room}}” — {{keys}} key(s), {{rows}} state row(s), {{points}} vector(s), {{media}} media file(s).",
+        "reset": "Reset “{{room}}” ({{scope}}) — {{rows}} state row(s), {{points}} vector(s) cleared."
+      },
+      "selfUpdate": "Update the server",
+      "selfUpdateHint": "Runs the command the server's OPERATOR configured (never anything sent from here) and re-execs into the new code. Expect a brief disconnect and reconnect.",
+      "selfUpdateUnavailable": "This server advertises no update command, so there is nothing to run.",
+      "selfUpdateConfirm": "Run the server's own update command and restart it?",
+      "selfUpdateRun": "Update and restart",
+      "updateRestarting": "The server is restarting into the updated code. The connection will drop and come back.",
+      "updateFailed": "The update command failed: {{output}}"
     }
   },
   "studio": {

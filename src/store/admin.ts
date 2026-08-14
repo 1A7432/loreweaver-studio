@@ -10,8 +10,11 @@ import type {
   AdminGeneratedFrame,
   AdminKeyInfo,
   AdminKeyPurpose,
+  AdminResetScope,
+  AdminRoomOpFrame,
   AdminRuleInfo,
   AdminSkillInfo,
+  AdminUpdateFrame,
   MintedKey,
   PlayerRole,
   ServerFrame,
@@ -30,6 +33,13 @@ interface AdminState {
   skills: AdminSkillInfo[]
   rules: AdminRuleInfo[]
   generated: AdminGeneratedFrame | null
+  /** The last room lifecycle result (export/import/delete/reset). It carries
+   * the counts the operator needs to believe the operation happened — and, for
+   * an export, the server-side path the backup landed at. */
+  roomOp: AdminRoomOpFrame | null
+  /** The last self-update reply. `restarting` means the server is re-execing,
+   * so a disconnect is expected and is NOT a failure. */
+  serverUpdate: AdminUpdateFrame | null
   /** Last admin_error, cleared by the next successful reply or request. */
   lastError: string | null
   busy: boolean
@@ -46,7 +56,25 @@ interface AdminState {
   enableSkill: (id: string, on: boolean, locale?: string) => void
   listRules: () => void
   generateModule: (description: string) => void
+  /** Write a room backup JSON server-side. Omitting `path` lets the server
+   * choose, under `<data_dir>/room_backups/`. */
+  exportRoom: (room: string, path?: string) => void
+  /** Restore a server-side backup. `room` remaps the snapshot before restoring. */
+  importRoom: (path: string, room?: string) => void
+  /** Restart a campaign IN PLACE: keys, bindings, live connections and room
+   * settings all survive, and no backup is taken (that is
+   * `deleteRoomData`'s job). Scope decides how much of the campaign goes. */
+  resetRoom: (room: string, scope: AdminResetScope) => void
+  /** Delete every access key bound to a room. Room DATA is left untouched. */
+  deleteRoom: (room: string) => void
+  /** Delete a room's keys, KV state and vectors. `backup` defaults true, and
+   * with it on the deletion only proceeds after the backup write succeeds. */
+  deleteRoomData: (room: string, backup: boolean, path?: string) => void
+  /** Ask the server to run its OWN operator-configured update command and
+   * re-exec. Nothing the client supplies is executed. */
+  updateServer: () => void
   clearMinted: () => void
+  clearRoomOp: () => void
   reset: () => void
 }
 
@@ -66,6 +94,8 @@ const EMPTY = {
   skills: [],
   rules: [],
   generated: null,
+  roomOp: null,
+  serverUpdate: null,
   lastError: null,
   busy: false,
 } satisfies Partial<AdminState>
@@ -94,10 +124,10 @@ export const useAdminStore = create<AdminState>((set) => ({
         set({ generated: frame, busy: false })
         return true
       case "admin_room_op":
-        set({ busy: false })
+        set({ roomOp: frame, busy: false, lastError: null })
         return true
       case "admin_update":
-        set({ busy: false })
+        set({ serverUpdate: frame, busy: false })
         return true
       case "admin_error":
         set({ lastError: frame.message ?? frame.code, busy: false })
@@ -139,6 +169,14 @@ export const useAdminStore = create<AdminState>((set) => ({
     send({ type: "admin_enable_skill", id, on, ...(locale ? { locale } : {}) }, set),
   listRules: () => send({ type: "admin_list_rules" }, set),
   generateModule: (description) => send({ type: "admin_generate", kind: "module", description }, set),
+  exportRoom: (room, path) => send({ type: "admin_export_room", room, ...(path ? { path } : {}) }, set),
+  importRoom: (path, room) => send({ type: "admin_import_room", path, ...(room ? { room } : {}) }, set),
+  resetRoom: (room, scope) => send({ type: "admin_reset_room", room, scope }, set),
+  deleteRoom: (room) => send({ type: "admin_delete_room", room }, set),
+  deleteRoomData: (room, backup, path) =>
+    send({ type: "admin_delete_room_data", room, backup, ...(path ? { path } : {}) }, set),
+  updateServer: () => send({ type: "admin_update_server" }, set),
   clearMinted: () => set({ minted: null }),
+  clearRoomOp: () => set({ roomOp: null, serverUpdate: null }),
   reset: () => set({ ...EMPTY }),
 }))

@@ -165,6 +165,56 @@
         "phosphor": "磷光",
         "paperwhite": "纸白"
       }
+    },
+    "rooms": {
+      "title": "房间生命周期",
+      "hint": "对「{{room}}」——本连接所绑定的房间——进行备份、恢复、重置与删除。每一项破坏性操作都需要你先键入房间名。",
+      "typeName": "键入「{{room}}」以确认",
+      "dismiss": "关闭",
+      "path": "服务器端路径",
+      "pathServerDefault": "（留空——由服务器决定，放在 room_backups/ 下）",
+      "backup": "备份房间",
+      "backupHint": "会在「服务器」的文件系统上写出一份备份 JSON，而不是你的。下面的一切都可以从这样一份备份中恢复。",
+      "export": "写出备份",
+      "restore": "恢复备份",
+      "restoreHint": "从服务器文件系统读取一份备份 JSON 并恢复。填写房间名可在恢复前把快照重映射到另一个房间。",
+      "restoreConfirm": "恢复",
+      "remapRoom": "恢复到房间",
+      "reset": "重置战役",
+      "resetKeepsHint": "密钥、频道与 keeper 绑定、在线连接以及房间设置（语言、家规、已启用技能）全部保留——不会踢出任何人，也不会自动备份。想要备份请先自行备份。",
+      "resetHint": {
+        "story": "清空剧情与进度。角色、模组、世界书与媒体保留。",
+        "chars": "清空剧情，并重新生成角色。模组保留。",
+        "all": "全部抹除：角色、模组、世界书与媒体。"
+      },
+      "resetConfirm": "重置",
+      "scope": "范围",
+      "scopes": {
+        "story": "仅剧情",
+        "chars": "剧情与角色",
+        "all": "全部"
+      },
+      "deleteData": "删除房间数据",
+      "deleteDataHint": "删除本房间的访问密钥、房间级状态，以及文档与世界书向量。",
+      "deleteDataConfirm": "删除数据",
+      "backupFirst": "删除前先备份（备份写入成功后才会真正删除）",
+      "noBackupWarning": "关闭后，事后将无处可恢复。",
+      "deleteKeys": "删除房间密钥",
+      "deleteKeysHint": "删除绑定到本房间的所有访问密钥。房间「数据」不受影响——在你新铸一把密钥之前没人能再进来，包括你自己也会掉线。",
+      "deleteKeysConfirm": "删除密钥",
+      "done": {
+        "export": "已把「{{room}}」备份到 {{path}}——{{keys}} 把密钥、{{rows}} 行状态、{{points}} 个向量。",
+        "import": "已恢复「{{room}}」——{{keys}} 把密钥、{{rows}} 行状态、{{points}} 个向量。",
+        "delete": "已删除「{{room}}」——{{keys}} 把密钥、{{rows}} 行状态、{{points}} 个向量、{{media}} 个媒体文件。",
+        "reset": "已重置「{{room}}」（{{scope}}）——清除 {{rows}} 行状态、{{points}} 个向量。"
+      },
+      "selfUpdate": "更新服务器",
+      "selfUpdateHint": "运行服务器「运维方」配置的那条命令（绝不会执行这里发过去的任何东西），然后 re-exec 进入新代码。预期会短暂掉线并自动重连。",
+      "selfUpdateUnavailable": "这台服务器没有公布更新命令，所以无可运行。",
+      "selfUpdateConfirm": "运行服务器自带的更新命令并重启它？",
+      "selfUpdateRun": "更新并重启",
+      "updateRestarting": "服务器正在重启进入更新后的代码。连接会断开并自动恢复。",
+      "updateFailed": "更新命令失败：{{output}}"
     }
   },
   "studio": {

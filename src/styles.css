@@ -3083,3 +3083,30 @@ body {
   padding: 0;
   border: 0;
 }
+
+/* --- room lifecycle ------------------------------------------------------ */
+
+.play-room-lifecycle {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.play-room-lifecycle h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.room-op,
+.room-danger {
+  margin: 14px 0;
+  padding: 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+/* Destructive: the border is the tell, and it never turns off. */
+.room-danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border) 55%);
+}
