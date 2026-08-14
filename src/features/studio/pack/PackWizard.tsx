@@ -112,6 +112,16 @@ function ItemRow({ item }: { item: PackItem }) {
       {item.kind === "lorebook" ? (
         <p className="studio-hint">{t("studio.pack.lorebookEntries", { n: item.entryCount })}</p>
       ) : null}
+      {item.initvarProblems.length > 0 ? (
+        // The card imported; these blocks contributed no variables.
+        <ul className="issue-list">
+          {item.initvarProblems.map((problem, index) => (
+            <li key={index} className="split-error">
+              {t(`studio.${problem.key}`, problem.params)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <label className="field">
         {t("studio.pack.fileName")}
@@ -614,7 +624,7 @@ export default function PackWizard() {
       ) : null}
       {store.loadError !== null ? (
         <p className="studio-notice split-error" role="alert">
-          {t("studio.split.parseFailed", { detail: store.loadError })}
+          {t(`studio.${store.loadError.key}`, store.loadError.params)}
         </p>
       ) : null}
 

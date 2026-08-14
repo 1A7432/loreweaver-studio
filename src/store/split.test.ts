@@ -15,6 +15,7 @@ function session(name: string, body: string): SplitSession {
     split: { hooks: [] } as unknown as SplitSession["split"],
     leaves: [],
     truncated: false,
+    initvarProblems: [],
     drafts: [],
   }
 }

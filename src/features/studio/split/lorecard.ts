@@ -20,7 +20,7 @@
 // Junk rows are skipped and reported as warnings, never fatal — same tolerance
 // as the engine. Structural garbage (wrong format tag / version) throws.
 
-import { asText, isRecord, type StCharacterCard } from "./charcard"
+import { asText, CardParseError, isRecord, type StCharacterCard } from "./charcard"
 import {
   isValidVarId,
   MAX_PREGENS,
@@ -59,7 +59,7 @@ export function looksLikeLorecard(parsed: unknown): boolean {
 function requireVersion(raw: Record<string, unknown>): void {
   const version = raw.format_version
   if (typeof version !== "number" || !SUPPORTED_FORMAT_VERSIONS.has(version)) {
-    throw new Error(`unsupported lorecard format_version ${String(version)}`)
+    throw new CardParseError("unsupportedLorecardVersion", String(version))
   }
 }
 
@@ -255,7 +255,7 @@ export function countVariableSpecs(raw: Record<string, unknown>): number {
 /** Native bundle → a character-card view for the pack/split machinery. Throws
  * on a wrong format tag or unsupported version; skips junk rows with warnings. */
 export function lorecardToCard(raw: Record<string, unknown>): ParsedLorecard {
-  if (!looksLikeLorecard(raw)) throw new Error(`not a Loreweaver native card (format tag missing)`)
+  if (!looksLikeLorecard(raw)) throw new CardParseError("notALorecard")
   requireVersion(raw)
   const warnings: string[] = []
   const worldbook = Array.isArray(raw.worldbook) ? raw.worldbook : []
@@ -396,7 +396,7 @@ function pregenToForge(raw: unknown, index: number, warnings: string[]): ForgePr
 /** Native bundle → a ForgeProject, losslessly (the inverse of
  * `exportNativeBundle`). Throws on structural garbage; junk rows warn. */
 export function lorecardToProject(raw: Record<string, unknown>): ImportedLorecard {
-  if (!looksLikeLorecard(raw)) throw new Error(`not a Loreweaver native card (format tag missing)`)
+  if (!looksLikeLorecard(raw)) throw new CardParseError("notALorecard")
   requireVersion(raw)
   const warnings: string[] = []
   const project = newProject(asText(raw.name).trim() || "Imported card")

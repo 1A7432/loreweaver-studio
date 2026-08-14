@@ -132,15 +132,18 @@ describe("lorecard round trip", () => {
       worldbook: [{ title: "井", content: "别碰。", keys: ["well"] }],
       extensions: { loreweaver_hooks: ["on('turn_start', f)"] },
     }
-    expect(() => lorecardToCard(v0)).toThrow(/format_version/)
-    expect(() => lorecardToProject(v0)).toThrow(/format_version/)
+    // A typed key, not prose: the UI renders it as a full sentence naming the
+    // version found and the one this studio reads (`studio.importErr.*`).
+    expect(() => lorecardToCard(v0)).toThrow(/unsupportedLorecardVersion: 0/)
+    expect(() => lorecardToProject(v0)).toThrow(/unsupportedLorecardVersion: 0/)
   })
 
   it("refuses a wrong format tag and an unsupported version", () => {
     expect(looksLikeLorecard({ format: "someone.else" })).toBe(false)
     expect(() => lorecardToProject({ format: "loreweaver.card", format_version: 99 })).toThrow(
-      /format_version/,
+      /unsupportedLorecardVersion: 99/,
     )
+    expect(() => lorecardToProject({ name: "no tag" })).toThrow(/notALorecard/)
   })
 })
 

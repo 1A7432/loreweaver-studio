@@ -22,6 +22,7 @@ import type { SplitCardResult } from "../features/studio/split/cardSplit"
 import type { StCharacterCard } from "../features/studio/split/charcard"
 import type { MvuLeaf } from "../features/studio/split/mvu"
 import type { PromotionDraft } from "../features/studio/split/promote"
+import type { Issue } from "../features/studio/model"
 
 /** What is remembered about the opened file itself. */
 export interface SplitFileRef {
@@ -46,6 +47,8 @@ export interface SplitSession {
   split: SplitCardResult
   leaves: MvuLeaf[]
   truncated: boolean
+  /** `[InitVar]` blocks that did not parse — the card still opened. */
+  initvarProblems: Issue[]
   drafts: PromotionDraft[]
 }
 

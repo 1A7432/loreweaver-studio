@@ -1029,6 +1029,25 @@
       "safeHint": "将剥离 {{n}} 条仅 keeper 可见的条目。SillyTavern 卡里的一切对玩家都是可见的，所以这一版才是可以直接发出去的。",
       "releaseHint": "将保留 {{n}} 条仅 keeper 可见的条目。SillyTavern 卡没有隐藏的一半——任何打开这个文件的人都读得到。",
       "noSecrets": "这张卡没有仅 keeper 可见的条目，两种风味产出的文件相同。"
+    },
+    "importErr": {
+      "notAnObject": "“{{file}}”不是一张卡：SillyTavern 卡是一个 JSON 对象（v2/v3 把字段包在 `data` 里），而这个文件的顶层不是。",
+      "unsupportedFormat": "“{{file}}”无法作为卡片读取。期望的是 SillyTavern JSON（v2/v3）、Loreweaver 原生包（*.lorecard.json），或内嵌卡片的 PNG——这些字节都不是。",
+      "notJson": "“{{file}}”不是合法 JSON，无从读取任何内容。如果它来自 PNG 导出，请直接拖入那个 .png。",
+      "notALorecard": "“{{file}}”是 JSON，但不是 Loreweaver 原生包：缺少 `format: loreweaver.card` 标记。SillyTavern 卡请走拆卡工作台。",
+      "unsupportedLorecardVersion": "“{{file}}”声明的原生包 format_version 是 {{detail}}；本工作室读取的是 v1。",
+      "pngWithoutCard": "“{{file}}”是合法 PNG，但没有内嵌卡片：承载卡片的 `chara` / `ccv3` 文本块不存在。多半是被图像编辑器另存过——那会丢掉这些块。",
+      "invalidEmbeddedPayload": "“{{file}}”带有内嵌卡片块，但其内容不是可读的 base64 JSON——块已损坏，或由不兼容的工具写入。",
+      "decompressTooLarge": "“{{file}}”解压后超过本工作室允许的上限。这么大的卡要么已损坏，要么怀有恶意。",
+      "fileTooLarge": "“{{file}}”超过了卡片体积上限。",
+      "unknown": "“{{file}}”导入失败：{{detail}}",
+      "initvar": {
+        "syntax": "“{{where}}”：[InitVar] 块无法解析——{{detail}} 未从中取得任何变量。",
+        "notAMapping": "“{{where}}”：[InitVar] 块能解析，但顶层不是变量映射。未从中取得任何变量。",
+        "alias": "“{{where}}”：[InitVar] 块使用了 YAML 锚点/别名，这里一律拒绝而不展开。未从中取得任何变量。",
+        "empty": "“{{where}}”：[InitVar] 块是空的。",
+        "syntaxAt": "“{{where}}”：[InitVar] 块在第 {{line}} 行无法解析——{{detail}} 未从中取得任何变量。"
+      }
     }
   }
 }

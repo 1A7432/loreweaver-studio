@@ -23,6 +23,7 @@ import {
   type WorldPayloads,
 } from "../features/studio/split/cardSplit"
 import { asText, isRecord } from "../features/studio/split/charcard"
+import { describeImportFailure, describeInitvarFailure } from "../features/studio/importErrors"
 import { flattenLeaves, parseInitvar, type MvuLeaf } from "../features/studio/split/mvu"
 import { promoteLeaves, suggestExposePrefixes, type PromotionDraft } from "../features/studio/split/promote"
 import {
@@ -70,6 +71,8 @@ export interface PackItem {
   hooks: string[]
   leaves: MvuLeaf[]
   leavesTruncated: boolean
+  /** `[InitVar]` blocks that did not parse — the card still imported. */
+  initvarProblems: Issue[]
   drafts: PromotionDraft[]
   /** Extract hooks into a `skills/<slug>/` directory (JSON cards only). */
   extractSkill: boolean
@@ -149,11 +152,18 @@ function countLorebookEntries(parsed: unknown): number {
 }
 
 /** Parse InitVar entries the engine way (decorators off, JSON5-lite parse,
- * later entries fill only missing keys) and flatten for promotion. */
+ * later entries fill only missing keys) and flatten for promotion.
+ *
+ * `problems` reports the blocks that did NOT parse. The pipeline deliberately
+ * carries on without them — one broken block should not cost the author the
+ * whole card — but silently dropping a variable tree is how an author ends up
+ * wondering where their meters went. */
 export function initvarLeaves(entries: Record<string, unknown>[]): {
   leaves: MvuLeaf[]
   truncated: boolean
+  problems: Issue[]
 } {
+  const problems: Issue[] = []
   const merged: Record<string, unknown> = {}
   const mergeMissing = (target: Record<string, unknown>, incoming: Record<string, unknown>) => {
     for (const [key, value] of Object.entries(incoming)) {
@@ -163,12 +173,18 @@ export function initvarLeaves(entries: Record<string, unknown>[]): {
       }
     }
   }
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const body = splitDecorators(asText(entry.content)).body
     const tree = parseInitvar(body)
-    if (tree !== null) mergeMissing(merged, tree)
+    if (tree !== null) {
+      mergeMissing(merged, tree)
+      continue
+    }
+    const where = asText(entry.comment) || `[InitVar] #${index + 1}`
+    const problem = describeInitvarFailure(body, where)
+    if (problem !== null) problems.push(problem)
   }
-  return flattenLeaves(merged)
+  return { ...flattenLeaves(merged), problems }
 }
 
 async function itemFromFile(file: PickedFile): Promise<PackItem> {
@@ -185,6 +201,7 @@ async function itemFromFile(file: PickedFile): Promise<PackItem> {
     hooks: [] as string[],
     leaves: [] as MvuLeaf[],
     leavesTruncated: false,
+    initvarProblems: [] as Issue[],
     drafts: [] as PromotionDraft[],
     extractSkill: false,
     notesEn: "",
@@ -272,7 +289,7 @@ function splitIntoItem(
   fileName: string,
 ): PackItem {
   const split = splitCard(card)
-  const { leaves, truncated } = initvarLeaves(split.initvarEntries)
+  const { leaves, truncated, problems } = initvarLeaves(split.initvarEntries)
   const isWorld = payloadsAny(split.payloads)
   return {
     ...base,
@@ -285,6 +302,7 @@ function splitIntoItem(
     hooks: split.hooks,
     leaves,
     leavesTruncated: truncated,
+    initvarProblems: problems,
     drafts: promoteLeaves(leaves),
   }
 }
@@ -293,7 +311,8 @@ interface PackState {
   step: PackStep
   items: PackItem[]
   metadata: PackMetadataForm
-  loadError: string | null
+  /** Why the last drop failed, as an i18n key + params (never a raw message). */
+  loadError: Issue | null
 
   /** M15 module-UI panels: `ui/panels.yaml` + the panel files it references. */
   panels: PackPanelsDraft | null
@@ -449,12 +468,12 @@ export const usePackStore = create<PackState>()(
 
       addFiles: async (files) => {
         const items: PackItem[] = []
-        let loadError: string | null = null
+        let loadError: Issue | null = null
         for (const file of files) {
           try {
             items.push(await itemFromFile(file))
           } catch (error) {
-            loadError = `${file.name}: ${error instanceof Error ? error.message : String(error)}`
+            loadError = describeImportFailure(error, file.name)
           }
         }
         set((state) => ({ items: [...state.items, ...items], loadError }))

@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next"
 import { saveBinaryFile, saveTextFile } from "../../lib/files"
 import { pickJsonFile, pickPngFile } from "../../lib/native"
 import { useActiveProject, useStudioStore, type StudioTab, type StudioViewName } from "../../store/studio"
-import { isRecord } from "./split/charcard"
+import { CardParseError, isRecord } from "./split/charcard"
 import { looksLikeLorecard, lorecardToProject } from "./split/lorecard"
+import { describeImportFailure } from "./importErrors"
 import AiPanel from "./ai/AiPanel"
 import AiSettingsDialog from "./ai/AiSettingsDialog"
 import PresetManagerDialog from "./ai/PresetManagerDialog"
@@ -94,11 +95,15 @@ export default function StudioView() {
     const file = await pickJsonFile()
     if (file === null) return
     try {
-      const parsed: unknown = JSON.parse(new TextDecoder("utf-8").decode(file.bytes))
-      if (!isRecord(parsed) || !looksLikeLorecard(parsed)) {
-        setNotice(t("studio.importNativeBad"))
-        return
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(new TextDecoder("utf-8").decode(file.bytes))
+      } catch {
+        // "Not JSON at all" is a different problem from "JSON, wrong shape",
+        // and the author fixes each of them differently.
+        throw new CardParseError("notJson")
       }
+      if (!isRecord(parsed) || !looksLikeLorecard(parsed)) throw new CardParseError("notALorecard")
       const { project: imported, warnings } = lorecardToProject(parsed)
       importProject(imported)
       setNotice(
@@ -107,7 +112,8 @@ export default function StudioView() {
           : t("studio.importNativeOk", { name: imported.name }),
       )
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : String(cause))
+      const problem = describeImportFailure(cause, file.name)
+      setNotice(t(`studio.${problem.key}`, problem.params))
     }
   }
 

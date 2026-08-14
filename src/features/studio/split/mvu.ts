@@ -214,6 +214,53 @@ function parseInitvarYaml(text: string): Record<string, unknown> | null {
   return stringifyYamlDates(data) as Record<string, unknown>
 }
 
+/** Why an `[InitVar]` block did not parse, in terms an author can act on.
+ *
+ * `parseInitvar` answers only "did it work", which is the right answer for the
+ * pipeline (a card with one bad block still imports) and a useless one for the
+ * person holding the card. This runs the same two routes and reports what the
+ * second one objected to, with the position when the YAML parser gives one. */
+export type InitvarDiagnosis =
+  | { ok: true }
+  | { ok: false; reason: "empty" | "notAMapping" | "alias" | "syntax"; detail: string; line: number | null }
+
+export function explainInitvar(text: string): InitvarDiagnosis {
+  if (parseInitvar(text) !== null) return { ok: true }
+  if (typeof text !== "string" || !text.trim()) {
+    return { ok: false, reason: "empty", detail: "", line: null }
+  }
+  try {
+    const doc = parseDocument(text, { schema: "yaml-1.1", uniqueKeys: false })
+    const error = doc.errors[0]
+    if (error !== undefined) {
+      return {
+        ok: false,
+        reason: "syntax",
+        detail: error.message,
+        line: error.linePos?.[0]?.line ?? null,
+      }
+    }
+    let hasAlias = false
+    visit(doc, {
+      Alias: () => {
+        hasAlias = true
+        return visit.BREAK
+      },
+    })
+    // Anchors/aliases are refused rather than expanded (untrusted input, and
+    // the engine's loader refuses them too) — so say that, not "syntax error".
+    if (hasAlias) return { ok: false, reason: "alias", detail: "", line: null }
+    return { ok: false, reason: "notAMapping", detail: "", line: null }
+  } catch (cause) {
+    return {
+      ok: false,
+      reason: "syntax",
+      detail: cause instanceof Error ? cause.message : String(cause),
+      line: null,
+    }
+  }
+}
+
 /** Recursively replace auto-typed `Date` leaves with ISO strings; every other node
  * passes through untouched. A date-only stamp (UTC midnight) shortens to `YYYY-MM-DD`. */
 function stringifyYamlDates(node: unknown): unknown {

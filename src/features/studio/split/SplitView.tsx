@@ -13,6 +13,7 @@ import { isTextCard, sessionBytes, sha256Hex, useSplitStore } from "../../../sto
 import { aiFillLabels } from "../ai/labels"
 import { aiReady, useAiStore } from "../ai/provider"
 import { exportFileName, exportNativeBundle } from "../exporters"
+import { describeImportFailure } from "../importErrors"
 import { uid, validateProject } from "../model"
 import { parseCardBytes } from "./charcard"
 import { payloadsAny, splitCard } from "./cardSplit"
@@ -54,9 +55,16 @@ export default function SplitView() {
     try {
       const file = await pickCardFile()
       if (file === null) return
-      const card = await parseCardBytes(file.bytes, file.name)
+      let card
+      try {
+        card = await parseCardBytes(file.bytes, file.name)
+      } catch (cause) {
+        const problem = describeImportFailure(cause, file.name)
+        setError(t(`studio.${problem.key}`, problem.params))
+        return
+      }
       const split = splitCard(card)
-      const { leaves, truncated } = initvarLeaves(split.initvarEntries)
+      const { leaves, truncated, problems } = initvarLeaves(split.initvarEntries)
       setSession({
         file: {
           name: file.name,
@@ -71,6 +79,7 @@ export default function SplitView() {
         split,
         leaves,
         truncated,
+        initvarProblems: problems,
         drafts: promoteLeaves(leaves),
       })
     } catch (cause) {
@@ -155,6 +164,7 @@ export default function SplitView() {
       hooks: session.split.hooks,
       leaves: session.leaves,
       leavesTruncated: session.truncated,
+      initvarProblems: session.initvarProblems,
       drafts: session.drafts,
       extractSkill: false,
       notesEn: exposeLines.length > 0 ? `After world import: ${exposeLines.join(" · ")}` : "",
@@ -174,7 +184,7 @@ export default function SplitView() {
         </button>
         {error !== null ? (
           <p className="studio-notice split-error" role="alert">
-            {t("studio.split.parseFailed", { detail: error })}
+            {error}
           </p>
         ) : null}
       </div>
@@ -291,6 +301,17 @@ export default function SplitView() {
           <p className="studio-hint">{t("studio.split.ejsHint")}</p>
 
           <h3>{t("studio.split.promoteTitle", { n: session.leaves.length })}</h3>
+          {session.initvarProblems.length > 0 ? (
+            // The card still opened; these blocks simply contributed no
+            // variables, which is invisible unless it is said out loud.
+            <ul className="issue-list">
+              {session.initvarProblems.map((problem, index) => (
+                <li key={index} className="split-error">
+                  {t(`studio.${problem.key}`, problem.params)}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <PromoteTable
             drafts={session.drafts}
             truncated={session.truncated}
