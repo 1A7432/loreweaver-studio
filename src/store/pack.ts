@@ -369,6 +369,9 @@ interface PackState {
   /** Parsed `--pack --json` success object (drives the native trust card). */
   packResult: PackBuildSuccess | null
   builtPackPath: string | null
+  /** Where the last install landed. Not the cwd, and worth saying so — every
+   * install path targets the LOCAL SERVER's data dir (`lib/packInstall.ts`). */
+  installedTo: string | null
 
   setStep: (step: PackStep) => void
   addFiles: (files: PickedFile[]) => Promise<void>
@@ -425,6 +428,7 @@ interface PackState {
   setRunResult: (result: EngineRunResult | null) => void
   setPackResult: (result: PackBuildSuccess | null) => void
   setBuiltPackPath: (path: string | null) => void
+  setInstalledTo: (dir: string | null) => void
   reset: () => void
 }
 
@@ -509,6 +513,7 @@ export const usePackStore = create<PackState>()(
       runResult: null,
       packResult: null,
       builtPackPath: null,
+      installedTo: null,
 
       setStep: (step) => set({ step }),
 
@@ -943,6 +948,7 @@ export const usePackStore = create<PackState>()(
           runResult: null,
           packResult: null,
           builtPackPath: null,
+          installedTo: null,
         }),
 
       setOutputDir: (outputDir) => set({ outputDir }),
@@ -954,6 +960,7 @@ export const usePackStore = create<PackState>()(
       setRunResult: (runResult) => set({ runResult }),
       setPackResult: (packResult) => set({ packResult }),
       setBuiltPackPath: (builtPackPath) => set({ builtPackPath }),
+      setInstalledTo: (installedTo) => set({ installedTo }),
 
       reset: () =>
         set({
@@ -972,6 +979,7 @@ export const usePackStore = create<PackState>()(
           runResult: null,
           packResult: null,
           builtPackPath: null,
+          installedTo: null,
           running: false,
           installAfterBuild: false,
         }),

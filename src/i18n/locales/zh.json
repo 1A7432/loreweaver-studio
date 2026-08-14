@@ -1173,7 +1173,10 @@
         "buildUpToHint": "第 1–{{n}} 话会被发布；标记在其后的内容根本不会写进源目录。",
         "versionHint": "约定是次版本号 = 话数，因此这次构建应为 {{suggested}} 而不是 {{version}}。",
         "versionApply": "改用 {{suggested}}"
-      }
+      },
+      "builtPackPlaceholder": "构建出的 .lwpack",
+      "installTargetHint": "这里的每一次安装都会落到 {{dir}}——本地服务器自己的数据目录，因此你刚构建的这个包正是它将要提供的那个。上面那条命令带着同样的覆盖，所以复制粘贴的效果与按钮一致。",
+      "installedTo": "已安装到 {{dir}}"
     },
     "lint": {
       "title": "建议性检查",

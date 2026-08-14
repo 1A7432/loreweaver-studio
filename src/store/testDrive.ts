@@ -5,18 +5,14 @@
 // server-side paths. This store runs that whole sequence, and its phases are
 // the progress the author watches.
 //
-// The one subtlety worth stating loudly: the engine installs a pack under
-// `settings.data_dir` (`TRPG_DATA_DIR`), and the one-click local server runs
-// with its OWN data dir (`~/.loreweaver/data` by default, `host_local.rs`).
-// A plain `--install` from the pack bench therefore lands wherever the studio's
-// environment points — usually the engine checkout — and the local server would
-// never see it. So the install is re-run here with `TRPG_DATA_DIR` overlaid on
-// the server's data dir, and the UI names that directory.
+// Installing goes through `lib/packInstall.ts`, which every install path in the
+// studio shares: the pack lands in the LOCAL SERVER's data dir, because that is
+// the one the app itself will serve from. See that file for why.
 
 import { create } from "zustand"
 import { planTestDrive, readInstalledManifest, type TestDriveMode } from "../features/studio/pack/testDrive"
-import { hostLocalStatus } from "../lib/hostLocal"
-import { readFileByPath, runEngineCli, type EngineCandidate } from "../lib/native"
+import { readFileByPath, type EngineCandidate } from "../lib/native"
+import { installPack } from "../lib/packInstall"
 import { isTauri, transportSend } from "../lib/transport"
 import { useAppStore } from "./app"
 import { useConnectionStore } from "./connection"
@@ -105,17 +101,17 @@ export const useTestDriveStore = create<TestDriveState>()((set) => ({
     set({ ...IDLE, phase: "installing" })
 
     try {
-      // 1. Install into the data dir the LOCAL SERVER reads, whatever the
-      //    studio's own environment says.
-      const status = await hostLocalStatus(useHostLocalStore.getState().homeOverride.trim() || undefined)
-      set({ dataDir: status.dataDir })
-      const install = await runEngineCli(request.candidate, ["--install", request.packPath, "--yes"], {
-        TRPG_DATA_DIR: status.dataDir,
-      })
-      if (install.code !== 0) {
+      // 1. Install into the data dir the LOCAL SERVER reads. The same helper
+      //    every other install path in the studio uses, so the bench button and
+      //    this button can never land a pack in two different places.
+      const homeOverride = useHostLocalStore.getState().homeOverride
+      const install = await installPack(request.candidate, request.packPath, homeOverride)
+      set({ dataDir: install.dataDir })
+      if (install.result.code !== 0) {
         set({
           phase: "error",
-          error: install.stderr.trim() || install.stdout.trim() || "testDrive.err.installFailed",
+          error:
+            install.result.stderr.trim() || install.result.stdout.trim() || "testDrive.err.installFailed",
         })
         return
       }
@@ -123,7 +119,7 @@ export const useTestDriveStore = create<TestDriveState>()((set) => ({
       // 2. Plan from the manifest the install just wrote: it carries the
       //    ENGINE's detected card kinds, and it is the only thing that exists
       //    when the author adopted a source tree rather than dropping files.
-      const manifestPath = `${status.dataDir}/packs/${request.packId}@${request.packVersion}/pack.yaml`
+      const manifestPath = `${install.dataDir}/packs/${request.packId}@${request.packVersion}/pack.yaml`
       let source
       try {
         const manifest = await readFileByPath(manifestPath)

@@ -1173,7 +1173,10 @@
         "buildUpToHint": "Episodes 1–{{n}} ship; anything tagged later is left out of the source tree entirely.",
         "versionHint": "The convention is MINOR = episode, so this build would be {{suggested}} rather than {{version}}.",
         "versionApply": "Use {{suggested}}"
-      }
+      },
+      "builtPackPlaceholder": "the built .lwpack",
+      "installTargetHint": "Every install here lands in {{dir}} — the local server's own data folder, so the pack you just built is the one it will serve. The command above carries the same override, so pasting it does what the button does.",
+      "installedTo": "installed into {{dir}}"
     },
     "lint": {
       "title": "Advisory lint",

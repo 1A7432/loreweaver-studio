@@ -19,7 +19,9 @@ import {
   type EngineCandidate,
   type PickedFile,
 } from "../../../lib/native"
+import { formatInstallCommand, installDataDir, installPack } from "../../../lib/packInstall"
 import { isTauri } from "../../../lib/transport"
+import { useHostLocalStore } from "../../../store/hostLocal"
 import {
   buildDraftFromState,
   packExposeLines,
@@ -656,6 +658,15 @@ export default function PackWizard() {
   const [aiProblems, setAiProblems] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [panelDir, setPanelDir] = useState("")
+  // The install target is the local server's data dir, and the author's own
+  // server-folder override decides which one that is.
+  const hostHome = useHostLocalStore((s) => s.homeOverride)
+  const [installDir, setInstallDir] = useState("")
+  useEffect(() => {
+    void installDataDir(hostHome)
+      .then(setInstallDir)
+      .catch(() => setInstallDir(""))
+  }, [hostHome])
   const dropRef = useRef<HTMLDivElement | null>(null)
 
   const addPanelAssets = async () => {
@@ -897,8 +908,12 @@ export default function PackWizard() {
         const builtPath = parsed?.ok === true ? parsed.result.path : outPath
         store.setBuiltPackPath(builtPath)
         if (store.installAfterBuild) {
-          const install = await runEngineCli(candidate, ["--install", builtPath, "--yes"])
-          store.setRunResult(install)
+          // Same target as every other install path: the local server's own
+          // data dir, which is the only one the studio can promise anything
+          // about (see `lib/packInstall.ts`).
+          const install = await installPack(candidate, builtPath, hostHome)
+          store.setInstalledTo(install.dataDir)
+          store.setRunResult(install.result)
         }
       }
     } catch (cause) {
@@ -913,7 +928,9 @@ export default function PackWizard() {
     store.setRunning(true)
     setError(null)
     try {
-      store.setRunResult(await runEngineCli(candidate, ["--install", store.builtPackPath, "--yes"]))
+      const install = await installPack(candidate, store.builtPackPath, hostHome)
+      store.setInstalledTo(install.dataDir)
+      store.setRunResult(install.result)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -1379,6 +1396,14 @@ export default function PackWizard() {
             )}
           </div>
           <pre className="split-code pack-command">{formatCliCommand(candidate, packArgs)}</pre>
+          <pre className="split-code pack-command">
+            {formatInstallCommand(
+              candidate,
+              store.builtPackPath ?? `<${t("studio.pack.builtPackPlaceholder")}>`,
+              installDir,
+            )}
+          </pre>
+          <p className="studio-hint">{t("studio.pack.installTargetHint", { dir: installDir || "…" })}</p>
           <div className="dialog-row">
             <label className="pack-checkbox">
               <input
@@ -1427,6 +1452,9 @@ export default function PackWizard() {
                   : t("studio.pack.exitCode", { code: store.runResult.code ?? "?" })}
                 {store.builtPackPath !== null && store.runResult.code === 0
                   ? ` · ${store.builtPackPath}`
+                  : ""}
+                {store.installedTo !== null && store.runResult.code === 0
+                  ? ` · ${t("studio.pack.installedTo", { dir: store.installedTo })}`
                   : ""}
               </p>
               <pre className="split-code pack-terminal">
