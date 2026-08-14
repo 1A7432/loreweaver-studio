@@ -8,7 +8,14 @@ import { useTranslation } from "react-i18next"
 import { saveBinaryFile, saveTextFile } from "../../../lib/files"
 import { pickPngFile } from "../../../lib/native"
 import { useActiveProject, useStudioStore } from "../../../store/studio"
-import { exportFileName, exportNativeBundle, exportSillyTavernCard } from "../exporters"
+import ExportFlavorPicker from "../ExportFlavor"
+import {
+  exportFileName,
+  exportNativeBundle,
+  exportSillyTavernCard,
+  includeSecretFor,
+  type ExportFlavor,
+} from "../exporters"
 import { validateProject, type ForgeProject } from "../model"
 import { embedCardIntoPng } from "../pngCard"
 import { auditContract } from "./contract"
@@ -19,28 +26,36 @@ import { layerReport } from "./tokens"
 
 /** Shown once every visible stage is confirmed (or, for optional ones,
  * skipped): the wizard's exit — export both flavors, or hand off to the pack
- * pipeline. The ST export here is the TAVERN RELEASE flavor: keeper-only
+ * pipeline. The ST export here DEFAULTS to the TAVERN RELEASE flavor: keeper-only
  * entries stay in, the [InitVar] YAML rides verbatim, update rules become a
- * worldbook entry — a card that stands on its own in stock SillyTavern. */
+ * worldbook entry — a card that stands on its own in stock SillyTavern. The
+ * picker says so, and can switch to the safe-to-circulate card without leaving
+ * the wizard. */
 function FinishPanel({ project, session }: { project: ForgeProject; session: WizardSession }) {
   const { t } = useTranslation()
   const setView = useStudioStore((s) => s.setView)
   const [notice, setNotice] = useState<string | null>(null)
+  // Default unchanged: the wizard's ST card has always been the release flavor.
+  const [flavor, setFlavor] = useState<ExportFlavor>("release")
 
   const varsDraft = session.records.variables?.draft
   const initvarSource = varsDraft?.stage === "variables" ? varsDraft.initvarYaml : undefined
   const updateRules = varsDraft?.stage === "variables" ? varsDraft.updateRules : undefined
   const report = layerReport(project.lorebook)
 
-  const releaseCard = () => {
+  const stCard = () => {
     const { specs } = validateProject(project)
-    return exportSillyTavernCard(project, specs, { includeSecret: true, initvarSource, updateRules })
+    return exportSillyTavernCard(project, specs, {
+      includeSecret: includeSecretFor(flavor),
+      initvarSource,
+      updateRules,
+    })
   }
 
-  const doExport = async (flavor: "native" | "st") => {
+  const doExport = async (target: "native" | "st") => {
     const payload =
-      flavor === "native" ? exportNativeBundle(project, validateProject(project).specs) : releaseCard()
-    const outcome = await saveTextFile(exportFileName(project, flavor), JSON.stringify(payload, null, 2))
+      target === "native" ? exportNativeBundle(project, validateProject(project).specs) : stCard()
+    const outcome = await saveTextFile(exportFileName(project, target), JSON.stringify(payload, null, 2))
     setNotice(t(`studio.save.${outcome}`))
   }
 
@@ -48,7 +63,7 @@ function FinishPanel({ project, session }: { project: ForgeProject; session: Wiz
     const base = await pickPngFile()
     if (base === null) return
     try {
-      const png = embedCardIntoPng(base.bytes, releaseCard())
+      const png = embedCardIntoPng(base.bytes, stCard())
       const name = exportFileName(project, "st").replace(/\.json$/, ".png")
       const outcome = await saveBinaryFile(name, png, "png")
       setNotice(t(`studio.save.${outcome}`))
@@ -67,6 +82,11 @@ function FinishPanel({ project, session }: { project: ForgeProject; session: Wiz
           tokens: report.constantTokens,
         })}
       </p>
+      <ExportFlavorPicker
+        flavor={flavor}
+        onChange={setFlavor}
+        secretCount={project.lorebook.filter((entry) => entry.secret).length}
+      />
       <div className="dialog-row">
         <button type="button" className="primary-button" onClick={() => void doExport("st")}>
           {t("studio.wizard.finish.exportSt")}

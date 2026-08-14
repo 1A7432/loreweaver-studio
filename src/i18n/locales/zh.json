@@ -1021,6 +1021,14 @@
         "cue": "已删除一个音频提示。",
         "episode": "已删除一话。"
       }
+    },
+    "exportFlavor": {
+      "label": "ST 卡风味",
+      "safe": "可安全传播",
+      "release": "含秘密的发布版",
+      "safeHint": "将剥离 {{n}} 条仅 keeper 可见的条目。SillyTavern 卡里的一切对玩家都是可见的，所以这一版才是可以直接发出去的。",
+      "releaseHint": "将保留 {{n}} 条仅 keeper 可见的条目。SillyTavern 卡没有隐藏的一半——任何打开这个文件的人都读得到。",
+      "noSecrets": "这张卡没有仅 keeper 可见的条目，两种风味产出的文件相同。"
     }
   }
 }

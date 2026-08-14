@@ -10,7 +10,14 @@ import AiSettingsDialog from "./ai/AiSettingsDialog"
 import PresetManagerDialog from "./ai/PresetManagerDialog"
 import { aiReady, useAiStore } from "./ai/provider"
 import CardTab from "./CardTab"
-import { exportFileName, exportNativeBundle, exportSillyTavernCard } from "./exporters"
+import ExportFlavorPicker from "./ExportFlavor"
+import {
+  exportFileName,
+  exportNativeBundle,
+  exportSillyTavernCard,
+  includeSecretFor,
+  type ExportFlavor,
+} from "./exporters"
 import { embedCardIntoPng } from "./pngCard"
 import HooksTab from "./HooksTab"
 import LintPanel, { LintBadge } from "./lint/LintPanel"
@@ -45,19 +52,22 @@ export default function StudioView() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [presetsOpen, setPresetsOpen] = useState(false)
   const [lintOpen, setLintOpen] = useState(false)
+  // Default unchanged: the forge toolbar has always shipped the
+  // secrets-stripped, safe-to-circulate card. It just never said so.
+  const [flavor, setFlavor] = useState<ExportFlavor>("safe")
 
   const validation = project ? validateProject(project) : null
   // Two different questions, deliberately two different readouts: `validation`
   // is "will the engine accept this", the lint is "will it do anything".
   const lintFindings = project ? lintPack(lintSourceFromProject(project)) : []
 
-  const doExport = async (flavor: "native" | "st") => {
+  const doExport = async (target: "native" | "st") => {
     if (!project || !validation) return
     const payload =
-      flavor === "native"
+      target === "native"
         ? exportNativeBundle(project, validation.specs)
-        : exportSillyTavernCard(project, validation.specs)
-    const outcome = await saveTextFile(exportFileName(project, flavor), JSON.stringify(payload, null, 2))
+        : exportSillyTavernCard(project, validation.specs, { includeSecret: includeSecretFor(flavor) })
+    const outcome = await saveTextFile(exportFileName(project, target), JSON.stringify(payload, null, 2))
     setNotice(t(`studio.save.${outcome}`))
   }
 
@@ -66,9 +76,12 @@ export default function StudioView() {
     const base = await pickPngFile()
     if (base === null) return
     try {
-      // Toolbar flavor on purpose: default options = secrets stripped — the
-      // safe-to-circulate tavern card (the wizard finish owns the release flavor).
-      const png = embedCardIntoPng(base.bytes, exportSillyTavernCard(project, validation.specs))
+      // Same flavor as the JSON export beside it — the picker decides, and the
+      // native bundle is unaffected either way (it always carries everything).
+      const png = embedCardIntoPng(
+        base.bytes,
+        exportSillyTavernCard(project, validation.specs, { includeSecret: includeSecretFor(flavor) }),
+      )
       const name = exportFileName(project, "st").replace(/\.json$/, ".png")
       const outcome = await saveBinaryFile(name, png, "png")
       setNotice(t(`studio.save.${outcome}`))
@@ -188,6 +201,11 @@ export default function StudioView() {
             {project ? <LintBadge findings={lintFindings} onClick={() => setLintOpen(!lintOpen)} /> : null}
             {project ? (
               <>
+                <ExportFlavorPicker
+                  flavor={flavor}
+                  onChange={setFlavor}
+                  secretCount={project.lorebook.filter((entry) => entry.secret).length}
+                />
                 <button type="button" className="ghost-button" onClick={() => void doExport("native")}>
                   {t("studio.exportNative")}
                 </button>

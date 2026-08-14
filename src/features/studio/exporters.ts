@@ -129,6 +129,17 @@ export function buildInitVarContent(specs: ModvarSpec[]): string {
   return JSON.stringify(tree, null, 2)
 }
 
+/** Which SillyTavern card comes out. The difference is load-bearing: keeper-only
+ * (secret) lore has no safe representation in an ST card, where everything is
+ * player-visible. Stripping it makes a card safe to circulate; keeping it makes
+ * a card that stands on its own at the author's own table. */
+export type ExportFlavor = "safe" | "release"
+
+/** The single place a flavor becomes an exporter option. */
+export function includeSecretFor(flavor: ExportFlavor): boolean {
+  return flavor === "release"
+}
+
 /** Options for the "tavern release" flavor of the ST export — the wizard's
  * one-click path where the ST card is a first-class deliverable, not a lossy
  * side export. All default OFF so the forge-toolbar export keeps its shape. */

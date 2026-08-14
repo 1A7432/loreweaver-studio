@@ -3068,3 +3068,18 @@ body {
 .undo-toast button {
   flex: none;
 }
+
+/* --- export flavor picker ------------------------------------------------ */
+
+.export-flavor {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.export-flavor .studio-hint {
+  max-width: 46ch;
+  padding: 0;
+  border: 0;
+}

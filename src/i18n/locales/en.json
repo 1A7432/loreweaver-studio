@@ -1021,6 +1021,14 @@
         "cue": "Deleted an audio cue.",
         "episode": "Deleted an episode."
       }
+    },
+    "exportFlavor": {
+      "label": "ST card flavor",
+      "safe": "Safe to circulate",
+      "release": "Release with secrets",
+      "safeHint": "{{n}} keeper-only entr(ies) will be STRIPPED. Everything in a SillyTavern card is player-visible, so this is the card you can hand out.",
+      "releaseHint": "{{n}} keeper-only entr(ies) will be KEPT. A SillyTavern card has no hidden half — anyone who opens this file reads them.",
+      "noSecrets": "This card has no keeper-only entries, so both flavors produce the same file."
     }
   }
 }

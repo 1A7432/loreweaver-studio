@@ -111,3 +111,46 @@ catch-up itself.
     now owns an extension→MIME table (`_ASSET_MIME_BY_SUFFIX`), pinned per extension
     by `tests/core/test_pack_asset_mime.py`. The wizard's audio hint is back to the
     full documented list.
+
+## Engine-side landings, 2026-08-15 (the parallel lane §9 of docs/OVERHAUL-2026-08.md)
+
+Every open item above closed upstream today, plus the promised author-DX work. What
+the studio must react to (R) or may now surface (S):
+
+- **Item 9 CLOSED** — `contents.presets` is a real pack kind: ST completion-preset
+  `.json`, validated at build with the engine's preset parser, installed into the
+  shared `data_dir/presets/` store (sanitized filename stem; id collisions fail the
+  build). `.preset import` also resolves pack-relative refs now. (R: pack bench may
+  offer a presets section; trust mirror below. The style-fold marker→section
+  contract stays v0/open.)
+- **Item 10 CLOSED** — `.import … world` seeds a keeper-only `module_brief` document
+  from the card's prose (description/scenario/openings…), read back via the new
+  keeper-only `module_brief` tool. No studio action.
+- **Item 11 CLOSED** — `.var set <id> <value>` / `.var add <id> <delta>` exist,
+  keeper-gated, over `core.modvars` validation, with a state push on change. (S: a
+  keeper panel could offer tracker writes through the command path.)
+- **Item 12 CLOSED — BREAKING** — presentation kit **schema v2** (owner: no
+  backcompat; v1 files are REJECTED). New: `templates:` allowlist over
+  `image/title_card/letter/clipping/text` (intersection across packs) and
+  `style.palette:` (≤8 strings ≤80 chars, union across packs, rides every imagegen
+  prompt). (R: bump `buildPresentationYaml`/`validatePresentationDraft` and the
+  round-trip fixture to `version: 2`; S: the kit wizard's 模板配色 UI is now real —
+  mirror `core/presentation.py`.)
+- **Trust card grew two fields** — `presets: int` and `prep_scripts: int` (R: extend
+  the `PackTrust` mirror in `buildResult.ts` and the trust display; both also ride
+  `--pack --json`).
+- **Prep scripts are shippable + documented** — `contents.prep` (`.js`, ≤20 000
+  chars, statically checked at build), invoked by reference via
+  `run_prep_plan(script_ref="<packId>/prep/x.js")` with free preview; author docs at
+  `docs/plugins.md` §C.3. (S: unblocks the OVERHAUL Batch 3.2 editor — the feature
+  flag can turn on.)
+- **Dev rooms LANDED** — keeper `.dev mount <src-dir>` live-reloads a pack source
+  tree into a room (lore replaces by provenance, values survive, skills/rulepacks/
+  panels reload; watcher polls saves). Confined under `TRPG_DEV__SOURCE_ROOT`, off
+  unless set. (S: the OVERHAUL §3a "mount source dir" mode is now real — host-local
+  can set the env var when spawning and `.dev mount` instead of install+import;
+  `docs/authoring.md` §8 has the flow.)
+- **Worldbook provenance** — `import_entries` now stamps each lore document's
+  `meta.source`; a re-import surface can replace exactly what a file wrote last
+  time. `{{random}}/{{pick}}` turn-seeding is documented for authors
+  (`docs/cards.md`).
