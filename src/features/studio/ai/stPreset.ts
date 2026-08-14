@@ -503,3 +503,45 @@ export function unsentSamplingKeys(sampling: StSampling): (keyof StSampling)[] {
   }
   return unsent
 }
+
+// --- re-emission (a preset → a pack file) -----------------------------------
+
+/**
+ * Rebuild the SillyTavern completion-preset document from an imported one.
+ *
+ * Import is deliberately lossless — unknown top-level fields land in
+ * `rawTopLevel`, every prompt keeps its original object in `raw`, and entries
+ * too broken to normalize survive in `malformedPrompts`. That is what makes
+ * this possible: the document that comes back out is the one that went in,
+ * reassembled, not a lossy re-serialization of the studio's own model.
+ *
+ * The two enable layers are re-emitted as they were imported. `overrides` are
+ * a PREVIEW-UI concept — the studio's own toggles for reading a preset — and
+ * deliberately do NOT ride into the pack: shipping a preset means shipping what
+ * the author imported, not what they happened to be previewing.
+ *
+ * `core/preset.py::parse_st_preset` refuses a document with no non-empty
+ * `prompts` array, so a sampling-only preset cannot ship as a pack asset; the
+ * pack validator says so rather than letting the engine's build be the first
+ * to mention it.
+ */
+export function presetToStJson(preset: StPresetImport): string {
+  const document: Record<string, unknown> = { ...preset.rawTopLevel }
+  // The sampling knobs were MAPPED on import (so they left rawTopLevel); put
+  // them back under their ST names. They are as much a part of a keeper's style
+  // as the prompt text — a preset that shipped without its temperature would
+  // not be the preset the author imported.
+  for (const [stKey, ourKey] of Object.entries(SAMPLING_KEYS)) {
+    const value = preset.sampling[ourKey]
+    if (value !== undefined) document[stKey] = value
+  }
+  document.prompts = [...preset.prompts.map((entry) => entry.raw), ...preset.malformedPrompts]
+  if (preset.promptOrder.length > 0) {
+    document.prompt_order = preset.promptOrder.map((group) => ({
+      character_id: group.characterId,
+      order: group.order.map((ref) => ({ identifier: ref.identifier, enabled: ref.enabled })),
+    }))
+  }
+  if (Object.keys(preset.extensions).length > 0) document.extensions = preset.extensions
+  return `${JSON.stringify(document, null, 2)}\n`
+}

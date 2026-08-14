@@ -89,7 +89,8 @@ trust = result.get("trust") or {}
 # community editor hands around, which had never passed through the engine's
 # own parser. Plus one skill with hooks; a CoC7 patch and (when QuickJS is
 # available) a stage-E rules-script rulepack; one lorebook; two panels; one kit
-# subject licensing imagegen; seven assets; one prep-phase plan script.
+# subject licensing imagegen; seven assets; one prep-phase plan script; one
+# keeper-style prompt preset (validated with the engine's real preset parser).
 import os
 
 rules_script = os.environ.get("RULES_SCRIPT_LANE") == "1"
@@ -107,7 +108,7 @@ expected = {
     "presentation": 1,
     "imagegen": True,
     "prep_scripts": 1,
-    "presets": 0,
+    "presets": 1,
 }
 drift = {key: {"expected": want, "got": trust.get(key)} for key, want in expected.items() if trust.get(key) != want}
 if drift:

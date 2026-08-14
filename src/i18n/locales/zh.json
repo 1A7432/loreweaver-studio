@@ -953,7 +953,17 @@
         "packPrepEmpty": "准备脚本“{{file}}”是空的。",
         "packRulesScriptPath": "规则脚本“{{file}}”：请使用纯文件名——引擎只会在规则包 YAML 旁边读取脚本，并拒绝任何路径。",
         "packRulesScriptNotJs": "规则脚本“{{file}}”必须是 .js 文件。",
-        "packRulesScriptTooLong": "规则脚本“{{file}}”超过了 {{max}} 字符上限。"
+        "packRulesScriptTooLong": "规则脚本“{{file}}”超过了 {{max}} 字符上限。",
+        "packPresetNotJson": "预设“{{file}}”必须是 .json 文件。",
+        "packPresetPath": "预设“{{file}}”：请使用普通文件名；预设直接放在 presets/ 下。",
+        "packPresetNoId": "预设“{{file}}”：文件名无法得出可用的库内 id。",
+        "packPresetIdCollision": "预设“{{file}}”会安装为“{{id}}”，而本包中已有另一个预设占用了这个 id——它们会在共享库里互相覆盖。",
+        "packPresetTooBig": "预设“{{file}}”超过了 {{max}} 字节上限。",
+        "packPresetNotJsonBody": "预设“{{file}}”不是合法 JSON。",
+        "packPresetNotObject": "预设“{{file}}”：根必须是 JSON 对象（一个 SillyTavern 补全预设）。",
+        "packPresetNoPrompts": "预设“{{file}}”没有 `prompts` 数组——它不是 SillyTavern 补全预设。",
+        "packPresetEmptyPrompts": "预设“{{file}}”的 `prompts` 是空的——没有可折入的提示词文本，因此只含采样参数的预设不能作为包资产发布。",
+        "packPresetTooManyPrompts": "预设“{{file}}”的提示词条目超过 {{max}} 条。"
       },
       "panels": {
         "title": "模组 UI 面板（M15）",
@@ -1176,7 +1186,17 @@
       },
       "builtPackPlaceholder": "构建出的 .lwpack",
       "installTargetHint": "这里的每一次安装都会落到 {{dir}}——本地服务器自己的数据目录，因此你刚构建的这个包正是它将要提供的那个。上面那条命令带着同样的覆盖，所以复制粘贴的效果与按钮一致。",
-      "installedTo": "已安装到 {{dir}}"
+      "installedTo": "已安装到 {{dir}}",
+      "presets": {
+        "title": "提示词预设",
+        "hint": "把一套守秘人风格随模组一起发布。安装会把每个预设放进服务器的「共享」预设库——安装不等于启用，任何东西都不会自行生效：keeper 需要用 `.preset enable <id>` 把它折进某个房间。随包发布的是你导入时的原始文档，而不是预览开关的状态。",
+        "fromLibrary": "来自你的预设库",
+        "pick": "（选择一项）",
+        "add": "随包发布",
+        "libraryEmpty": "请先在提示词预设管理器里导入一个 SillyTavern 预设。",
+        "fileName": "文件名",
+        "storeId": "将安装为 {{id}}"
+      }
     },
     "lint": {
       "title": "建议性检查",
@@ -1222,7 +1242,8 @@
         "skill": "已删除技能「{{name}}」。",
         "subject": "已删除资料包对象「{{name}}」。",
         "cue": "已删除音频提示「{{name}}」。",
-        "episode": "已删除连载话数「{{name}}」。"
+        "episode": "已删除连载话数「{{name}}」。",
+        "preset": "已从模组包移除预设「{{name}}」。"
       },
       "deletedUnnamed": {
         "project": "已删除一个项目。",
@@ -1234,7 +1255,8 @@
         "skill": "已删除一个技能。",
         "subject": "已删除一个资料包对象。",
         "cue": "已删除一个音频提示。",
-        "episode": "已删除一话。"
+        "episode": "已删除一话。",
+        "preset": "已从模组包移除一个预设。"
       }
     },
     "exportFlavor": {

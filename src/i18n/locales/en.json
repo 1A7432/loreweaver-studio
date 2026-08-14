@@ -953,7 +953,17 @@
         "packPrepEmpty": "Prep script “{{file}}” is empty.",
         "packRulesScriptPath": "Rules script “{{file}}”: use a bare file name — the engine reads a script from beside its rulepack YAML and refuses a path.",
         "packRulesScriptNotJs": "Rules script “{{file}}” must be a .js file.",
-        "packRulesScriptTooLong": "Rules script “{{file}}” exceeds the {{max}}-character cap."
+        "packRulesScriptTooLong": "Rules script “{{file}}” exceeds the {{max}}-character cap.",
+        "packPresetNotJson": "Preset “{{file}}” must be a .json file.",
+        "packPresetPath": "Preset “{{file}}”: use a plain file name; presets land directly under presets/.",
+        "packPresetNoId": "Preset “{{file}}”: the file name yields no usable store id.",
+        "packPresetIdCollision": "Preset “{{file}}” installs as “{{id}}”, which another preset in this pack already claims — they would overwrite each other in the shared store.",
+        "packPresetTooBig": "Preset “{{file}}” exceeds the {{max}}-byte cap.",
+        "packPresetNotJsonBody": "Preset “{{file}}” is not valid JSON.",
+        "packPresetNotObject": "Preset “{{file}}”: the root must be a JSON object (a SillyTavern completion preset).",
+        "packPresetNoPrompts": "Preset “{{file}}” has no `prompts` array — this is not a SillyTavern completion preset.",
+        "packPresetEmptyPrompts": "Preset “{{file}}” has an empty `prompts` array — there is no prompt text to fold, so a sampling-only preset cannot ship as a pack asset.",
+        "packPresetTooManyPrompts": "Preset “{{file}}” holds more than {{max}} prompt entries."
       },
       "panels": {
         "title": "Module UI panels (M15)",
@@ -1176,7 +1186,17 @@
       },
       "builtPackPlaceholder": "the built .lwpack",
       "installTargetHint": "Every install here lands in {{dir}} — the local server's own data folder, so the pack you just built is the one it will serve. The command above carries the same override, so pasting it does what the button does.",
-      "installedTo": "installed into {{dir}}"
+      "installedTo": "installed into {{dir}}",
+      "presets": {
+        "title": "Prompt presets",
+        "hint": "Ship a keeper style with the module. Install lands each preset in the server's SHARED preset store — install is not enable, so nothing turns on by itself: a keeper folds one into a room with `.preset enable <id>`. What ships is the document as you imported it, not the preview toggles.",
+        "fromLibrary": "From your preset library",
+        "pick": "(pick one)",
+        "add": "Ship it with the pack",
+        "libraryEmpty": "Import a SillyTavern preset in the preset manager first.",
+        "fileName": "File name",
+        "storeId": "installs as {{id}}"
+      }
     },
     "lint": {
       "title": "Advisory lint",
@@ -1222,7 +1242,8 @@
         "skill": "Deleted the skill “{{name}}”.",
         "subject": "Deleted the kit subject “{{name}}”.",
         "cue": "Deleted the audio cue “{{name}}”.",
-        "episode": "Deleted the episode “{{name}}”."
+        "episode": "Deleted the episode “{{name}}”.",
+        "preset": "Removed the preset “{{name}}” from the pack."
       },
       "deletedUnnamed": {
         "project": "Deleted a project.",
@@ -1234,7 +1255,8 @@
         "skill": "Deleted a skill.",
         "subject": "Deleted a kit subject.",
         "cue": "Deleted an audio cue.",
-        "episode": "Deleted an episode."
+        "episode": "Deleted an episode.",
+        "preset": "Removed a preset from the pack."
       }
     },
     "exportFlavor": {

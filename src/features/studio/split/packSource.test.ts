@@ -7,6 +7,7 @@ import {
   buildSkillMd,
   readPrepScript,
   safeFileName,
+  sanitizePresetId,
   validatePackDraft,
   type PackPresentationDraft,
   type WorldPackDraft,
@@ -35,6 +36,7 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
     rulepacks: [],
     assets: [],
     prep: [],
+    presets: [],
     episodes: [],
     panels: null,
     presentation: null,
@@ -996,5 +998,60 @@ describe("serialized modules (连载模组)", () => {
   it("writes no CHANGELOG.md for an ordinary one-shot pack", () => {
     const plan = buildPackSourcePlan(draft())
     expect(plan.files.map((file) => file.path)).not.toContain("CHANGELOG.md")
+  })
+})
+
+describe("prompt presets as pack assets (UPSTREAM item 9)", () => {
+  const PRESET = JSON.stringify({
+    temperature: 0.9,
+    prompts: [{ identifier: "main", name: "Main", content: "You are the Keeper.", role: "system" }],
+    prompt_order: [{ character_id: "100001", order: [{ identifier: "main", enabled: true }] }],
+  })
+
+  it("declares contents.presets and lays the file under presets/", () => {
+    const withPreset = draft({ presets: [{ fileName: "corridor-keeper.json", jsonText: PRESET }] })
+    expect(validatePackDraft(withPreset)).toEqual([])
+    const plan = buildPackSourcePlan(withPreset)
+    expect(plan.files.map((file) => file.path)).toContain("presets/corridor-keeper.json")
+    const manifest = parse(plan.files[0].contents) as { contents: Record<string, unknown> }
+    expect(manifest.contents.presets).toEqual(["presets/corridor-keeper.json"])
+  })
+
+  it("mirrors the engine's structural refusals", () => {
+    const keys = (preset: { fileName: string; jsonText: string }) =>
+      validatePackDraft(draft({ presets: [preset] })).map((issue) => issue.key)
+    expect(keys({ fileName: "p.txt", jsonText: PRESET })).toContain("packPresetNotJson")
+    expect(keys({ fileName: "nested/p.json", jsonText: PRESET })).toContain("packPresetPath")
+    expect(keys({ fileName: "p.json", jsonText: "not json" })).toContain("packPresetNotJsonBody")
+    expect(keys({ fileName: "p.json", jsonText: "[1,2]" })).toContain("packPresetNotObject")
+    expect(keys({ fileName: "p.json", jsonText: "{}" })).toContain("packPresetNoPrompts")
+    // A sampling-only preset has no prompt text to fold, so the engine refuses
+    // it outright — better said here than at build time.
+    expect(keys({ fileName: "p.json", jsonText: '{"prompts": []}' })).toContain("packPresetEmptyPrompts")
+  })
+
+  it("catches two files that would collide in the SHARED preset store", () => {
+    // The id is the SANITIZED stem, so different filenames can land on one id
+    // and silently overwrite each other in `data_dir/presets/`.
+    const issues = validatePackDraft(
+      draft({
+        presets: [
+          { fileName: "Corridor Keeper.json", jsonText: PRESET },
+          { fileName: "corridor-keeper.json", jsonText: PRESET },
+        ],
+      }),
+    )
+    const collision = issues.find((issue) => issue.key === "packPresetIdCollision")
+    expect(collision?.params).toMatchObject({ id: "corridor-keeper" })
+  })
+})
+
+describe("sanitizePresetId", () => {
+  it("mirrors core/preset_store.py::sanitize_preset_id", () => {
+    expect(sanitizePresetId("Corridor Keeper.json")).toBe("corridor-keeper")
+    expect(sanitizePresetId("守秘人.json")).toBe("preset")
+    expect(sanitizePresetId("a".repeat(80) + ".json")).toHaveLength(64)
+    expect(sanitizePresetId("---.json")).toBe("preset")
+    expect(sanitizePresetId("")).toBe("")
   })
 })

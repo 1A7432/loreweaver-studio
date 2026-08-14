@@ -34,6 +34,7 @@ import {
   type PackPresentationAudioDraft,
   type PackPresentationDraft,
   type PackPrepScriptDraft,
+  type PackPresetDraft,
   type PackPresentationSubjectDraft,
   type PackSkillDraft,
   type WorldPackDraft,
@@ -358,6 +359,9 @@ interface PackState {
   /** M20 F prep-phase plan scripts (`contents.prep`). They never run at
    * install; a keeper invokes one by reference and previews the plan first. */
   prepScripts: PackPrepScriptDraft[]
+  /** Keeper-style prompt presets (`contents.presets`). Install lands them in
+   * the SHARED store; a room folds one in only on `.preset enable <id>`. */
+  packPresets: PackPresetDraft[]
 
   outputDir: string | null
   writtenDir: string | null
@@ -415,6 +419,10 @@ interface PackState {
   addManualSkill: () => void
   updateManualSkill: (index: number, patch: Partial<PackSkillDraft>) => void
   removeManualSkill: (index: number) => void
+  /** Ship one of the studio's imported presets with the pack. */
+  addPackPreset: (preset: PackPresetDraft) => void
+  updatePackPreset: (index: number, patch: Partial<PackPresetDraft>) => void
+  removePackPreset: (index: number) => void
   addPrepScript: () => void
   updatePrepScript: (index: number, patch: Partial<PackPrepScriptDraft>) => void
   removePrepScript: (index: number) => void
@@ -502,6 +510,7 @@ export const usePackStore = create<PackState>()(
       presentation: null,
       manualSkills: [],
       prepScripts: [],
+      packPresets: [],
       episodes: [],
       buildUpTo: 0,
       outputDir: null,
@@ -891,6 +900,33 @@ export const usePackStore = create<PackState>()(
 
       setBuildUpTo: (buildUpTo) => set({ buildUpTo: Math.max(0, Math.trunc(buildUpTo)) }),
 
+      addPackPreset: (preset) =>
+        set((state) =>
+          // A pack ships one file per store id; adding the same preset twice
+          // would collide in `data_dir/presets/` and fail the engine's build.
+          state.packPresets.some((existing) => existing.fileName === preset.fileName)
+            ? {}
+            : { packPresets: [...state.packPresets, preset] },
+        ),
+
+      updatePackPreset: (index, patch) =>
+        set((state) => ({
+          packPresets: state.packPresets.map((preset, i) => (i === index ? { ...preset, ...patch } : preset)),
+        })),
+
+      removePackPreset: (index) =>
+        set((state) => {
+          const removed = state.packPresets[index]
+          if (removed !== undefined) {
+            useUndoStore.getState().push("preset", removed.fileName, () => {
+              set((s) => ({
+                packPresets: [...s.packPresets.slice(0, index), removed, ...s.packPresets.slice(index)],
+              }))
+            })
+          }
+          return { packPresets: state.packPresets.filter((_, i) => i !== index) }
+        }),
+
       addPrepScript: () =>
         set((state) => ({
           prepScripts: [
@@ -942,6 +978,7 @@ export const usePackStore = create<PackState>()(
           presentation: null,
           manualSkills: [],
           prepScripts: [],
+          packPresets: [],
           episodes: [],
           buildUpTo: 0,
           writtenDir: null,
@@ -972,6 +1009,7 @@ export const usePackStore = create<PackState>()(
           presentation: null,
           manualSkills: [],
           prepScripts: [],
+          packPresets: [],
           episodes: [],
           buildUpTo: 0,
           outputDir: null,
@@ -1019,6 +1057,7 @@ export const usePackStore = create<PackState>()(
               },
         manualSkills: state.manualSkills,
         prepScripts: state.prepScripts,
+        packPresets: state.packPresets,
         episodes: state.episodes,
         buildUpTo: state.buildUpTo,
         outputDir: state.outputDir,
@@ -1054,6 +1093,7 @@ export function buildDraftFromState(
   prep: PackPrepScriptDraft[] = [],
   episodes: PackEpisode[] = [],
   buildUpTo = 0,
+  presets: PackPresetDraft[] = [],
 ): WorldPackDraft {
   const cards = items
     .filter((item) => item.kind === "card")
@@ -1106,6 +1146,7 @@ export function buildDraftFromState(
       .filter((item) => item.kind === "asset")
       .map((item) => ({ fileName: item.fileName, base64: item.base64, episode: item.episode })),
     prep,
+    presets,
     panels: panels !== null && panels.yamlText.trim() ? panels : null,
     presentation,
     episodes,
@@ -1140,6 +1181,7 @@ export function packValidationIssues(
   prep: PackPrepScriptDraft[] = [],
   episodes: PackEpisode[] = [],
   buildUpTo = 0,
+  presets: PackPresetDraft[] = [],
 ): Issue[] {
   // A restored session knows an item's name, kind and every decision made about
   // it, but not its bytes. Building anyway would write an empty file under a
@@ -1151,7 +1193,17 @@ export function packValidationIssues(
   return [
     ...missing,
     ...validatePackDraft(
-      buildDraftFromState(items, metadata, panels, manualSkills, presentation, prep, episodes, buildUpTo),
+      buildDraftFromState(
+        items,
+        metadata,
+        panels,
+        manualSkills,
+        presentation,
+        prep,
+        episodes,
+        buildUpTo,
+        presets,
+      ),
     ),
   ]
 }

@@ -303,6 +303,39 @@ defaults:
   理智: 45
 `
 
+// One keeper-style prompt preset (`contents.presets`, UPSTREAM item 9). The
+// engine validates it at build with the SAME parser `.preset import` uses, and
+// install lands it in the shared store under its sanitized filename stem —
+// install is not enable, so it stays inert until a keeper turns it on per room.
+const PRESET_JSON =
+  JSON.stringify(
+    {
+      temperature: 0.85,
+      top_p: 0.95,
+      prompts: [
+        {
+          identifier: "main",
+          name: "Main Prompt",
+          role: "system",
+          content: "你是《回廊公寓》的守秘人。雨夜里第五层才存在；在调查员亲眼看见之前，永远不要直接承认它。",
+          system_prompt: true,
+        },
+        { identifier: "chatHistory", name: "Chat History", marker: true },
+      ],
+      prompt_order: [
+        {
+          character_id: 100001,
+          order: [
+            { identifier: "main", enabled: true },
+            { identifier: "chatHistory", enabled: true },
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  ) + "\n"
+
 // A THIRD-PARTY-shaped rulepack carrying a stage-E rules script. Bundled packs
 // stay DSL-only by doctrine (`core/rules_script.py`), so the script lane only
 // ever ships the way an extension pack ships it — which is exactly why the gate
@@ -452,6 +485,7 @@ const draft: WorldPackDraft = {
   // statically (extension, the 20 000-char cap, UTF-8) and counts it on the
   // trust card. It never runs — not at build, not at install.
   prep: [{ fileName: "setup.js", source: PREP_SCRIPT }],
+  presets: [{ fileName: "corridor-keeper.json", jsonText: PRESET_JSON }],
   // A one-shot pack: no installments, so the source tree is byte-identical to
   // what it was before serialized modules existed.
   episodes: [],

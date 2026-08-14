@@ -23,6 +23,7 @@ export type UndoKind =
   | "panelFile"
   | "skill"
   | "prepScript"
+  | "preset"
   | "subject"
   | "cue"
   | "episode"

@@ -48,7 +48,11 @@ import {
   PREP_DIR,
   presentationSummary,
   readPrepScript,
+  safeFileName,
+  sanitizePresetId,
 } from "../split/packSource"
+import { usePresetStore } from "../ai/presetStore"
+import { presetToStJson } from "../ai/stPreset"
 import { readRulepack } from "../split/rulepack"
 import { latestOrdinal, suggestedVersion, versionMatchesConvention } from "../split/episodes"
 import PresentationStage from "./PresentationStage"
@@ -650,6 +654,86 @@ function ReleaseHorizon() {
   )
 }
 
+/** Prompt presets shipped with the pack (`contents.presets`).
+ *
+ * The source is the studio's OWN preset library — the presets already imported
+ * for the card forge — because that is where an author's keeper style already
+ * lives; making them re-import the same file to ship it would be busywork.
+ * What ships is the document as IMPORTED, reassembled losslessly, not the
+ * studio's preview state: the preset-manager's per-entry overrides are a
+ * reading aid and deliberately stay out of the pack.
+ *
+ * Install lands each file in the SHARED store at `data_dir/presets/<id>.json`,
+ * where the id is the sanitized filename stem — so the section shows that id,
+ * since it is what a keeper will type into `.preset enable`. Install is not
+ * enable: nothing turns on by itself. */
+function PackPresetsSection() {
+  const { t } = useTranslation()
+  const library = usePresetStore((s) => s.presets)
+  const packPresets = usePackStore((s) => s.packPresets)
+  const addPackPreset = usePackStore((s) => s.addPackPreset)
+  const removePackPreset = usePackStore((s) => s.removePackPreset)
+  const updatePackPreset = usePackStore((s) => s.updatePackPreset)
+  const [choice, setChoice] = useState("")
+
+  const ship = () => {
+    const stored = library.find((preset) => preset.id === choice)
+    if (stored === undefined) return
+    addPackPreset({
+      fileName: `${safeFileName(stored.name, "preset")}.json`,
+      jsonText: presetToStJson(stored),
+    })
+    setChoice("")
+  }
+
+  return (
+    <section className="pack-extra-section">
+      <h3>{t("studio.pack.presets.title")}</h3>
+      <p className="studio-hint">{t("studio.pack.presets.hint")}</p>
+      <div className="dialog-row">
+        <label className="field">
+          {t("studio.pack.presets.fromLibrary")}
+          <select value={choice} onChange={(e) => setChoice(e.target.value)}>
+            <option value="">{t("studio.pack.presets.pick")}</option>
+            {library.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="ghost-button" disabled={choice === ""} onClick={ship}>
+          {t("studio.pack.presets.add")}
+        </button>
+        {library.length === 0 ? (
+          <span className="studio-hint">{t("studio.pack.presets.libraryEmpty")}</span>
+        ) : null}
+      </div>
+      {packPresets.map((preset, index) => (
+        <div className="pack-item" key={preset.fileName}>
+          <div className="pack-item-head">
+            <label className="field">
+              {t("studio.pack.presets.fileName")}
+              <input
+                value={preset.fileName}
+                onChange={(e) => updatePackPreset(index, { fileName: e.target.value })}
+                spellCheck={false}
+              />
+            </label>
+            <span className="split-badge">
+              {t("studio.pack.presets.storeId", { id: sanitizePresetId(preset.fileName) || "?" })}
+            </span>
+            <div className="header-spacer" />
+            <button type="button" className="ghost-button" onClick={() => removePackPreset(index)}>
+              {t("studio.remove")}
+            </button>
+          </div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 export default function PackWizard() {
   const { t } = useTranslation()
   const store = usePackStore()
@@ -840,6 +924,7 @@ export default function PackWizard() {
       store.prepScripts,
       store.episodes,
       store.buildUpTo,
+      store.packPresets,
     )
     const plan = buildPackSourcePlan(draft)
     const root = `${store.outputDir}/${plan.dirName}`
@@ -947,6 +1032,7 @@ export default function PackWizard() {
     store.prepScripts,
     store.episodes,
     store.buildUpTo,
+    store.packPresets,
   )
   // Advisory, alongside the blocking `issues` above and never mixed with them:
   // these are packs that build fine and then do nothing.
@@ -1173,6 +1259,8 @@ export default function PackWizard() {
           </div>
 
           <RulepackSection />
+
+          <PackPresetsSection />
 
           <PrepScriptSection />
 

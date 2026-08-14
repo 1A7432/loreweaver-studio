@@ -197,6 +197,43 @@ export interface PackPrepScriptDraft {
   source: string
 }
 
+// Keeper-style prompt presets shipped with a pack (`contents.presets`,
+// UPSTREAM item 9). Mirrors `core/pack.py::_validate_pack_presets` and
+// `core/preset_store.py::sanitize_preset_id`: install lands each file in the
+// SHARED store at `data_dir/presets/<id>.json`, where the id is the sanitized
+// filename stem — so two files sanitizing to the same id would silently
+// overwrite each other, and the engine makes that a build error rather than an
+// install surprise. Install ≠ enable still holds: a room folds a preset in only
+// when its keeper runs `.preset enable <id>`.
+export const PRESETS_DIR = "presets"
+/** `core/preset.py::MAX_PRESET_BYTES` / `MAX_PROMPTS`. */
+export const MAX_PRESET_BYTES = 2 * 1024 * 1024
+export const MAX_PRESET_PROMPTS = 512
+
+export interface PackPresetDraft {
+  /** File name under `presets/`; its stem becomes the store id. */
+  fileName: string
+  /** The SillyTavern completion-preset document, verbatim. */
+  jsonText: string
+}
+
+/** Mirror of `core/preset_store.py::sanitize_preset_id`: the stem lowercased,
+ * every run outside `[a-z0-9]` collapsed to one dash, capped at 64. A stem that
+ * leaves nothing usable (a fully-CJK title) falls back to `preset`; an empty
+ * input stays "" so the caller can reject it. */
+export function sanitizePresetId(name: string): string {
+  const stem = name
+    .replace(/\.[^.]*$/, "")
+    .trim()
+    .toLowerCase()
+  if (!stem) return ""
+  const slug = stem
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+  return slug && /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) ? slug : "preset"
+}
+
 /** One rules script a rulepack ships (stage-E `resolution.script` /
  * `subsystems.*.script`). The engine reads it from NEXT TO the YAML and refuses
  * a name with a path separator, so this is a bare file name and nothing else
@@ -247,6 +284,9 @@ export interface WorldPackDraft {
   /** M20 F prep-phase plan scripts. They NEVER run automatically — a keeper
    * invokes one by reference and previews the plan first. */
   prep: PackPrepScriptDraft[]
+  /** Keeper-style prompt presets. Installed into the SHARED preset store, and
+   * inert until a keeper enables one per room. */
+  presets: PackPresetDraft[]
   /** M15 module-UI panels; null when the pack ships none. */
   panels: PackPanelsDraft | null
   /** M19 presentation kit; null when the pack ships none — the Stage Director
@@ -380,8 +420,63 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
     if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
     seenFiles.add(path)
   }
+  const presetIds = new Set<string>()
+  for (const preset of draft.presets) {
+    const path = `${PRESETS_DIR}/${preset.fileName}`
+    if (!preset.fileName.toLowerCase().endsWith(".json")) {
+      issues.push({ key: "packPresetNotJson", params: { file: path } })
+    }
+    if (preset.fileName.includes("/")) {
+      issues.push({ key: "packPresetPath", params: { file: preset.fileName } })
+    }
+    // The store id is the SANITIZED stem, so two different filenames can land
+    // on one id — which would silently overwrite in the shared store. The
+    // engine refuses that at build; saying it here names both files.
+    const id = sanitizePresetId(preset.fileName)
+    if (!id) {
+      issues.push({ key: "packPresetNoId", params: { file: path } })
+    } else if (presetIds.has(id)) {
+      issues.push({ key: "packPresetIdCollision", params: { file: path, id } })
+    }
+    presetIds.add(id)
+    issues.push(...readPresetIssues(preset, path))
+    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
+    seenFiles.add(path)
+  }
   if (draft.panels !== null) issues.push(...validatePanelsDraft(draft.panels, seenFiles))
   if (draft.presentation !== null) issues.push(...validatePresentationDraft(draft.presentation, seenFiles))
+  return issues
+}
+
+/** The structural checks `core/preset.py::parse_st_preset` makes before it will
+ * accept a document at all — everything below that degrades into warnings
+ * engine-side, so only the hard refusals are mirrored here. */
+function readPresetIssues(preset: PackPresetDraft, path: string): Issue[] {
+  const issues: Issue[] = []
+  const bytes = new TextEncoder().encode(preset.jsonText).length
+  if (bytes > MAX_PRESET_BYTES) {
+    issues.push({ key: "packPresetTooBig", params: { file: path, max: MAX_PRESET_BYTES } })
+    return issues
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(preset.jsonText)
+  } catch {
+    issues.push({ key: "packPresetNotJsonBody", params: { file: path } })
+    return issues
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    issues.push({ key: "packPresetNotObject", params: { file: path } })
+    return issues
+  }
+  const prompts = (parsed as Record<string, unknown>).prompts
+  if (!Array.isArray(prompts)) {
+    issues.push({ key: "packPresetNoPrompts", params: { file: path } })
+  } else if (prompts.length === 0) {
+    issues.push({ key: "packPresetEmptyPrompts", params: { file: path } })
+  } else if (prompts.length > MAX_PRESET_PROMPTS) {
+    issues.push({ key: "packPresetTooManyPrompts", params: { file: path, max: MAX_PRESET_PROMPTS } })
+  }
   return issues
 }
 
@@ -1037,6 +1132,9 @@ export function buildManifestYaml(input: WorldPackDraft): string {
   if (draft.lorebooks.length > 0) {
     contents.lorebooks = draft.lorebooks.map((lorebook) => `lorebooks/${lorebook.fileName}`)
   }
+  if (draft.presets.length > 0) {
+    contents.presets = draft.presets.map((preset) => `${PRESETS_DIR}/${preset.fileName}`)
+  }
   if (draft.prep.length > 0) {
     contents.prep = draft.prep.map((script) => `${PREP_DIR}/${script.fileName}`)
   }
@@ -1145,6 +1243,9 @@ export function buildPackSourcePlan(input: WorldPackDraft): PackSourcePlan {
   }
   for (const script of draft.prep) {
     files.push({ path: `${PREP_DIR}/${script.fileName}`, contents: script.source })
+  }
+  for (const preset of draft.presets) {
+    files.push({ path: `${PRESETS_DIR}/${preset.fileName}`, contents: preset.jsonText })
   }
   if (draft.panels !== null) {
     files.push({ path: PANELS_FILE_NAME, contents: draft.panels.yamlText })
