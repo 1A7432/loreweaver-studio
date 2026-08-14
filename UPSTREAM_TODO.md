@@ -48,12 +48,16 @@ catch-up itself.
 > UI in the same commit; the round-trip gate exercises both. Items 9–11 are landed but
 > not yet consumed studio-side; each notes what remains here.
 
-## Still open
+## Closed on both sides (kept for the record)
 
-9. **Keeper-style prompt presets as pack assets** — **LANDED upstream `fbcd08c`**
-   (`contents.presets`, install → `data_dir/presets/`, disclosed on the trust card).
-   Studio-side consumption is outstanding: the preset manager can export a preset into
-   a pack's source tree. Original ask, kept for context — HALF landed and unchanged by the
+9. ~~**Keeper-style prompt presets as pack assets**~~ — **LANDED upstream `fbcd08c`
+   and CONSUMED here (2026-08-15).** `contents.presets` rides the pack source model,
+   the manifest and the tree; the pack bench ships a preset straight from the studio's
+   own library (`presetToStJson` reassembles the imported document losslessly, sampling
+   knobs included, preview overrides excluded); validation mirrors the engine's
+   structural refusals plus the sanitized-id collision that would otherwise overwrite
+   silently in the shared store; the round-trip fixture builds one through the engine's
+   real preset parser. Original ask, kept for context — HALF landed and unchanged by the
    consolidation: `core/preset.py` parser + `core/preset_store.py` + the keeper
    `.preset` surface + the bounded v0 style-fold in `agent/prompt_builder.py:360-383`
    all exist. Still missing: a `contents.presets` pack-asset convention (install →
@@ -76,9 +80,11 @@ catch-up itself.
     seed a module brief from the world card's prose at import (or document the
     constant-entry rule loudly in `docs/cards.md` + the card-forge templates).
 
-11. **`.var` has no keeper-side write.** **LANDED upstream `96c7228`** — keeper-gated
-    `.var set` / `.var add`, over `core.modvars` validation.
-    Studio-side consumption (a keeper write control on the state panel) is outstanding.
+11. ~~**`.var` has no keeper-side write.**~~ **LANDED upstream `96c7228` and CONSUMED
+    here (2026-08-15).** Keeper-gated `.var set` / `.var add`, over `core.modvars`
+    validation. The studio's state panel gained the write control (off by default,
+    routed through the ordinary command path so the permission gate, the spec
+    validation and the state push are the engine's own).
     Original ask below. It read `list|expose|hide` only when this was written
     (`cmd_var` is at `gateway/commands.py:2033-2128` today, and its docstring
     now names set/add); the validated primitives
@@ -87,6 +93,12 @@ catch-up itself.
     already routes panel input through the real command engine, so the ask is now
     exactly one keeper-gated `.var set <id> <value>` / `.var add <id> <delta>` (or a
     panel-writable var op) over `core.modvars` validation.
+
+### The one half still genuinely open
+
+Item 9's finer marker→section mapping contract: `prompt_builder`'s own comment
+still calls the single-fold policy v0. Nothing studio-side is blocked on it —
+the studio ships the preset document; how the engine folds it is the engine's.
 
 ## New asks from the 2.x catch-up
 

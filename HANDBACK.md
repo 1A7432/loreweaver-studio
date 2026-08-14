@@ -4,8 +4,9 @@ Questions raised while executing `docs/OVERHAUL-2026-08.md`. Nothing here
 blocked the work: each item states what was shipped in the meantime and what
 would change if you decide otherwise. Newest batch last.
 
-All six batches are done and every gate in §1 is green, including the
-round-trip gate and its new live-connect stage. Nothing is pushed.
+All six batches are done, the owner's three follow-up decisions are
+implemented, and every gate in §1 is green — including the round-trip gate and
+its live-connect stage. Nothing is pushed.
 
 ## Batch 0 — reconnect
 
@@ -33,20 +34,13 @@ version advice, and the export flavor picker.
 
 ## Batch 1 — close the author loop
 
-### 2. Two different install targets in the pack bench — still open
+### 2. Two different install targets in the pack bench — RESOLVED (unify)
 
-"Test now" installs the pack with `TRPG_DATA_DIR` pointed at the local server's
-own data dir (`~/.loreweaver/data` by default), because that is the only
-directory the one-click server will look in. The bench's existing **Install**
-button, and the "install after build" checkbox, still run `--install` with the
-studio's inherited environment — usually the engine checkout's `./data`.
-
-So the same pack can end up installed in two places. The Test-now panel names
-its target directory; the plain Install button does not.
-
-**Decide:** whether the plain Install button should also target the local
-server's data dir (one place, but it stops being "the CLI command shown
-above"), or keep today's split and add a line of copy explaining it.
+Every install path now goes through `lib/packInstall.ts` and lands in the local
+server's own data dir: it is the one directory the studio can promise something
+about, since it is the one the app itself serves from. The command line the
+bench displays carries the same `TRPG_DATA_DIR` overlay, so pasting it does
+what the button did, and the run result names where the pack landed.
 
 ### 3. The engine lane landed four items mid-overhaul — mostly consumed
 
@@ -63,34 +57,24 @@ list. What has been consumed since:
 - **The trust card's two new fields** (`presets`, `prep_scripts`) — mirrored in
   `PackTrust` and displayed.
 
-Still unconsumed, and NOT in the plan's batch list:
+Consumed after the owner's go-ahead:
 
-- **9 (`contents.presets`)** — a pack can now ship ST completion presets. The
-  natural studio-side move is a presets section in the pack bench, fed by the
-  existing preset manager. Not started.
-- **11 (`.var set/add`)** — the keeper can now write a tracker without a model
-  turn. The natural move is a write control on the state panel, next to the
-  pregen card. Not started.
-- **10 (world-card prose → module brief)** — nothing is required. At most, the
-  forge could stop implying that a world card's prose is inert.
+- **9 (`contents.presets`)** — the pack bench ships a preset straight from the
+  studio's own library; the round-trip fixture builds one through the engine's
+  real preset parser.
+- **11 (`.var set/add`)** — a keeper write control on the state panel, off by
+  default, routed through the ordinary command path.
 
-**Decide:** whether 9 and 11 belong in this overhaul or a later one. Absent a
-decision the overhaul was executed as written and they stay unconsumed.
+Still untouched, and still requiring nothing:
+
+- **10 (world-card prose → module brief)** — landed upstream; at most the forge
+  could stop implying that a world card's prose is inert. Not a defect today.
 
 ## Batch 6 — the round-trip gate
 
-### 4. The rules-script lane depends on an optional engine extra
+### 4. The rules-script lane depends on an optional engine extra — RESOLVED (require it)
 
-Closing the `has_rules_script` blind spot means shipping a rulepack with a
-stage-E script, and that compiles through QuickJS at BUILD time — which the
-engine ships as the optional `ejs` extra. Requiring it would break the gate on
-a plain `uv sync`.
-
-**Shipped:** the gate probes the engine for `quickjs_available()`, includes the
-lane when it can, and prints that it is skipping it when it cannot. Both paths
-were run and both pass. A gate that quietly covers less would be worse than one
-that admits it.
-
-**Decide:** if you would rather the gate hard-require the extra (simpler, one
-path, but a new prerequisite for anyone running it), say so and the probe comes
-out.
+The probe is gone. `uv sync --extra ejs` is a documented prerequisite of the
+round-trip gate, checked by name up front: a missing extra fails with the exact
+command and the exact repo rather than surfacing later as a PackError about a
+rulepack. One path, and the same coverage on every machine.
