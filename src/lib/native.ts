@@ -179,11 +179,19 @@ export async function probeEngineCli(engineRepoDir: string | null): Promise<Engi
   return invoke<EngineCandidate[]>("probe_engine_cli", { engineRepoDir })
 }
 
-export async function runEngineCli(candidate: EngineCandidate, args: string[]): Promise<EngineRunResult> {
+/** `env` overlays the studio's environment for this one run — the "test this
+ * pack now" path uses it to point `TRPG_DATA_DIR` at the local server's own
+ * data dir, so an installed pack lands where that server will look for it. */
+export async function runEngineCli(
+  candidate: EngineCandidate,
+  args: string[],
+  env?: Record<string, string>,
+): Promise<EngineRunResult> {
   return invoke<EngineRunResult>("run_engine_cli", {
     program: candidate.program,
     args: [...candidate.args, ...args],
     cwd: candidate.cwd,
+    env: env ?? null,
   })
 }
 

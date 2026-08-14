@@ -5,6 +5,7 @@
 //! one buffered run, stdout/stderr and exit code back to the WebView.
 
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -123,11 +124,18 @@ fn truncate_capture(mut text: String) -> String {
 /// Run the engine CLI once with `args`, capturing output. The program/cwd come
 /// from `probe_engine_cli` or the user's explicit settings — this is a local
 /// developer tool acting on the user's own click, not an exposed surface.
+///
+/// `env` overlays the studio's own environment for this one run. The caller
+/// that needs it is "test this pack now": `--install` lands the pack under
+/// `settings.data_dir`, which the engine reads from `TRPG_DATA_DIR`, and the
+/// one-click local server runs with its own data dir — without the overlay the
+/// pack would install where nothing is going to look for it.
 #[tauri::command]
 pub async fn run_engine_cli(
     program: String,
     args: Vec<String>,
     cwd: Option<String>,
+    env: Option<HashMap<String, String>>,
 ) -> Result<RunResult, String> {
     let mut command = Command::new(&program);
     command
@@ -138,6 +146,9 @@ pub async fn run_engine_cli(
         .kill_on_drop(true);
     if let Some(dir) = &cwd {
         command.current_dir(dir);
+    }
+    for (key, value) in env.unwrap_or_default() {
+        command.env(key, value);
     }
     let mut child = command
         .spawn()

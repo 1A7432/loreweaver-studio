@@ -15,6 +15,9 @@ export type HostLocalEvent =
 export interface HostLocalStatus {
   running: boolean
   home: string
+  /** The server's `TRPG_DATA_DIR` (`<home>/data`) — where an installed pack
+   * has to land for this server to resolve `<packId>/…` refs against it. */
+  dataDir: string
 }
 
 export async function hostLocalStart(engineRepoDir?: string, homeOverride?: string): Promise<void> {

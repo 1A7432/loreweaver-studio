@@ -54,6 +54,10 @@ pub struct HostLocalState(pub Mutex<Option<Child>>);
 pub struct HostLocalStatus {
     pub running: bool,
     pub home: String,
+    /// What the local server runs with as `TRPG_DATA_DIR`. Anything that must
+    /// be visible to it — an installed pack above all — has to land here, so
+    /// the caller needs the resolved path, not just the home.
+    pub data_dir: String,
 }
 
 struct LocalPaths {
@@ -651,12 +655,11 @@ pub async fn host_local_status(
             None => false,
         }
     };
+    let paths = resolve_paths(home_override.as_deref());
     Ok(HostLocalStatus {
         running,
-        home: resolve_paths(home_override.as_deref())
-            .home
-            .to_string_lossy()
-            .into_owned(),
+        home: paths.home.to_string_lossy().into_owned(),
+        data_dir: paths.data_dir.to_string_lossy().into_owned(),
     })
 }
 

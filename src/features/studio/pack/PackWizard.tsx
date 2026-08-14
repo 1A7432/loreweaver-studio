@@ -16,6 +16,7 @@ import {
   readFileByPath,
   runEngineCli,
   writePackSource,
+  type EngineCandidate,
   type PickedFile,
 } from "../../../lib/native"
 import { isTauri } from "../../../lib/transport"
@@ -32,6 +33,7 @@ import { aiFillLabels } from "../ai/labels"
 import { PACK_METADATA_SYSTEM } from "../ai/prompts"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { draftToPackMetadata } from "../ai/schemas"
+import { isTestDriveErrorKey, useTestDriveStore } from "../../../store/testDrive"
 import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
 import { buildPackSourcePlan, presentationSummary } from "../split/packSource"
 import PresentationStage from "./PresentationStage"
@@ -179,6 +181,77 @@ function TrustCard({ result }: { result: PackBuildSuccess }) {
           </li>
         ) : null}
       </ul>
+    </section>
+  )
+}
+
+/** The end of the author loop: install into the local server's own data dir,
+ * bring that server up, join as keeper, and issue the pack's import commands —
+ * the sequence the author used to run by hand across two views. */
+function TestDrivePanel({
+  candidate,
+  result,
+  packPath,
+}: {
+  candidate: EngineCandidate | null
+  result: PackBuildSuccess
+  packPath: string
+}) {
+  const { t } = useTranslation()
+  const drive = useTestDriveStore()
+  const busy = drive.phase !== "idle" && drive.phase !== "ready" && drive.phase !== "error"
+
+  return (
+    <section className="pack-output" aria-label={t("studio.pack.testDrive.title")}>
+      <h3>{t("studio.pack.testDrive.title")}</h3>
+      <p className="studio-hint">{t("studio.pack.testDrive.hint")}</p>
+      <div className="dialog-row">
+        <button
+          type="button"
+          className="primary-button"
+          disabled={candidate === null || busy}
+          onClick={() =>
+            void drive.run({
+              candidate: candidate!,
+              packPath,
+              packId: result.id,
+              packVersion: result.version,
+              // Skills and rulepacks are registered at server startup, so a
+              // pack carrying either needs the server restarted, not just the
+              // install re-run.
+              carriesSkillsOrRulepacks: (result.trust?.skills ?? 0) > 0 || (result.trust?.rulepacks ?? 0) > 0,
+            })
+          }
+        >
+          {busy ? t(`studio.pack.testDrive.phase.${drive.phase}`) : t("studio.pack.testDrive.run")}
+        </button>
+        {drive.phase !== "idle" ? (
+          <button type="button" className="ghost-button" onClick={() => drive.reset()} disabled={busy}>
+            {t("studio.pack.testDrive.clear")}
+          </button>
+        ) : null}
+      </div>
+      {drive.dataDir !== null ? (
+        <p className="studio-hint">{t("studio.pack.testDrive.dataDir", { dir: drive.dataDir })}</p>
+      ) : null}
+      {drive.commands.length > 0 ? (
+        <>
+          <p className="studio-hint">
+            {t("studio.pack.testDrive.commands", { sent: drive.sent, total: drive.commands.length })}
+          </p>
+          <pre className="split-code pack-command">{drive.commands.join("\n")}</pre>
+        </>
+      ) : null}
+      {drive.phase === "ready" ? (
+        <p className="studio-notice" role="status">
+          {t("studio.pack.testDrive.ready")}
+        </p>
+      ) : null}
+      {drive.phase === "error" && drive.error !== null ? (
+        <p className="studio-notice split-error" role="alert">
+          {isTestDriveErrorKey(drive.error) ? t(`studio.pack.${drive.error}`) : drive.error}
+        </p>
+      ) : null}
     </section>
   )
 }
@@ -913,6 +986,9 @@ export default function PackWizard() {
             ) : null}
           </div>
           {store.packResult !== null ? <TrustCard result={store.packResult} /> : null}
+          {store.packResult !== null && store.builtPackPath !== null ? (
+            <TestDrivePanel candidate={candidate} result={store.packResult} packPath={store.builtPackPath} />
+          ) : null}
           {store.runResult !== null ? (
             <div className="pack-output">
               <p

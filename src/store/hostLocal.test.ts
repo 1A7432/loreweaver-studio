@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const bridge = vi.hoisted(() => ({
   hostLocalStart: vi.fn(async () => {}),
   hostLocalStop: vi.fn(async () => true),
-  hostLocalStatus: vi.fn(async () => ({ running: false, home: "/tmp/.loreweaver" })),
+  hostLocalStatus: vi.fn(async () => ({
+    running: false,
+    home: "/tmp/.loreweaver",
+    dataDir: "/tmp/.loreweaver/data",
+  })),
   onHostLocalEvent: vi.fn(async () => () => {}),
 }))
 vi.mock("../lib/hostLocal", () => ({ ...bridge, HOST_LOCAL_EVENT: "loreweaver://host-local" }))

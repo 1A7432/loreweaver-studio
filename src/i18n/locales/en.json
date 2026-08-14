@@ -914,6 +914,30 @@
         "imagegenAllowed": "allowed",
         "imagegenPackOnly": "pack-only (the author vetoed generation)",
         "sha": "sha256 {{hash}}…"
+      },
+      "testDrive": {
+        "title": "Test this pack now",
+        "hint": "Installs the built pack into the local server's own data folder, starts that server (restarting it when the pack ships skills or rulepacks, which are registered at startup), joins as keeper, and issues the pack's import commands. Then it hands you the live table.",
+        "run": "Test now",
+        "clear": "Clear",
+        "dataDir": "Installed into {{dir}} — the folder the local server reads.",
+        "commands": "Keeper commands: {{sent}} of {{total}} issued.",
+        "ready": "Imported. The table is live in Play.",
+        "phase": {
+          "installing": "Installing…",
+          "starting": "Starting the local server…",
+          "connecting": "Connecting as keeper…",
+          "importing": "Importing…"
+        },
+        "err": {
+          "desktopOnly": "Testing a pack needs the desktop app.",
+          "installFailed": "The engine refused to install the pack.",
+          "noManifest": "The install left no readable manifest, so there is nothing to import from.",
+          "no-pack-id": "This pack's id is not a valid pack slug, so the server cannot resolve pack-relative paths for it.",
+          "nothing-importable": "This pack carries no world card and no lorebook, so there is nothing for a keeper to import.",
+          "connectTimeout": "The local server never came online.",
+          "notKeeper": "This connection is not a keeper, and a world import is keeper-only."
+        }
       }
     }
   }
