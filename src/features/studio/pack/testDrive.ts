@@ -23,11 +23,17 @@ import { parse as parseYaml } from "yaml"
 
 /** How a pack gets in front of a live Keeper.
  *
- * `install-then-import` is the shipped mode. The engine lane is building a
- * dev-room hot reload (mount a pack SOURCE dir into a sandbox room, save →
- * live reload); when it lands it becomes a second mode here, and only
- * {@link planTestDrive} and its caller in the store change. */
-export type TestDriveMode = "install-then-import"
+ * `install-then-import` builds, installs and imports — the release-shaped path,
+ * and the only one that proves the artifact a player will receive.
+ *
+ * `mount-source` is the engine's author dev room (`gateway/dev_room.py`,
+ * landed 2026-08-15): the server mounts a pack SOURCE tree and follows it, so a
+ * save reloads lore, skills, rulepacks and panels into the live room while the
+ * room's variable values survive. It skips the build entirely, which is the
+ * point AND the caveat — a dev mount serves panels and the kit straight from
+ * source, past the build-time caps, so `--pack` remains the gate a release has
+ * to pass. */
+export type TestDriveMode = "install-then-import" | "mount-source"
 
 export interface TestDriveCard {
   /** Path inside the pack, as the manifest lists it (`cards/keeper.json`). */
@@ -48,7 +54,7 @@ export interface TestDrivePlan {
   /** Keeper commands, in the order they must be issued. */
   commands: string[]
   /** Why the plan is empty, when it is. */
-  emptyReason: "no-pack-id" | "nothing-importable" | null
+  emptyReason: "no-pack-id" | "nothing-importable" | "no-source-dir" | null
 }
 
 /** Mirror of `core/pack.py::_SLUG_RE` — the rule `resolve_installed_path`
@@ -105,7 +111,17 @@ export function readInstalledManifest(yamlText: string): TestDriveSource | null 
 export function planTestDrive(
   source: TestDriveSource,
   mode: TestDriveMode = "install-then-import",
+  sourceDir = "",
 ): TestDrivePlan {
+  if (mode === "mount-source") {
+    // One command, and the engine does the rest: `.dev mount` imports the tree
+    // and starts watching it. Confined under TRPG_DEV__SOURCE_ROOT, which the
+    // studio sets when it starts the server for this mode.
+    const dir = sourceDir.trim()
+    return dir
+      ? { mode, commands: [`.dev mount ${dir}`], emptyReason: null }
+      : { mode, commands: [], emptyReason: "no-source-dir" }
+  }
   const packId = source.packId.trim()
   if (!SLUG.test(packId)) {
     return { mode, commands: [], emptyReason: "no-pack-id" }

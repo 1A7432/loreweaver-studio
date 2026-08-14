@@ -20,10 +20,19 @@ export interface HostLocalStatus {
   dataDir: string
 }
 
-export async function hostLocalStart(engineRepoDir?: string, homeOverride?: string): Promise<void> {
+/** `devSourceRoot` turns the engine's author dev-room surface on for this
+ * server (`TRPG_DEV__SOURCE_ROOT`, `gateway/dev_room.py`): `.dev mount` resolves
+ * only under it, and the surface is off entirely while it is unset. It is read
+ * at startup, so switching it means starting a server, not reconfiguring one. */
+export async function hostLocalStart(
+  engineRepoDir?: string,
+  homeOverride?: string,
+  devSourceRoot?: string,
+): Promise<void> {
   await invoke("host_local_start", {
     engineRepoDir: engineRepoDir || null,
     homeOverride: homeOverride || null,
+    devSourceRoot: devSourceRoot || null,
   })
 }
 

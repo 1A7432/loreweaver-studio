@@ -35,6 +35,7 @@ function LoreEntriesEditor({
 
   return (
     <div className="wizard-entries">
+      <p className="studio-hint">{t("studio.macroDeterminism")}</p>
       {entries.map((entry, index) => (
         <div key={entry.slot} className="wizard-entry">
           <div className="dialog-row">
@@ -554,6 +555,7 @@ export default function DraftEditor({
               onChange={(e) => onChange({ ...draft, updateRules: e.target.value })}
             />
           </label>
+          <p className="studio-hint">{t("studio.macroDeterminism")}</p>
         </div>
       )
   }

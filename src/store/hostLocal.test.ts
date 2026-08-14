@@ -23,6 +23,7 @@ function reset() {
     hostedSession: false,
     homeOverride: "",
     effectiveHome: "",
+    devSourceRoot: "",
   })
 }
 
@@ -66,7 +67,22 @@ describe("hostLocal store", () => {
     try {
       useHostLocalStore.setState({ homeOverride: "  /Volumes/Table/loreweaver  " })
       await useHostLocalStore.getState().start()
-      expect(bridge.hostLocalStart).toHaveBeenCalledWith(undefined, "/Volumes/Table/loreweaver")
+      expect(bridge.hostLocalStart).toHaveBeenCalledWith(undefined, "/Volumes/Table/loreweaver", undefined)
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+    }
+  })
+
+  it("remembers the dev-room source root it started with", async () => {
+    // `TRPG_DEV__SOURCE_ROOT` is read at STARTUP, so a caller that needs a
+    // different root has to restart — which it can only know by asking.
+    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    try {
+      await useHostLocalStore.getState().start("/Users/nyx/packs")
+      expect(bridge.hostLocalStart).toHaveBeenCalledWith(undefined, undefined, "/Users/nyx/packs")
+      expect(useHostLocalStore.getState().devSourceRoot).toBe("/Users/nyx/packs")
+      await useHostLocalStore.getState().stop()
+      expect(useHostLocalStore.getState().devSourceRoot).toBe("")
     } finally {
       delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
     }

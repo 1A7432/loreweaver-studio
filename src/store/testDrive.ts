@@ -42,6 +42,8 @@ export interface TestDriveRequest {
   packPath: string
   packId: string
   packVersion: string
+  /** The pack SOURCE tree on disk. Only `mount-source` needs it. */
+  sourceDir?: string
   /** Skills and rulepacks are loaded when the server STARTS, so a pack that
    * ships them needs the server restarted after the install — an already
    * running one would play the module without its skills. */
@@ -94,6 +96,10 @@ export const useTestDriveStore = create<TestDriveState>()((set) => ({
   run: async (request) => {
     if (!isTauri()) {
       set({ ...IDLE, phase: "error", error: "testDrive.err.desktopOnly" })
+      return
+    }
+    if (request.mode === "mount-source") {
+      await mountSource(set, request)
       return
     }
     set({ ...IDLE, phase: "installing" })
@@ -182,6 +188,65 @@ export const useTestDriveStore = create<TestDriveState>()((set) => ({
     }
   },
 }))
+
+/** The dev-room path: no build, no install. The server is (re)started with
+ * `TRPG_DEV__SOURCE_ROOT` pointing at the source tree's PARENT — the engine
+ * confines every mount under that root and the whole surface is off while it is
+ * unset — and one `.dev mount` hands the tree to the room, which then follows
+ * every save. The root is read at STARTUP, so a server already running without
+ * it (or with a different one) has to be restarted, not reconfigured. */
+async function mountSource(
+  set: (partial: Partial<TestDriveState> | ((state: TestDriveState) => Partial<TestDriveState>)) => void,
+  request: TestDriveRequest,
+): Promise<void> {
+  const sourceDir = (request.sourceDir ?? "").trim()
+  const plan = planTestDrive({ packId: request.packId, cards: [], lorebooks: [] }, "mount-source", sourceDir)
+  set({ ...IDLE, phase: "starting", commands: plan.commands })
+  if (plan.emptyReason !== null) {
+    set({ phase: "error", error: `testDrive.err.${plan.emptyReason}` })
+    return
+  }
+  // The parent, not the tree itself: the author will mount siblings next.
+  const root = sourceDir.replace(/\/[^/]+\/?$/, "") || sourceDir
+
+  try {
+    const host = useHostLocalStore.getState()
+    const ready = host.phase === "ready" && useConnectionStore.getState().status === "online"
+    if (!ready || host.devSourceRoot !== root) {
+      if (ready) {
+        await useHostLocalStore.getState().stop()
+        await useConnectionStore.getState().disconnect()
+      }
+      await useHostLocalStore.getState().start(root)
+    }
+
+    set({ phase: "connecting" })
+    const online = await waitFor(() => {
+      const state = useConnectionStore.getState()
+      return state.status === "online" && state.welcome !== null
+    }, CONNECT_TIMEOUT_MS)
+    if (!online) {
+      const reason = useHostLocalStore.getState().error ?? useConnectionStore.getState().lastError
+      set({ phase: "error", error: reason ?? "testDrive.err.connectTimeout" })
+      return
+    }
+    if (useConnectionStore.getState().welcome?.you.role !== "keeper") {
+      set({ phase: "error", error: "testDrive.err.notKeeper" })
+      return
+    }
+
+    set({ phase: "importing", sent: 0 })
+    for (const command of plan.commands) {
+      await transportSend({ type: "input", text: command })
+      set((state) => ({ sent: state.sent + 1 }))
+      await sleep(COMMAND_GAP_MS)
+    }
+    set({ phase: "ready" })
+    useAppStore.getState().setMode("play")
+  } catch (cause) {
+    set({ phase: "error", error: cause instanceof Error ? cause.message : String(cause) })
+  }
+}
 
 /** Whether a failure message is one of our i18n keys (vs. an engine/OS string
  * that must be shown verbatim). */

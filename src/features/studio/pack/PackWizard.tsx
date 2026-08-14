@@ -34,6 +34,7 @@ import { PACK_METADATA_SYSTEM } from "../ai/prompts"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { draftToPackMetadata } from "../ai/schemas"
 import { isTestDriveErrorKey, useTestDriveStore } from "../../../store/testDrive"
+import type { TestDriveMode } from "./testDrive"
 import LintPanel from "../lint/LintPanel"
 import { lintPack } from "../lint/packLint"
 import { lintSourceFromPackBench } from "../lint/sources"
@@ -234,30 +235,48 @@ function TestDrivePanel({
   candidate,
   result,
   packPath,
+  sourceDir,
 }: {
   candidate: EngineCandidate | null
   result: PackBuildSuccess
   packPath: string
+  sourceDir: string | null
 }) {
   const { t } = useTranslation()
   const drive = useTestDriveStore()
+  const [mode, setMode] = useState<TestDriveMode>("install-then-import")
   const busy = drive.phase !== "idle" && drive.phase !== "ready" && drive.phase !== "error"
 
   return (
     <section className="pack-output" aria-label={t("studio.pack.testDrive.title")}>
       <h3>{t("studio.pack.testDrive.title")}</h3>
-      <p className="studio-hint">{t("studio.pack.testDrive.hint")}</p>
+      <div className="dialog-row">
+        <label className="field field-narrow">
+          {t("studio.pack.testDrive.mode")}
+          <select value={mode} onChange={(e) => setMode(e.target.value as TestDriveMode)}>
+            <option value="install-then-import">{t("studio.pack.testDrive.modeInstall")}</option>
+            <option value="mount-source" disabled={sourceDir === null}>
+              {t("studio.pack.testDrive.modeMount")}
+            </option>
+          </select>
+        </label>
+      </div>
+      <p className="studio-hint">
+        {t(mode === "mount-source" ? "studio.pack.testDrive.mountHint" : "studio.pack.testDrive.hint")}
+      </p>
       <div className="dialog-row">
         <button
           type="button"
           className="primary-button"
-          disabled={candidate === null || busy}
+          disabled={(candidate === null && mode !== "mount-source") || busy}
           onClick={() =>
             void drive.run({
               candidate: candidate!,
               packPath,
               packId: result.id,
               packVersion: result.version,
+              sourceDir: sourceDir ?? undefined,
+              mode,
               // Skills and rulepacks are registered at server startup, so a
               // pack carrying either needs the server restarted, not just the
               // install re-run.
@@ -1242,7 +1261,12 @@ export default function PackWizard() {
           </div>
           {store.packResult !== null ? <TrustCard result={store.packResult} /> : null}
           {store.packResult !== null && store.builtPackPath !== null ? (
-            <TestDrivePanel candidate={candidate} result={store.packResult} packPath={store.builtPackPath} />
+            <TestDrivePanel
+              candidate={candidate}
+              result={store.packResult}
+              packPath={store.builtPackPath}
+              sourceDir={store.writtenDir}
+            />
           ) : null}
           {store.runResult !== null ? (
             <div className="pack-output">

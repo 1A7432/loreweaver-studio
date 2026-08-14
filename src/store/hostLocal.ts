@@ -31,10 +31,14 @@ interface HostLocalState {
   homeOverride: string
   /** The resolved effective home, for display (refreshed by refreshHome). */
   effectiveHome: string
+  /** The dev-room source root the RUNNING server was started with ("" = none).
+   * `TRPG_DEV__SOURCE_ROOT` is read at startup, so a caller that needs a
+   * different one has to restart rather than reconfigure. */
+  devSourceRoot: string
 
   setHomeOverride: (path: string) => void
   refreshHome: () => Promise<void>
-  start: () => Promise<void>
+  start: (devSourceRoot?: string) => Promise<void>
   stop: () => Promise<void>
   ingest: (event: HostLocalEvent) => void
 }
@@ -56,6 +60,7 @@ export const useHostLocalStore = create<HostLocalState>()(
       hostedSession: false,
       homeOverride: "",
       effectiveHome: "",
+      devSourceRoot: "",
 
       setHomeOverride: (path) => {
         set({ homeOverride: path })
@@ -72,18 +77,19 @@ export const useHostLocalStore = create<HostLocalState>()(
         }
       },
 
-      start: async () => {
+      start: async (devSourceRoot = "") => {
         if (!isTauri()) {
           set({ phase: "error", error: "local hosting needs the desktop app" })
           return
         }
         if (get().phase === "starting") return
-        set({ phase: "starting", log: [], error: null, hostedSession: false })
+        set({ phase: "starting", log: [], error: null, hostedSession: false, devSourceRoot })
         try {
           await subscribeOnce(get().ingest)
           await hostLocalStart(
             useAiStore.getState().engineRepoDir.trim() || undefined,
             get().homeOverride.trim() || undefined,
+            devSourceRoot || undefined,
           )
         } catch (cause) {
           set({ phase: "error", error: cause instanceof Error ? cause.message : String(cause) })
@@ -96,7 +102,7 @@ export const useHostLocalStore = create<HostLocalState>()(
         } catch {
           // Nothing to stop is fine.
         }
-        set({ phase: "idle", hostedSession: false })
+        set({ phase: "idle", hostedSession: false, devSourceRoot: "" })
       },
 
       ingest: (event) => {

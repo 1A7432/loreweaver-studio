@@ -161,3 +161,64 @@ describe("test-drive store", () => {
     expect(useTestDriveStore.getState().error).toBe("testDrive.err.noManifest")
   })
 })
+
+describe("test-drive: the dev-room mode", () => {
+  const MOUNT = { ...REQUEST, mode: "mount-source" as const, sourceDir: "/Users/nyx/packs/corridor" }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useTestDriveStore.getState().reset()
+    useHostLocalStore.setState({ phase: "idle", error: null, homeOverride: "", devSourceRoot: "" })
+    useConnectionStore.setState({ status: "offline", welcome: null, lastError: null })
+    useAppStore.setState({ mode: "studio" })
+  })
+
+  it("starts the server with the tree's PARENT as the dev root, then mounts", async () => {
+    // The engine confines every mount under TRPG_DEV__SOURCE_ROOT, and the
+    // author's next mount is a sibling — so the root is the packs directory.
+    const start = vi.fn(async (root?: string) => {
+      useHostLocalStore.setState({ phase: "ready", devSourceRoot: root ?? "" })
+      useConnectionStore.setState({ status: "online", welcome: WELCOME })
+    })
+    useHostLocalStore.setState({ start })
+
+    await useTestDriveStore.getState().run(MOUNT)
+    expect(start).toHaveBeenCalledWith("/Users/nyx/packs")
+    expect(transport.transportSend.mock.calls.map((call) => call[0])).toEqual([
+      { type: "input", text: ".dev mount /Users/nyx/packs/corridor" },
+    ])
+    expect(useTestDriveStore.getState().phase).toBe("ready")
+    expect(useAppStore.getState().mode).toBe("play")
+  })
+
+  it("builds and installs nothing — that is the whole point of the mode", async () => {
+    useHostLocalStore.setState({
+      start: vi.fn(async () => {}),
+      phase: "ready",
+      devSourceRoot: "/Users/nyx/packs",
+    })
+    useConnectionStore.setState({ status: "online", welcome: WELCOME })
+    await useTestDriveStore.getState().run(MOUNT)
+    expect(native.runEngineCli).not.toHaveBeenCalled()
+    expect(native.readFileByPath).not.toHaveBeenCalled()
+  })
+
+  it("restarts a server that is running under a different dev root", async () => {
+    // `TRPG_DEV__SOURCE_ROOT` is read at startup; reconfiguring is not a thing.
+    const stop = vi.fn(async () => {})
+    const start = vi.fn(async (root?: string) => {
+      useHostLocalStore.setState({ phase: "ready", devSourceRoot: root ?? "" })
+    })
+    useHostLocalStore.setState({ phase: "ready", devSourceRoot: "/somewhere/else", start, stop })
+    useConnectionStore.setState({ status: "online", welcome: WELCOME })
+
+    await useTestDriveStore.getState().run(MOUNT)
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledWith("/Users/nyx/packs")
+  })
+
+  it("says so when there is no source tree to mount", async () => {
+    await useTestDriveStore.getState().run({ ...MOUNT, sourceDir: "" })
+    expect(useTestDriveStore.getState().error).toBe("testDrive.err.no-source-dir")
+  })
+})

@@ -200,6 +200,7 @@ export default function WorldbookTab({
           ))}
         </ul>
         {project.lorebook.length === 0 ? <p className="studio-hint">{t("studio.wb.noEntries")}</p> : null}
+        <p className="studio-hint">{t("studio.macroDeterminism")}</p>
       </div>
       <div className="wb-detail">
         {selected ? (

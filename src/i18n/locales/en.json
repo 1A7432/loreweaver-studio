@@ -988,8 +988,13 @@
           "no-pack-id": "This pack's id is not a valid pack slug, so the server cannot resolve pack-relative paths for it.",
           "nothing-importable": "This pack carries no world card and no lorebook, so there is nothing for a keeper to import.",
           "connectTimeout": "The local server never came online.",
-          "notKeeper": "This connection is not a keeper, and a world import is keeper-only."
-        }
+          "notKeeper": "This connection is not a keeper, and a world import is keeper-only.",
+          "no-source-dir": "There is no source tree on disk to mount — write the pack source first."
+        },
+        "mode": "How",
+        "modeInstall": "Install and import",
+        "modeMount": "Mount the source (dev room)",
+        "mountHint": "Skips the build entirely: the local server mounts your SOURCE tree and the room follows every save — lore, skills, rulepacks and panels reload live, and the room's variable values survive. A dev mount serves panels and the kit straight from source, past the build-time caps, so keep testing the built pack before you release."
       },
       "needsBytes": "Restored without its bytes: {{name}} ({{size}} bytes). Everything else came back.",
       "reattach": "Re-attach",
@@ -1107,6 +1112,7 @@
         "empty": "“{{where}}”: the [InitVar] block is empty.",
         "syntaxAt": "“{{where}}”: the [InitVar] block does not parse at line {{line}} — {{detail}} No variables were taken from it."
       }
-    }
+    },
+    "macroDeterminism": "{{random}} / {{pick}} (and a lore entry's probability roll) are seeded per room and TURN: different turns vary freely, but re-running the same turn — a retry, an undo replay — reproduces the same picks. Expect “random” to repeat within one turn; that is what makes a turn reconstructable. The two draws use separate streams, so adding a {{random}} never shifts which probabilistic entries fire."
   }
 }

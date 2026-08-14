@@ -105,3 +105,24 @@ contents:
     })
   })
 })
+
+describe("planTestDrive — the dev-room mode", () => {
+  it("is one command: the engine mounts the tree and then follows it", () => {
+    // `gateway/dev_room.py`: `.dev mount <src-dir>` imports the module and
+    // starts watching, so the studio has nothing else to say.
+    const plan = planTestDrive(SOURCE, "mount-source", "/Users/nyx/packs/corridor-apartment")
+    expect(plan.commands).toEqual([".dev mount /Users/nyx/packs/corridor-apartment"])
+    expect(plan.emptyReason).toBeNull()
+  })
+
+  it("needs a source tree on disk, and says which is missing", () => {
+    const plan = planTestDrive(SOURCE, "mount-source", "   ")
+    expect(plan.commands).toEqual([])
+    expect(plan.emptyReason).toBe("no-source-dir")
+  })
+
+  it("does not care about the pack id — nothing is installed to resolve against", () => {
+    const plan = planTestDrive({ packId: "", cards: [], lorebooks: [] }, "mount-source", "/tmp/pack")
+    expect(plan.commands).toEqual([".dev mount /tmp/pack"])
+  })
+})

@@ -534,6 +534,7 @@ pub async fn host_local_start(
     state: State<'_, HostLocalState>,
     engine_repo_dir: Option<String>,
     home_override: Option<String>,
+    dev_source_root: Option<String>,
 ) -> Result<(), String> {
     {
         let mut guard = state
@@ -589,6 +590,19 @@ pub async fn host_local_start(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Author dev rooms (`gateway/dev_room.py`): `.dev mount` resolves ONLY
+    // under this root and the whole surface is off while it is unset, so the
+    // studio sets it exactly when the author asked to mount a source tree.
+    // Settings are read at startup, which is why turning this on restarts the
+    // server rather than reconfiguring a running one.
+    if let Some(root) = dev_source_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+    {
+        command.env("TRPG_DEV__SOURCE_ROOT", root);
+        emit_log(&app, "step", format!("Dev-room source root: {root}"));
+    }
 
     emit_log(
         &app,
