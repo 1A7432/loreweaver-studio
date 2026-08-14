@@ -5,6 +5,7 @@ import {
   buildPackSourcePlan,
   buildPresentationYaml,
   buildSkillMd,
+  readPrepScript,
   safeFileName,
   validatePackDraft,
   type PackPresentationDraft,
@@ -33,6 +34,7 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
     skills: [],
     rulepacks: [],
     assets: [],
+    prep: [],
     panels: null,
     presentation: null,
     ...overrides,
@@ -865,5 +867,44 @@ audio:
     const collision = issues.find((issue) => issue.key === "packDuplicatePath")
     expect(collision?.params?.file).toBe("assets/wantang.png")
     expect(collision?.params?.from).toBe("presentation")
+  })
+})
+
+describe("prep-phase scripts (M20 F)", () => {
+  const SCRIPT = `for (const name of ["a", "b"]) {
+  plan("add_npc", { name: name })
+}
+plan("define_variable", { var_id: "floor_seen", kind: "number" })
+`
+
+  it("declares contents.prep and lays the file under prep/", () => {
+    const withPrep = draft({ prep: [{ fileName: "setup.js", source: SCRIPT }] })
+    expect(validatePackDraft(withPrep)).toEqual([])
+    const plan = buildPackSourcePlan(withPrep)
+    expect(plan.files.map((file) => file.path)).toContain("prep/setup.js")
+    const manifest = parse(plan.files[0].contents) as { contents: Record<string, unknown> }
+    expect(manifest.contents.prep).toEqual(["prep/setup.js"])
+  })
+
+  it("mirrors the engine's build checks — extension, plain name, size, emptiness", () => {
+    const keys = (script: { fileName: string; source: string }) =>
+      validatePackDraft(draft({ prep: [script] })).map((issue) => issue.key)
+    expect(keys({ fileName: "setup.ts", source: SCRIPT })).toContain("packPrepNotJs")
+    expect(keys({ fileName: "nested/setup.js", source: SCRIPT })).toContain("packPrepPath")
+    expect(keys({ fileName: "setup.js", source: "x".repeat(20_001) })).toContain("packPrepTooLong")
+    expect(keys({ fileName: "setup.js", source: "   " })).toContain("packPrepEmpty")
+  })
+
+  it("reads what the source plans and what it reaches for", () => {
+    const reading = readPrepScript(SCRIPT)
+    expect(reading.literalPlanCalls).toBe(2)
+    expect(reading.hasLoop).toBe(true)
+    expect(reading.forbidden).toEqual([])
+
+    // A quoted `plan(` is text, not a call — and a fetch is a script that will
+    // fail at preview, because the sandbox has no network.
+    const reaching = readPrepScript('const s = "plan(" \nawait fetch("https://x")\n')
+    expect(reaching.literalPlanCalls).toBe(0)
+    expect(reaching.forbidden).toEqual(["fetch"])
   })
 })

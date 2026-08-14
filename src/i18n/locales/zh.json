@@ -821,7 +821,11 @@
         "rulepackTurnCheckMapping": "规则包：turn_checks[{{index}}] 必须是映射。",
         "rulepackTurnCheckKey": "规则包：turn_checks[{{index}}] 含有未知键“{{field}}”。",
         "rulepackTurnCheckWhen": "规则包：turn_checks[{{index}}] 需要一个 `when:` 条件名。",
-        "rulepackThin": "规则包：这个文件既没有扩展某个系统，也没有定义一个——其中的内容不会改变牌桌的玩法。"
+        "rulepackThin": "规则包：这个文件既没有扩展某个系统，也没有定义一个——其中的内容不会改变牌桌的玩法。",
+        "packPrepNotJs": "准备脚本“{{file}}”必须是 .js 文件——引擎构建会拒绝其他扩展名。",
+        "packPrepPath": "准备脚本“{{file}}”：请使用普通文件名；脚本直接放在 prep/ 下。",
+        "packPrepTooLong": "准备脚本“{{file}}”超过了沙箱的 {{max}} 字符上限。",
+        "packPrepEmpty": "准备脚本“{{file}}”是空的。"
       },
       "panels": {
         "title": "模组 UI 面板（M15）",
@@ -959,7 +963,9 @@
         "presentation": "舞台监督：{{subjects}} 个可配图主体——图像生成：{{imagegen}}",
         "imagegenAllowed": "允许",
         "imagegenPackOnly": "仅限包内素材（作者已否决生成）",
-        "sha": "sha256 {{hash}}…"
+        "sha": "sha256 {{hash}}…",
+        "prepScripts": "准备阶段脚本：{{count}} 个——keeper 可在准备阶段按引用运行的代码；绝不会自行运行",
+        "presets": "提示词预设：{{count}} 个——会安装进服务器共享的预设库"
       },
       "testDrive": {
         "title": "立即试玩这个模组包",
@@ -999,6 +1005,24 @@
         "summary": "基底：{{base}} · {{stats}} 项属性 · {{derived}} 项派生 · {{subsystems}} 个子系统 · {{commands}} 条命令",
         "noBase": "无（独立系统）",
         "advisory": "仅供参考——引擎会在构建时重新解析这个文件，以它的判定为准。"
+      },
+      "prep": {
+        "title": "准备阶段脚本",
+        "hint": "keeper 在准备阶段按引用运行一次的批量布置：从名单生成四十个 NPC、定义一族变量。脚本只负责「计划」，引擎在完整展示计划后才执行。这里的任何东西都不会在安装时运行。",
+        "add": "添加准备脚本",
+        "showApi": "API 参考",
+        "hideApi": "收起参考",
+        "apiPlan": "plan(tool, args) 是唯一可调用的东西。沙箱里没有引擎状态、没有宿主、没有网络——脚本产出一份操作清单然后结束。",
+        "apiLimits": "限制：脚本 {{chars}} 字符、每份计划 {{ops}} 个操作、每个操作 8 KB 参数、1 秒 CPU。",
+        "apiGating": "计划中的每次调用都会经过与模型发起的调用完全相同的参数校验、keeper_only 标记与受控技能检查——因为那本来就是同一段代码。",
+        "apiUnreachable": "`.import … world` 与 `.var expose` 是 keeper 命令而非工具，因此计划永远无法指名它们。",
+        "apiPreview": "预览是免费的：keeper 先以不执行的方式运行，读完整份操作清单，然后才真正执行。",
+        "fileName": "文件名",
+        "source": "脚本",
+        "reading": "{{chars}}/{{max}} 字符 · 字面上的 plan() 调用 {{calls}} 次",
+        "readingLoop": "循环会计划出未知数量——引擎将一份计划限制在 {{ops}} 个操作以内",
+        "forbidden": "这个脚本用到了 {{names}}，而沙箱并不提供它们。预览时会失败。",
+        "invoke": "keeper 用这条命令运行它：run_prep_plan(script_ref=\"{{ref}}\")"
       }
     },
     "lint": {

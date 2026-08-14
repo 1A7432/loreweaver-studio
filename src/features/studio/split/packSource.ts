@@ -170,6 +170,25 @@ export interface PackPresentationDraft {
   audio: PackPresentationAudioDraft[]
 }
 
+// M20 F prep-phase scripts (`contents.prep`), mirroring `core/prep_script.py`
+// and the build-side checks in `core/pack.py::_validate_pack_prep_scripts`.
+// The engine's build checks are deliberately STATIC (extension, size, UTF-8) so
+// packs build identically on machines without the optional QuickJS extra; a
+// syntax error surfaces at `run_prep_plan`'s preview instead. The studio mirrors
+// exactly those checks, plus advisory counts of the runtime caps.
+export const PREP_DIR = "prep"
+export const MAX_PREP_SCRIPT_CHARS = 20_000
+export const MAX_PREP_OPERATIONS = 200
+
+/** One prep-phase plan script. `plan(tool, args)` is the only callable the
+ * sandbox exposes; the engine applies the emitted operation list through the
+ * ordinary tool path, previewed whole before anything is touched. */
+export interface PackPrepScriptDraft {
+  /** File name under `prep/` — `.js`, the extension the build enforces. */
+  fileName: string
+  source: string
+}
+
 export interface PackRulepackDraft {
   /** Becomes `rulepacks/<id>.yaml`; the id must be a slug. */
   id: string
@@ -202,6 +221,9 @@ export interface WorldPackDraft {
   skills: PackSkillDraft[]
   rulepacks: PackRulepackDraft[]
   assets: PackAssetDraft[]
+  /** M20 F prep-phase plan scripts. They NEVER run automatically — a keeper
+   * invokes one by reference and previews the plan first. */
+  prep: PackPrepScriptDraft[]
   /** M15 module-UI panels; null when the pack ships none. */
   panels: PackPanelsDraft | null
   /** M19 presentation kit; null when the pack ships none — the Stage Director
@@ -294,9 +316,51 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
     if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
     seenFiles.add(path)
   }
+  for (const script of draft.prep) {
+    // The engine's build-side checks, verbatim (`_validate_pack_prep_scripts`):
+    // `.js` extension and the sandbox's character cap. Everything else about a
+    // prep script is checked at preview time, not at build.
+    const path = `${PREP_DIR}/${script.fileName}`
+    if (!script.fileName.toLowerCase().endsWith(".js")) {
+      issues.push({ key: "packPrepNotJs", params: { file: path } })
+    }
+    if (script.fileName.includes("/")) {
+      issues.push({ key: "packPrepPath", params: { file: script.fileName } })
+    }
+    if (script.source.length > MAX_PREP_SCRIPT_CHARS) {
+      issues.push({ key: "packPrepTooLong", params: { file: path, max: MAX_PREP_SCRIPT_CHARS } })
+    }
+    if (!script.source.trim()) issues.push({ key: "packPrepEmpty", params: { file: path } })
+    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
+    seenFiles.add(path)
+  }
   if (draft.panels !== null) issues.push(...validatePanelsDraft(draft.panels, seenFiles))
   if (draft.presentation !== null) issues.push(...validatePresentationDraft(draft.presentation, seenFiles))
   return issues
+}
+
+/** Advisory reading of one prep script: how many operations it plans, and
+ * whether it reaches for anything the sandbox does not expose.
+ *
+ * `plan(tool, args)` is the ONLY callable (`core/prep_script.py::_PRELUDE`),
+ * and the engine caps a plan at {@link MAX_PREP_OPERATIONS} operations. A
+ * literal count is a lower bound — a loop can plan far more — so this reports
+ * what it can see and says so. */
+export function readPrepScript(source: string): {
+  literalPlanCalls: number
+  hasLoop: boolean
+  forbidden: string[]
+  chars: number
+} {
+  const withoutStrings = source.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, " ")
+  const literalPlanCalls = (withoutStrings.match(/\bplan\s*\(/g) ?? []).length
+  const hasLoop = /\b(?:for|while)\s*\(/.test(withoutStrings)
+  // The sandbox has no host, no network and no engine state. Naming one of
+  // these is not a build error — it is a script that will fail at preview.
+  const forbidden = ["fetch", "require", "import", "process", "globalThis.__plan", "XMLHttpRequest"].filter(
+    (name) => new RegExp(`\\b${name.replace(".", "\\.")}\\b`).test(withoutStrings),
+  )
+  return { literalPlanCalls, hasLoop, forbidden, chars: source.length }
 }
 
 /** The block-level 2.1 helpers. Everything else deep stays the ENGINE's job;
@@ -888,6 +952,9 @@ export function buildManifestYaml(draft: WorldPackDraft): string {
   if (draft.lorebooks.length > 0) {
     contents.lorebooks = draft.lorebooks.map((lorebook) => `lorebooks/${lorebook.fileName}`)
   }
+  if (draft.prep.length > 0) {
+    contents.prep = draft.prep.map((script) => `${PREP_DIR}/${script.fileName}`)
+  }
   if (draft.panels !== null) contents.panels = [PANELS_FILE_NAME]
   if (draft.presentation !== null) contents.presentation = [PRESENTATION_FILE_NAME]
   // NOTE: no `trust` block — it is generated at pack time; a hand-written one
@@ -971,6 +1038,9 @@ export function buildPackSourcePlan(draft: WorldPackDraft): PackSourcePlan {
   }
   for (const asset of draft.assets) {
     binaries.push({ path: `assets/${asset.fileName}`, base64: asset.base64 })
+  }
+  for (const script of draft.prep) {
+    files.push({ path: `${PREP_DIR}/${script.fileName}`, contents: script.source })
   }
   if (draft.panels !== null) {
     files.push({ path: PANELS_FILE_NAME, contents: draft.panels.yamlText })

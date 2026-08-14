@@ -73,7 +73,7 @@ trust = result.get("trust") or {}
 # One world lorecard (hooks + typed specs + secret entry) + one clean ST
 # character card; one skill with hooks; one CoC7 patch; one lorebook; two
 # panels; one kit subject licensing imagegen; seven assets (cover, 2 panel
-# images, tier-2 entry+js, kit ref, kit cue).
+# images, tier-2 entry+js, kit ref, kit cue); one prep-phase plan script.
 expected = {
     "skills": 1,
     "rulepacks": 1,
@@ -87,6 +87,8 @@ expected = {
     "panels": 2,
     "presentation": 1,
     "imagegen": True,
+    "prep_scripts": 1,
+    "presets": 0,
 }
 drift = {key: {"expected": want, "got": trust.get(key)} for key, want in expected.items() if trust.get(key) != want}
 if drift:

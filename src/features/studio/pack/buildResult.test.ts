@@ -19,6 +19,8 @@ const TRUST = {
   panels: 2,
   presentation: 4,
   imagegen: false,
+  presets: 1,
+  prep_scripts: 2,
 }
 
 describe("parsePackBuildJson", () => {

@@ -38,7 +38,14 @@ import LintPanel from "../lint/LintPanel"
 import { lintPack } from "../lint/packLint"
 import { lintSourceFromPackBench } from "../lint/sources"
 import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
-import { buildPackSourcePlan, presentationSummary } from "../split/packSource"
+import {
+  buildPackSourcePlan,
+  MAX_PREP_OPERATIONS,
+  MAX_PREP_SCRIPT_CHARS,
+  PREP_DIR,
+  presentationSummary,
+  readPrepScript,
+} from "../split/packSource"
 import { readRulepack } from "../split/rulepack"
 import PresentationStage from "./PresentationStage"
 import PromoteTable from "../split/PromoteTable"
@@ -201,6 +208,10 @@ function TrustCard({ result }: { result: PackBuildSuccess }) {
         <li>{t(trust.has_hooks ? "studio.pack.trust.hooksYes" : "studio.pack.trust.hooksNo")}</li>
         <li>{t(trust.has_ejs ? "studio.pack.trust.ejsYes" : "studio.pack.trust.ejsNo")}</li>
         <li>{t(trust.has_rules_script ? "studio.pack.trust.scriptYes" : "studio.pack.trust.scriptNo")}</li>
+        {trust.prep_scripts > 0 ? (
+          <li>{t("studio.pack.trust.prepScripts", { count: trust.prep_scripts })}</li>
+        ) : null}
+        {trust.presets > 0 ? <li>{t("studio.pack.trust.presets", { count: trust.presets })}</li> : null}
         {trust.presentation > 0 ? (
           <li>
             {t("studio.pack.trust.presentation", {
@@ -378,6 +389,103 @@ function RulepackSection() {
         </ul>
       ) : null}
       <p className="studio-hint">{t("studio.pack.rulepack.advisory")}</p>
+    </section>
+  )
+}
+
+/** The prep-script editor (M20 F). A prep script PLANS bulk setup — forty NPCs
+ * from a list, a family of variables — and the engine applies the plan through
+ * the ordinary tool path after a keeper previews it whole. It never runs at
+ * install, or at any other time, by itself.
+ *
+ * Checks here are the engine's BUILD checks (extension, size) plus an advisory
+ * read of what the source reaches for. Deliberately not a syntax check: the
+ * engine's own build is static too, so packs build identically on machines
+ * without the optional QuickJS extra, and a syntax error surfaces at preview. */
+function PrepScriptSection() {
+  const { t } = useTranslation()
+  const scripts = usePackStore((s) => s.prepScripts)
+  const add = usePackStore((s) => s.addPrepScript)
+  const update = usePackStore((s) => s.updatePrepScript)
+  const remove = usePackStore((s) => s.removePrepScript)
+  const packId = usePackStore((s) => s.metadata.id)
+  const [apiOpen, setApiOpen] = useState(false)
+
+  return (
+    <section className="pack-extra-section">
+      <div className="dialog-row">
+        <h3>{t("studio.pack.prep.title")}</h3>
+        <div className="header-spacer" />
+        <button type="button" className="ghost-button" onClick={() => setApiOpen(!apiOpen)}>
+          {t(apiOpen ? "studio.pack.prep.hideApi" : "studio.pack.prep.showApi")}
+        </button>
+      </div>
+      <p className="studio-hint">{t("studio.pack.prep.hint")}</p>
+      {apiOpen ? (
+        <ul className="pack-doctrine">
+          <li>{t("studio.pack.prep.apiPlan")}</li>
+          <li>
+            {t("studio.pack.prep.apiLimits", { chars: MAX_PREP_SCRIPT_CHARS, ops: MAX_PREP_OPERATIONS })}
+          </li>
+          <li>{t("studio.pack.prep.apiGating")}</li>
+          <li>{t("studio.pack.prep.apiUnreachable")}</li>
+          <li>{t("studio.pack.prep.apiPreview")}</li>
+        </ul>
+      ) : null}
+      {scripts.map((script, index) => {
+        const reading = readPrepScript(script.source)
+        return (
+          <div className="pack-item" key={index}>
+            <div className="pack-item-head">
+              <label className="field field-narrow">
+                {t("studio.pack.prep.fileName")}
+                <input
+                  value={script.fileName}
+                  onChange={(e) => update(index, { fileName: e.target.value })}
+                  placeholder="setup.js"
+                  spellCheck={false}
+                />
+              </label>
+              <span className="split-badge">{`${PREP_DIR}/${script.fileName}`}</span>
+              <div className="header-spacer" />
+              <button type="button" className="ghost-button" onClick={() => remove(index)}>
+                {t("studio.remove")}
+              </button>
+            </div>
+            <label className="field field-wide">
+              {t("studio.pack.prep.source")}
+              <textarea
+                className="wizard-yaml"
+                rows={16}
+                value={script.source}
+                onChange={(e) => update(index, { source: e.target.value })}
+                spellCheck={false}
+              />
+            </label>
+            <p className="studio-hint">
+              {t("studio.pack.prep.reading", {
+                chars: reading.chars,
+                max: MAX_PREP_SCRIPT_CHARS,
+                calls: reading.literalPlanCalls,
+              })}
+              {reading.hasLoop ? ` · ${t("studio.pack.prep.readingLoop", { ops: MAX_PREP_OPERATIONS })}` : ""}
+            </p>
+            {reading.forbidden.length > 0 ? (
+              <p className="studio-hint pack-warn">
+                {t("studio.pack.prep.forbidden", { names: reading.forbidden.join(", ") })}
+              </p>
+            ) : null}
+            <p className="studio-hint">
+              {t("studio.pack.prep.invoke", {
+                ref: `${packId || "<packId>"}/${PREP_DIR}/${script.fileName}`,
+              })}
+            </p>
+          </div>
+        )
+      })}
+      <button type="button" className="ghost-button" onClick={() => add()}>
+        {t("studio.pack.prep.add")}
+      </button>
     </section>
   )
 }
@@ -560,6 +668,7 @@ export default function PackWizard() {
       store.panels,
       store.manualSkills,
       store.presentation,
+      store.prepScripts,
     )
     const plan = buildPackSourcePlan(draft)
     const root = `${store.outputDir}/${plan.dirName}`
@@ -658,6 +767,7 @@ export default function PackWizard() {
     store.panels,
     store.manualSkills,
     store.presentation,
+    store.prepScripts,
   )
   // Advisory, alongside the blocking `issues` above and never mixed with them:
   // these are packs that build fine and then do nothing.
@@ -882,6 +992,8 @@ export default function PackWizard() {
           </div>
 
           <RulepackSection />
+
+          <PrepScriptSection />
 
           <section className="pack-extra-section">
             <h3>{t("studio.pack.panels.title")}</h3>

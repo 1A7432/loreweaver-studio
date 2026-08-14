@@ -27,6 +27,11 @@ export interface PackTrust {
   presentation: number
   /** Whether the presentation kit licenses image GENERATION. */
   imagegen: boolean
+  /** ST completion presets the pack installs into the shared preset store. */
+  presets: number
+  /** M20 F prep-phase plan scripts. CODE — disclosed for the same reason
+   * hooks are, even though a prep script never runs automatically. */
+  prep_scripts: number
 }
 
 export interface PackBuildSuccess {
@@ -65,6 +70,8 @@ function parseTrust(raw: unknown): PackTrust | null {
     panels: count(raw.panels),
     presentation: count(raw.presentation),
     imagegen: raw.imagegen === true,
+    presets: count(raw.presets),
+    prep_scripts: count(raw.prep_scripts),
   }
 }
 

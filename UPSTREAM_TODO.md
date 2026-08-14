@@ -121,8 +121,13 @@ the studio must react to (R) or may now surface (S):
   `.json`, validated at build with the engine's preset parser, installed into the
   shared `data_dir/presets/` store (sanitized filename stem; id collisions fail the
   build). `.preset import` also resolves pack-relative refs now. (R: pack bench may
-  offer a presets section; trust mirror below. The style-fold marker→section
-  contract stays v0/open.)
+  offer a presets section; trust mirror below.) **Second half also CLOSED same day**:
+  the fold honors preset geometry via a four-band split (`core.preset.style_bands`) —
+  text before any marker → the stable style layer; `worldInfoBefore/After` text
+  brackets the world-lore section; post-`chatHistory` text lands late in the per-turn
+  state message (faithful post-history, owner-decided; the other five ST anchors only
+  advance the split — no fake 8-way mapping). Marker-less presets fold exactly as
+  before. (S: the preset manager could preview which band each block lands in.)
 - **Item 10 CLOSED** — `.import … world` seeds a keeper-only `module_brief` document
   from the card's prose (description/scenario/openings…), read back via the new
   keeper-only `module_brief` tool. No studio action.

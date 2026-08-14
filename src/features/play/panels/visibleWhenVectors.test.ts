@@ -79,6 +79,7 @@ function draftWithCondition(condition: string): WorldPackDraft {
     skills: [],
     rulepacks: [],
     assets: [],
+    prep: [],
     presentation: null,
     panels: {
       yamlText:

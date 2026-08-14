@@ -33,6 +33,7 @@ import {
   type PackPanelsDraft,
   type PackPresentationAudioDraft,
   type PackPresentationDraft,
+  type PackPrepScriptDraft,
   type PackPresentationSubjectDraft,
   type PackSkillDraft,
   type WorldPackDraft,
@@ -116,6 +117,23 @@ const EMPTY_METADATA: PackMetadataForm = {
   rulepackId: "",
   rulepackMode: "patch",
 }
+
+/** The starter a new prep script opens with. Real, runnable, and small enough
+ * to read in one glance — the shape `docs/plugins.md` §C.3 documents, with the
+ * one rule that matters stated in it: `plan()` is the only callable. */
+// i18n-exempt: emitted JavaScript, read by the author's editor and the engine.
+const PREP_SCRIPT_TEMPLATE = `// Prep-phase plan script. \`plan(tool, args)\` is the ONLY callable: this file
+// PLANS work, the engine applies it, and a keeper previews the whole plan first.
+// Prep phase only; keeper commands (.import … world, .var expose) are commands,
+// not tools, so a plan can never name one.
+
+const guards = ["门房老周", "巡夜的李七"]
+for (const name of guards) {
+  plan("add_npc", { name: name, concept: "夜里见过五层的人" })
+}
+
+plan("define_variable", { var_id: "floor_seen", kind: "number", minimum: 0, maximum: 3 })
+`
 
 function uid(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -328,6 +346,9 @@ interface PackState {
   /** Hand-authored skills (full SKILL.md + optional hooks.js), alongside the
    * ones extracted from cards. */
   manualSkills: PackSkillDraft[]
+  /** M20 F prep-phase plan scripts (`contents.prep`). They never run at
+   * install; a keeper invokes one by reference and previews the plan first. */
+  prepScripts: PackPrepScriptDraft[]
 
   outputDir: string | null
   writtenDir: string | null
@@ -378,6 +399,9 @@ interface PackState {
   addManualSkill: () => void
   updateManualSkill: (index: number, patch: Partial<PackSkillDraft>) => void
   removeManualSkill: (index: number) => void
+  addPrepScript: () => void
+  updatePrepScript: (index: number, patch: Partial<PackPrepScriptDraft>) => void
+  removePrepScript: (index: number) => void
   seedFromSplit: (item: PackItem, notesZh: string, notesEn: string) => void
   setOutputDir: (dir: string | null) => void
   setWritten: (dir: string | null) => void
@@ -460,6 +484,7 @@ export const usePackStore = create<PackState>()(
       panels: null,
       presentation: null,
       manualSkills: [],
+      prepScripts: [],
       outputDir: null,
       writtenDir: null,
       candidates: [],
@@ -811,6 +836,35 @@ export const usePackStore = create<PackState>()(
           manualSkills: state.manualSkills.map((skill, i) => (i === index ? { ...skill, ...patch } : skill)),
         })),
 
+      addPrepScript: () =>
+        set((state) => ({
+          prepScripts: [
+            ...state.prepScripts,
+            {
+              fileName: `setup${state.prepScripts.length > 0 ? state.prepScripts.length + 1 : ""}.js`,
+              source: PREP_SCRIPT_TEMPLATE,
+            },
+          ],
+        })),
+
+      updatePrepScript: (index, patch) =>
+        set((state) => ({
+          prepScripts: state.prepScripts.map((script, i) => (i === index ? { ...script, ...patch } : script)),
+        })),
+
+      removePrepScript: (index) =>
+        set((state) => {
+          const removed = state.prepScripts[index]
+          if (removed !== undefined) {
+            useUndoStore.getState().push("prepScript", removed.fileName, () => {
+              set((s) => ({
+                prepScripts: [...s.prepScripts.slice(0, index), removed, ...s.prepScripts.slice(index)],
+              }))
+            })
+          }
+          return { prepScripts: state.prepScripts.filter((_, i) => i !== index) }
+        }),
+
       removeManualSkill: (index) =>
         set((state) => {
           const removed = state.manualSkills[index]
@@ -832,6 +886,7 @@ export const usePackStore = create<PackState>()(
           panels: null,
           presentation: null,
           manualSkills: [],
+          prepScripts: [],
           writtenDir: null,
           runResult: null,
           packResult: null,
@@ -857,6 +912,7 @@ export const usePackStore = create<PackState>()(
           panels: null,
           presentation: null,
           manualSkills: [],
+          prepScripts: [],
           outputDir: null,
           writtenDir: null,
           runResult: null,
@@ -900,6 +956,7 @@ export const usePackStore = create<PackState>()(
                 audio: state.presentation.audio.map((cue) => ({ ...cue, assetBase64: "" })),
               },
         manualSkills: state.manualSkills,
+        prepScripts: state.prepScripts,
         outputDir: state.outputDir,
         writtenDir: state.writtenDir,
         installAfterBuild: state.installAfterBuild,
@@ -930,6 +987,7 @@ export function buildDraftFromState(
   panels: PackPanelsDraft | null = null,
   manualSkills: PackSkillDraft[] = [],
   presentation: PackPresentationDraft | null = null,
+  prep: PackPrepScriptDraft[] = [],
 ): WorldPackDraft {
   const cards = items
     .filter((item) => item.kind === "card")
@@ -980,6 +1038,7 @@ export function buildDraftFromState(
     assets: items
       .filter((item) => item.kind === "asset")
       .map((item) => ({ fileName: item.fileName, base64: item.base64 })),
+    prep,
     panels: panels !== null && panels.yamlText.trim() ? panels : null,
     presentation,
   }
@@ -1009,6 +1068,7 @@ export function packValidationIssues(
   panels: PackPanelsDraft | null = null,
   manualSkills: PackSkillDraft[] = [],
   presentation: PackPresentationDraft | null = null,
+  prep: PackPrepScriptDraft[] = [],
 ): Issue[] {
   // A restored session knows an item's name, kind and every decision made about
   // it, but not its bytes. Building anyway would write an empty file under a
@@ -1019,6 +1079,6 @@ export function packValidationIssues(
     .map((item) => ({ key: "packItemNeedsBytes", params: { file: item.fileName } }))
   return [
     ...missing,
-    ...validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills, presentation)),
+    ...validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills, presentation, prep)),
   ]
 }

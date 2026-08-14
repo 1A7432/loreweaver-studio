@@ -215,6 +215,17 @@ on('variables_changed', () => {
 })
 `
 
+// One prep-phase plan script. `plan(tool, args)` is the only callable the
+// sandbox exposes (`core/prep_script.py::_PRELUDE`); the keeper runs it by
+// reference and previews the whole operation list before anything applies.
+const PREP_SCRIPT = `// 回廊公寓 — bulk prep for the fifth-floor witnesses.
+const witnesses = ["门房老周", "巡夜的李七", "更夫赵三"]
+for (const name of witnesses) {
+  plan("add_npc", { name: name, concept: "夜里见过五层的人" })
+}
+plan("define_variable", { var_id: "floor_seen", kind: "number", minimum: 0, maximum: 3 })
+`
+
 // A house-rules patch over the engine's built-in CoC7 rulepack (`extends:`
 // resolves through `core.rulepacks.load_raw_rulepack_yaml` at pack build).
 const RULEPACK_YAML = `# 回廊公寓 house rules — a patch over the built-in CoC7 rulepack.
@@ -299,6 +310,10 @@ const draft: WorldPackDraft = {
   ],
   rulepacks: [{ id: "corridor-rules", yamlText: RULEPACK_YAML }],
   assets: [{ fileName: "cover.png", base64: PNG_1X1 }],
+  // M20 F prep-phase script (`contents.prep`): the engine's build checks it
+  // statically (extension, the 20 000-char cap, UTF-8) and counts it on the
+  // trust card. It never runs — not at build, not at install.
+  prep: [{ fileName: "setup.js", source: PREP_SCRIPT }],
   panels: {
     yamlText: PANELS_YAML,
     files: [

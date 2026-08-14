@@ -821,7 +821,11 @@
         "rulepackTurnCheckMapping": "Rulepack: turn_checks[{{index}}] must be a mapping.",
         "rulepackTurnCheckKey": "Rulepack: turn_checks[{{index}}] has an unknown key “{{field}}”.",
         "rulepackTurnCheckWhen": "Rulepack: turn_checks[{{index}}] needs a `when:` condition name.",
-        "rulepackThin": "Rulepack: this file neither extends a system nor defines one — nothing in it will change how the table plays."
+        "rulepackThin": "Rulepack: this file neither extends a system nor defines one — nothing in it will change how the table plays.",
+        "packPrepNotJs": "Prep script “{{file}}” must be a .js file — the engine's build rejects any other extension.",
+        "packPrepPath": "Prep script “{{file}}”: use a plain file name; scripts land directly under prep/.",
+        "packPrepTooLong": "Prep script “{{file}}” exceeds the sandbox's {{max}}-character cap.",
+        "packPrepEmpty": "Prep script “{{file}}” is empty."
       },
       "panels": {
         "title": "Module UI panels (M15)",
@@ -959,7 +963,9 @@
         "presentation": "Stage Director: {{subjects}} picturable subject(s) — image generation: {{imagegen}}",
         "imagegenAllowed": "allowed",
         "imagegenPackOnly": "pack-only (the author vetoed generation)",
-        "sha": "sha256 {{hash}}…"
+        "sha": "sha256 {{hash}}…",
+        "prepScripts": "prep-phase scripts: {{count}} — code a keeper may run by reference in the prep phase; never runs by itself",
+        "presets": "prompt presets: {{count}} — installed into the server's shared preset store"
       },
       "testDrive": {
         "title": "Test this pack now",
@@ -999,6 +1005,24 @@
         "summary": "Base: {{base}} · {{stats}} stat(s) · {{derived}} derived · {{subsystems}} subsystem(s) · {{commands}} command(s)",
         "noBase": "none (a standalone system)",
         "advisory": "Advisory only — the engine parses this file again at build time and its verdict is the one that counts."
+      },
+      "prep": {
+        "title": "Prep-phase scripts",
+        "hint": "Bulk setup a keeper runs once, by reference, in the prep phase: forty NPCs from a list, a family of variables. The script PLANS the work; the engine applies the plan after showing it whole. Nothing here ever runs at install.",
+        "add": "Add a prep script",
+        "showApi": "API reference",
+        "hideApi": "Hide the reference",
+        "apiPlan": "plan(tool, args) is the ONLY callable. The sandbox has no engine state, no host and no network — a script emits an operation list and stops.",
+        "apiLimits": "Limits: {{chars}} characters of script, {{ops}} operations per plan, 8 KB of arguments per operation, 1 s of CPU.",
+        "apiGating": "Each planned call goes through the same argument validation, keeper_only marking and gated-skill check a model-issued call gets — because it is the same code.",
+        "apiUnreachable": "`.import … world` and `.var expose` are keeper COMMANDS, not tools, so a plan can never name them.",
+        "apiPreview": "Preview is free: the keeper runs it with apply off, reads the whole operation list, and only then applies.",
+        "fileName": "File name",
+        "source": "Script",
+        "reading": "{{chars}}/{{max}} characters · {{calls}} literal plan() call(s)",
+        "readingLoop": "a loop plans an unknown number — the engine caps a plan at {{ops}} operations",
+        "forbidden": "This script names {{names}}, which the sandbox does not expose. It will fail at preview.",
+        "invoke": "The keeper runs it with: run_prep_plan(script_ref=\"{{ref}}\")"
       }
     },
     "lint": {
