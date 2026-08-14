@@ -191,3 +191,92 @@ describe("PregenCard", () => {
     expect(screen.queryByText("Pre-generated cast")).not.toBeInTheDocument()
   })
 })
+
+describe("keeper variable writes", () => {
+  const GAME = {
+    type: "state" as const,
+    party: [],
+    initiative: [],
+    online: 1,
+    variables: [
+      { id: "fear", label: "Fear", kind: "number" as const, value: 3, min: 0, max: 10 },
+      { id: "seen", label: "Seen the fog", kind: "bool" as const, value: false },
+      { id: "truth", label: "Truth", kind: "number" as const, value: 5, hidden: true },
+    ],
+  }
+
+  function connect(role: "keeper" | "player") {
+    useConnectionStore.setState({
+      status: "online",
+      welcome: {
+        type: "welcome",
+        protocol: "2.1",
+        room: "table",
+        you: { id: "u1", name: "Nyx", role },
+        locale: "en",
+        server: "loreweaver/1",
+      },
+    })
+  }
+
+  beforeEach(() => {
+    sent.length = 0
+    useSessionStore.getState().clear()
+    useSessionStore.setState({ game: GAME })
+  })
+
+  it("offers nothing to a player", () => {
+    connect("player")
+    render(<StatePanel />)
+    expect(screen.queryByRole("button", { name: "Write" })).not.toBeInTheDocument()
+  })
+
+  it("is off until the keeper asks for it", async () => {
+    connect("keeper")
+    render(<StatePanel />)
+    // A keeper reads this panel far more often than they write it.
+    expect(screen.queryByLabelText("Increase Fear")).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Write" }))
+    expect(screen.getByLabelText("Increase Fear")).toBeInTheDocument()
+  })
+
+  it("steps a number through .var add, and stops at a declared bound", async () => {
+    connect("keeper")
+    useSessionStore.setState({
+      game: { ...GAME, variables: [{ ...GAME.variables[0], value: 10 }] },
+    })
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Write" }))
+
+    expect(screen.getByLabelText("Increase Fear")).toBeDisabled()
+    await userEvent.click(screen.getByLabelText("Decrease Fear"))
+    expect(sent).toEqual([{ type: "input", text: ".var add fear -1" }])
+  })
+
+  it("toggles a bool through .var set", async () => {
+    connect("keeper")
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Write" }))
+    await userEvent.click(screen.getByRole("button", { name: "Toggle" }))
+    expect(sent).toContainEqual({ type: "input", text: ".var set seen true" })
+  })
+
+  it("writes a keeper-only variable — hiding governs who SEES it", async () => {
+    connect("keeper")
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Write" }))
+    await userEvent.click(screen.getByLabelText("Increase Truth"))
+    expect(sent).toContainEqual({ type: "input", text: ".var add truth 1" })
+  })
+
+  it("sets a value from the field and clears it", async () => {
+    connect("keeper")
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Write" }))
+    const field = screen.getByLabelText("Set Fear")
+    await userEvent.type(field, "8")
+    await userEvent.click(screen.getAllByRole("button", { name: "Set" })[0])
+    expect(sent).toContainEqual({ type: "input", text: ".var set fear 8" })
+    expect(field).toHaveValue("")
+  })
+})

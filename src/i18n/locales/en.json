@@ -65,7 +65,15 @@
     "pregens": "Pre-generated cast",
     "pregenClaim": "Claim",
     "pregenClaimed": "claimed by {{name}}",
-    "pregenYours": "yours"
+    "pregenYours": "yours",
+    "varEdit": "Write",
+    "varEditDone": "Done",
+    "varEditHint": "These go through the ordinary `.var set` / `.var add` commands, so the engine validates every value against the variable's own spec — bounds, options, and all — and the table sees the change immediately.",
+    "varIncrement": "Increase {{label}}",
+    "varDecrement": "Decrease {{label}}",
+    "varToggle": "Toggle",
+    "varSet": "Set {{label}}",
+    "varSetAction": "Set"
   },
   "panels": {
     "menu": "Panels ({{n}})",

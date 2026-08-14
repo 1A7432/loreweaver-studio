@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
   stripControlChars,
@@ -13,6 +14,7 @@ import AudioDeck from "./AudioDeck"
 import Avatar from "./Avatar"
 import MediaDeck from "./MediaDeck"
 import Meter, { type MeterTone } from "./Meter"
+import { addVarCommand, isWritable, setVarCommand, stepFor } from "./varCommands"
 import UiBlocks from "./UiBlocks"
 
 /**
@@ -116,25 +118,129 @@ function VariableRow({ variable }: { variable: ModuleVariable }) {
   )
 }
 
+/** The keeper's write control for one tracker (UPSTREAM item 11).
+ *
+ * Everything goes through the ordinary command path — `.var set` / `.var add`
+ * — so the same permission gate, the same `core.modvars` validation (bounds,
+ * enum options, bool coercion) and the same state push apply as when a keeper
+ * types it. Nothing here validates a value itself: guessing at a spec the
+ * client cannot see would only produce a second, wronger opinion. */
+function VariableWrite({ variable }: { variable: ModuleVariable }) {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState("")
+
+  const run = (command: string | null) => {
+    if (command === null) return
+    void transportSend({ type: "input", text: command }).catch(() => {
+      // The transport surfaces failures through status events.
+    })
+  }
+
+  if (!isWritable(variable)) return null
+  const down = stepFor(variable, -1)
+  const up = stepFor(variable, 1)
+
+  return (
+    <div className="var-write">
+      {variable.kind === "number" ? (
+        <>
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={down === null}
+            aria-label={t("session.varDecrement", { label: variable.label })}
+            onClick={() => run(addVarCommand(variable.id, down ?? -1))}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={up === null}
+            aria-label={t("session.varIncrement", { label: variable.label })}
+            onClick={() => run(addVarCommand(variable.id, up ?? 1))}
+          >
+            +
+          </button>
+        </>
+      ) : null}
+      {variable.kind === "bool" ? (
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => run(setVarCommand(variable.id, variable.value !== true))}
+        >
+          {t("session.varToggle")}
+        </button>
+      ) : (
+        <>
+          <input
+            className="var-set-input"
+            value={draft}
+            aria-label={t("session.varSet", { label: variable.label })}
+            placeholder={String(variable.value)}
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || draft.trim() === "") return
+              run(setVarCommand(variable.id, draft))
+              setDraft("")
+            }}
+          />
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={draft.trim() === ""}
+            onClick={() => {
+              run(setVarCommand(variable.id, draft))
+              setDraft("")
+            }}
+          >
+            {t("session.varSetAction")}
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
 function VariablesCard({ game }: { game: StateFrame }) {
   const { t } = useTranslation()
+  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
+  // Off by default: a keeper reads this panel far more often than they write
+  // it, and thirty inline inputs would bury the numbers they came to read.
+  const [editing, setEditing] = useState(false)
   if (!game.variables || game.variables.length === 0) return null
   return (
     <section className="desk-card">
-      <header className="desk-title">{t("session.trackers")}</header>
+      <header className="desk-title">
+        {t("session.trackers")}
+        {isKeeper ? (
+          <button type="button" className="ghost-button" onClick={() => setEditing(!editing)}>
+            {t(editing ? "session.varEditDone" : "session.varEdit")}
+          </button>
+        ) : null}
+      </header>
+      {isKeeper && editing ? <p className="studio-hint">{t("session.varEditHint")}</p> : null}
       <div className="var-list">
-        {game.variables.map((variable) =>
-          isHidden(variable) ? (
-            <div key={variable.id} className="var-hidden-row" title={t("session.hiddenVar")}>
+        {game.variables.map((variable) => {
+          const row = isHidden(variable) ? (
+            <div className="var-hidden-row" title={t("session.hiddenVar")}>
               <span className="var-lock" aria-label={t("session.hiddenVar")}>
                 🔒
               </span>
               <VariableRow variable={variable} />
             </div>
           ) : (
-            <VariableRow key={variable.id} variable={variable} />
-          ),
-        )}
+            <VariableRow variable={variable} />
+          )
+          return (
+            <div key={variable.id} className="var-entry">
+              {row}
+              {isKeeper && editing ? <VariableWrite variable={variable} /> : null}
+            </div>
+          )
+        })}
       </div>
     </section>
   )

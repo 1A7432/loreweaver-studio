@@ -65,7 +65,15 @@
     "pregens": "预设角色",
     "pregenClaim": "认领",
     "pregenClaimed": "已被 {{name}} 认领",
-    "pregenYours": "你的"
+    "pregenYours": "你的",
+    "varEdit": "写入",
+    "varEditDone": "完成",
+    "varEditHint": "这些操作走的是普通的 `.var set` / `.var add` 命令，因此引擎会按变量自己的规格校验每个值——上下界、可选项，一样不少——牌桌会立刻看到变化。",
+    "varIncrement": "增加{{label}}",
+    "varDecrement": "减少{{label}}",
+    "varToggle": "切换",
+    "varSet": "设置{{label}}",
+    "varSetAction": "设置"
   },
   "panels": {
     "menu": "面板({{n}})",

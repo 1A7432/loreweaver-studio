@@ -3277,3 +3277,25 @@ body {
   border-radius: 50%;
   border: 1px solid var(--border-soft);
 }
+
+/* --- keeper variable writes ----------------------------------------------- */
+
+.var-write {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 0 6px;
+}
+
+.var-write button {
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.var-set-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 6px;
+  font: 11px/1.6 var(--font-mono);
+}
