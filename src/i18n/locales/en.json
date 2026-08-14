@@ -993,6 +993,34 @@
         "packLicenseMissing": "The pack declares no license.",
         "assetMissing": "{{from}} points at “{{path}}”, which this pack does not ship."
       }
+    },
+    "undo": {
+      "undo": "Undo ({{seconds}}s)",
+      "dismiss": "Dismiss",
+      "deleted": {
+        "project": "Deleted the project “{{name}}”.",
+        "variable": "Deleted the variable “{{name}}”.",
+        "loreEntry": "Deleted the lore entry “{{name}}”.",
+        "pregen": "Deleted the pregen “{{name}}”.",
+        "packItem": "Removed “{{name}}” from the pack.",
+        "panelFile": "Removed the panel file “{{name}}”.",
+        "skill": "Deleted the skill “{{name}}”.",
+        "subject": "Deleted the kit subject “{{name}}”.",
+        "cue": "Deleted the audio cue “{{name}}”.",
+        "episode": "Deleted the episode “{{name}}”."
+      },
+      "deletedUnnamed": {
+        "project": "Deleted a project.",
+        "variable": "Deleted a variable.",
+        "loreEntry": "Deleted a lore entry.",
+        "pregen": "Deleted a pregen.",
+        "packItem": "Removed a file from the pack.",
+        "panelFile": "Removed a panel file.",
+        "skill": "Deleted a skill.",
+        "subject": "Deleted a kit subject.",
+        "cue": "Deleted an audio cue.",
+        "episode": "Deleted an episode."
+      }
     }
   }
 }

@@ -10,6 +10,7 @@ import {
   type ForgeProject,
   type ForgeVariable,
 } from "../features/studio/model"
+import { useUndoStore } from "./undo"
 
 export type StudioTab = "card" | "variables" | "worldbook" | "pregens" | "hooks"
 
@@ -101,7 +102,12 @@ export const useStudioStore = create<StudioState>()(
             projects: s.projects.map((p) => (p.uid === project.uid ? touch(project) : p)),
           })),
 
-        deleteProject: (uid) =>
+        deleteProject: (uid) => {
+          // Restoring at the SAME index, not at the end: a project list the
+          // author has ordered should come back the way it was.
+          const index = get().projects.findIndex((p) => p.uid === uid)
+          const removed = get().projects[index]
+          const previousActive = get().activeUid
           set((s) => {
             const projects = s.projects.filter((p) => p.uid !== uid)
             return {
@@ -109,7 +115,15 @@ export const useStudioStore = create<StudioState>()(
               activeUid: s.activeUid === uid ? (projects[0]?.uid ?? null) : s.activeUid,
               selectedEntryUid: null,
             }
-          }),
+          })
+          if (removed === undefined) return
+          useUndoStore.getState().push("project", removed.name, () => {
+            set((s) => ({
+              projects: [...s.projects.slice(0, index), removed, ...s.projects.slice(index)],
+              activeUid: previousActive,
+            }))
+          })
+        },
 
         selectProject: (uid) => set({ activeUid: uid, selectedEntryUid: null }),
 
@@ -123,8 +137,28 @@ export const useStudioStore = create<StudioState>()(
             variables: p.variables.map((v) => (v.uid === uid ? { ...v, ...patch } : v)),
           })),
 
-        removeVariable: (uid) =>
-          mutateActive((p) => ({ ...p, variables: p.variables.filter((v) => v.uid !== uid) })),
+        removeVariable: (uid) => {
+          const owner = get().activeUid
+          const project = get().projects.find((p) => p.uid === owner)
+          const index = project?.variables.findIndex((v) => v.uid === uid) ?? -1
+          const removed = index < 0 ? undefined : project?.variables[index]
+          mutateActive((p) => ({ ...p, variables: p.variables.filter((v) => v.uid !== uid) }))
+          if (removed === undefined) return
+          useUndoStore.getState().push("variable", removed.id, () => {
+            // Scoped to the project it came from, not to whatever is active
+            // now — an undo must never write into a different card.
+            set((s) => ({
+              projects: s.projects.map((p) =>
+                p.uid === owner
+                  ? {
+                      ...p,
+                      variables: [...p.variables.slice(0, index), removed, ...p.variables.slice(index)],
+                    }
+                  : p,
+              ),
+            }))
+          })
+        },
 
         addLoreEntry: () => {
           const entry = newLoreEntry()
@@ -139,8 +173,23 @@ export const useStudioStore = create<StudioState>()(
           })),
 
         removeLoreEntry: (uid) => {
+          const owner = get().activeUid
+          const project = get().projects.find((p) => p.uid === owner)
+          const index = project?.lorebook.findIndex((e) => e.uid === uid) ?? -1
+          const removed = index < 0 ? undefined : project?.lorebook[index]
           mutateActive((p) => ({ ...p, lorebook: p.lorebook.filter((e) => e.uid !== uid) }))
           set((s) => ({ selectedEntryUid: s.selectedEntryUid === uid ? null : s.selectedEntryUid }))
+          if (removed === undefined) return
+          useUndoStore.getState().push("loreEntry", removed.title, () => {
+            set((s) => ({
+              projects: s.projects.map((p) =>
+                p.uid === owner
+                  ? { ...p, lorebook: [...p.lorebook.slice(0, index), removed, ...p.lorebook.slice(index)] }
+                  : p,
+              ),
+              selectedEntryUid: removed.uid,
+            }))
+          })
         },
 
         selectLoreEntry: (uid) => set({ selectedEntryUid: uid }),
@@ -153,8 +202,30 @@ export const useStudioStore = create<StudioState>()(
             pregens: (p.pregens ?? []).map((g) => (g.uid === uid ? { ...g, ...patch } : g)),
           })),
 
-        removePregen: (uid) =>
-          mutateActive((p) => ({ ...p, pregens: (p.pregens ?? []).filter((g) => g.uid !== uid) })),
+        removePregen: (uid) => {
+          const owner = get().activeUid
+          const project = get().projects.find((p) => p.uid === owner)
+          const index = (project?.pregens ?? []).findIndex((g) => g.uid === uid)
+          const removed = index < 0 ? undefined : project?.pregens[index]
+          mutateActive((p) => ({ ...p, pregens: (p.pregens ?? []).filter((g) => g.uid !== uid) }))
+          if (removed === undefined) return
+          useUndoStore.getState().push("pregen", removed.name, () => {
+            set((s) => ({
+              projects: s.projects.map((p) =>
+                p.uid === owner
+                  ? {
+                      ...p,
+                      pregens: [
+                        ...(p.pregens ?? []).slice(0, index),
+                        removed,
+                        ...(p.pregens ?? []).slice(index),
+                      ],
+                    }
+                  : p,
+              ),
+            }))
+          })
+        },
       }
     },
     {

@@ -40,6 +40,7 @@ import { countVariableSpecs, looksLikeLorecard, lorecardToCard } from "../featur
 import type { PackBuildSuccess } from "../features/studio/pack/buildResult"
 import type { Issue } from "../features/studio/model"
 import { bytesToBase64, type EngineCandidate, type EngineRunResult, type PickedFile } from "../lib/native"
+import { useUndoStore } from "./undo"
 
 export type PackStep = "input" | "review" | "promote" | "metadata" | "presentation" | "build"
 export const PACK_STEPS: PackStep[] = ["input", "review", "promote", "metadata", "presentation", "build"]
@@ -487,7 +488,19 @@ export const usePackStore = create<PackState>()(
               },
         ),
 
-      removeItem: (uid) => set((state) => ({ items: state.items.filter((item) => item.uid !== uid) })),
+      removeItem: (uid) =>
+        set((state) => {
+          const index = state.items.findIndex((item) => item.uid === uid)
+          const removed = state.items[index]
+          if (removed !== undefined) {
+            // Restored at its original index: the item order is the order the
+            // author dropped and then reasoned about.
+            useUndoStore.getState().push("packItem", removed.sourceName, () => {
+              set((s) => ({ items: [...s.items.slice(0, index), removed, ...s.items.slice(index)] }))
+            })
+          }
+          return { items: state.items.filter((item) => item.uid !== uid) }
+        }),
 
       updateItem: (uid, patch) =>
         set((state) => ({
@@ -545,11 +558,26 @@ export const usePackStore = create<PackState>()(
         ),
 
       removePanelFile: (path) =>
-        set((state) =>
-          state.panels === null
-            ? {}
-            : { panels: { ...state.panels, files: state.panels.files.filter((file) => file.path !== path) } },
-        ),
+        set((state) => {
+          if (state.panels === null) return {}
+          const index = state.panels.files.findIndex((file) => file.path === path)
+          const removed = state.panels.files[index]
+          if (removed !== undefined) {
+            useUndoStore.getState().push("panelFile", removed.path, () => {
+              set((s) =>
+                s.panels === null
+                  ? {}
+                  : {
+                      panels: {
+                        ...s.panels,
+                        files: [...s.panels.files.slice(0, index), removed, ...s.panels.files.slice(index)],
+                      },
+                    },
+              )
+            })
+          }
+          return { panels: { ...state.panels, files: state.panels.files.filter((f) => f.path !== path) } }
+        }),
 
       clearPanels: () => set({ panels: null }),
 
@@ -590,16 +618,35 @@ export const usePackStore = create<PackState>()(
         ),
 
       removePresentationSubject: (subjectUid) =>
-        set((state) =>
-          state.presentation === null
-            ? {}
-            : {
-                presentation: {
-                  ...state.presentation,
-                  subjects: state.presentation.subjects.filter((subject) => subject.uid !== subjectUid),
-                },
-              },
-        ),
+        set((state) => {
+          if (state.presentation === null) return {}
+          const index = state.presentation.subjects.findIndex((s) => s.uid === subjectUid)
+          const removed = state.presentation.subjects[index]
+          if (removed !== undefined) {
+            useUndoStore.getState().push("subject", removed.id, () => {
+              set((s) =>
+                s.presentation === null
+                  ? {}
+                  : {
+                      presentation: {
+                        ...s.presentation,
+                        subjects: [
+                          ...s.presentation.subjects.slice(0, index),
+                          removed,
+                          ...s.presentation.subjects.slice(index),
+                        ],
+                      },
+                    },
+              )
+            })
+          }
+          return {
+            presentation: {
+              ...state.presentation,
+              subjects: state.presentation.subjects.filter((subject) => subject.uid !== subjectUid),
+            },
+          }
+        }),
 
       setPresentationSubjectRef: (subjectUid, file) =>
         set((state) =>
@@ -662,16 +709,35 @@ export const usePackStore = create<PackState>()(
         ),
 
       removePresentationCue: (cueUid) =>
-        set((state) =>
-          state.presentation === null
-            ? {}
-            : {
-                presentation: {
-                  ...state.presentation,
-                  audio: state.presentation.audio.filter((cue) => cue.uid !== cueUid),
-                },
-              },
-        ),
+        set((state) => {
+          if (state.presentation === null) return {}
+          const index = state.presentation.audio.findIndex((cue) => cue.uid === cueUid)
+          const removed = state.presentation.audio[index]
+          if (removed !== undefined) {
+            useUndoStore.getState().push("cue", removed.id, () => {
+              set((s) =>
+                s.presentation === null
+                  ? {}
+                  : {
+                      presentation: {
+                        ...s.presentation,
+                        audio: [
+                          ...s.presentation.audio.slice(0, index),
+                          removed,
+                          ...s.presentation.audio.slice(index),
+                        ],
+                      },
+                    },
+              )
+            })
+          }
+          return {
+            presentation: {
+              ...state.presentation,
+              audio: state.presentation.audio.filter((cue) => cue.uid !== cueUid),
+            },
+          }
+        }),
 
       setPresentationCueAsset: (cueUid, file) =>
         set((state) =>
@@ -721,7 +787,17 @@ export const usePackStore = create<PackState>()(
         })),
 
       removeManualSkill: (index) =>
-        set((state) => ({ manualSkills: state.manualSkills.filter((_, i) => i !== index) })),
+        set((state) => {
+          const removed = state.manualSkills[index]
+          if (removed !== undefined) {
+            useUndoStore.getState().push("skill", removed.slug, () => {
+              set((s) => ({
+                manualSkills: [...s.manualSkills.slice(0, index), removed, ...s.manualSkills.slice(index)],
+              }))
+            })
+          }
+          return { manualSkills: state.manualSkills.filter((_, i) => i !== index) }
+        }),
 
       seedFromSplit: (item, notesZh, notesEn) =>
         set({

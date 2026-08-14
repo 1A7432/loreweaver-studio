@@ -2,6 +2,7 @@ import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import PlayView from "./features/play/PlayView"
 import StudioView from "./features/studio/StudioView"
+import UndoToast from "./features/studio/UndoToast"
 import { isTauri, onTransportEvent } from "./lib/transport"
 import { useAppStore, type AppMode } from "./store/app"
 import { useConnectionStore } from "./store/connection"
@@ -50,6 +51,8 @@ export default function App() {
         </select>
       </header>
       <main className="app-main">{mode === "play" ? <PlayView /> : <StudioView />}</main>
+      {/* App-root: a deletion made in one view stays undoable after switching to another. */}
+      <UndoToast />
     </div>
   )
 }

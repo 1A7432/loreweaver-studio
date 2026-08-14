@@ -993,6 +993,34 @@
         "packLicenseMissing": "模组包未声明许可协议。",
         "assetMissing": "{{from}} 指向“{{path}}”，但本包并未携带该文件。"
       }
+    },
+    "undo": {
+      "undo": "撤销（{{seconds}} 秒）",
+      "dismiss": "关闭",
+      "deleted": {
+        "project": "已删除项目「{{name}}」。",
+        "variable": "已删除变量「{{name}}」。",
+        "loreEntry": "已删除世界书条目「{{name}}」。",
+        "pregen": "已删除预设角色「{{name}}」。",
+        "packItem": "已从模组包移除「{{name}}」。",
+        "panelFile": "已移除面板文件「{{name}}」。",
+        "skill": "已删除技能「{{name}}」。",
+        "subject": "已删除资料包对象「{{name}}」。",
+        "cue": "已删除音频提示「{{name}}」。",
+        "episode": "已删除连载话数「{{name}}」。"
+      },
+      "deletedUnnamed": {
+        "project": "已删除一个项目。",
+        "variable": "已删除一个变量。",
+        "loreEntry": "已删除一个世界书条目。",
+        "pregen": "已删除一个预设角色。",
+        "packItem": "已从模组包移除一个文件。",
+        "panelFile": "已移除一个面板文件。",
+        "skill": "已删除一个技能。",
+        "subject": "已删除一个资料包对象。",
+        "cue": "已删除一个音频提示。",
+        "episode": "已删除一话。"
+      }
     }
   }
 }
