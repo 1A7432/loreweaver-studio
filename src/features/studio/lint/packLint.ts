@@ -13,10 +13,21 @@
 import type { LintCodeBlock, PackLintFinding, PackLintSource } from "./model"
 import { conditionVarPaths, readPanels, type LintPanel } from "./panels"
 
-/** The body `wizard/apply.ts::hooksFromRules` emits when the author entered
- * update rules but no handler code. Legal JS that does nothing — shipping it
- * means the rules the author wrote never run. */
-export const STUB_MARKER = "// TODO: apply the rules above with setvar/incvar"
+/** Hook bodies that are placeholders, shipped as-is.
+ *
+ * The first is what the wizard emits today when the variables stage produced no
+ * usable rule (`wizard/updateRules.ts::NO_RULES_MARKER`); the second is the
+ * `// TODO` body every wizard run emitted before that stage learned to compile
+ * real `setvar`/`incvar` calls, and packs authored then still carry it. Either
+ * way the meaning is the same: this hook does nothing. */
+export const STUB_MARKERS = [
+  "// No update rules were entered, so there is nothing to apply yet.",
+  "// TODO: apply the rules above with setvar/incvar",
+]
+
+/** @deprecated Use {@link STUB_MARKERS}; kept so a single-marker import still
+ * resolves to the current one. */
+export const STUB_MARKER = STUB_MARKERS[0]
 
 /** Variable reads/writes in hook code. Mirrors the bridge `docs/plugins.md`
  * documents: `getvar()` / `setvar()` / `incvar()` plus the `variables.<path>`
@@ -237,7 +248,7 @@ function lintPanelBindings(source: PackLintSource, panels: LintPanel[], findings
 function lintCode(source: PackLintSource, findings: PackLintFinding[]): void {
   const declared = new Set(source.variables.map((variable) => variable.id))
   for (const block of source.code) {
-    if (block.source.includes(STUB_MARKER)) {
+    if (STUB_MARKERS.some((marker) => block.source.includes(marker))) {
       findings.push(
         finding(
           "stubMarker",

@@ -139,6 +139,10 @@ describe("applyStage: fields, palette assembly, variables", () => {
     expect(meter?.maximum).toBe("100")
     expect(project.hooks).toContain("// 好感度:玩家帮忙 +5")
     expect(project.hooks).toContain("on('reply_ready'")
+    // Real calls, against the full dotted path the InitVar tree gives the leaf
+    // — not the `// TODO` skeleton this stage used to emit.
+    expect(project.hooks).toContain(`incvar("理.好感度", 5)`)
+    expect(project.hooks).toContain(`setvar("理.见过雾", true)`)
     expect(contract.slots.some((s) => s.slot.startsWith("var:"))).toBe(true)
 
     // Regeneration with one leaf gone: same-path uid survives, removed path is dropped.

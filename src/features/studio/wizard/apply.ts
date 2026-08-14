@@ -9,6 +9,7 @@ import { newLoreEntry, type ForgeLoreEntry, type ForgeProject } from "../model"
 import { flattenLeaves, parseInitvar } from "../split/mvu"
 import { promoteLeaves } from "../split/promote"
 import { emptyContract, type CardContract, type ContractSlot } from "./contract"
+import { hooksFromUpdateRules } from "./updateRules"
 import type { StageDraft, StageId, WizardLoreDraft } from "./stages"
 
 export interface ApplyResult {
@@ -120,16 +121,6 @@ function facetContent(facet: Extract<StageDraft, { stage: "facets" }>["facets"][
   return lines.filter((line) => !/: $/.test(line)).join("\n")
 }
 
-/** The update-rules draft lands as commented hooks source + an empty handler
- * skeleton — legal JS, ready for the author to turn into real handlers. */
-function hooksFromRules(rules: string): string {
-  const commented = rules
-    .split("\n")
-    .map((line) => `// ${line}`.trimEnd())
-    .join("\n")
-  return `// Variable update rules (wizard draft) — refine into real handlers:\n${commented}\non('reply_ready', (event) => {\n  // TODO: apply the rules above with setvar/incvar\n})\n`
-}
-
 function applyVariables(
   project: ForgeProject,
   contract: CardContract,
@@ -181,7 +172,9 @@ function applyVariables(
       .concat(nextSlots),
   }
   if (draft.updateRules.trim()) {
-    next = { ...next, hooks: hooksFromRules(draft.updateRules) }
+    // Real setvar/incvar calls, compiled from the rules the author entered —
+    // only the triggers stay a draft, because only they are prose.
+    next = { ...next, hooks: hooksFromUpdateRules(draft.updateRules, draft.initvarYaml) }
     nextContract = recordFieldSlots(nextContract, "variables", ["hooks"], "InitVar")
   }
   return { project: next, contract: nextContract }
