@@ -799,7 +799,29 @@
         "packPresentationTemplateDuplicate": "演出资料包：形态白名单里“{{value}}”出现了两次。",
         "packPresentationPaletteCount": "演出资料包：配色最多 {{max}} 条。",
         "packPresentationPaletteTooLong": "演出资料包：第 {{index}} 条配色超过 {{max}} 个字符。",
-        "packItemNeedsBytes": "“{{file}}”缺少文件内容——请先在「分类」步骤重新附加，再进行构建。"
+        "packItemNeedsBytes": "“{{file}}”缺少文件内容——请先在「分类」步骤重新附加，再进行构建。",
+        "rulepackYaml": "规则包：YAML 无效——{{detail}}",
+        "rulepackYamlAt": "规则包：第 {{line}} 行 YAML 无效——{{detail}}",
+        "rulepackAlias": "规则包：引擎的加载器拒绝 YAML 锚点/别名而不是展开它们——请把值直接写出来。",
+        "rulepackNotMapping": "规则包：YAML 根必须是一个小节映射。",
+        "rulepackUnknownSection": "规则包：“{{section}}”不是引擎读取的小节，会被静默忽略——请检查拼写。",
+        "rulepackExtendsType": "规则包：`extends:` 必须是一个待打补丁的系统 id。",
+        "rulepackSectionMapping": "规则包：`{{section}}:` 必须是映射。",
+        "rulepackSectionList": "规则包：`{{section}}:` 必须是列表。",
+        "rulepackDefaultScalar": "规则包：“{{stat}}”的默认值必须是单个值。",
+        "rulepackAliasList": "规则包：“{{stat}}”的别名必须是名称列表。",
+        "rulepackDerivedMapping": "规则包：“{{stat}}”的派生定义必须是映射。",
+        "rulepackDerivedOp": "规则包：“{{stat}}”的派生定义没有指明运算。可用：{{ops}}。",
+        "rulepackDerivedComputer": "规则包：“{{stat}}”使用了 `{{op}}:`，它只在运维方于启动时注册了代码的情况下才可解析——引擎自带的注册表是空的，所以这个包在原版服务器上加载不了。",
+        "rulepackDerivedFloorDiv": "规则包：“{{stat}}”的 `floor_div` 需要同时给出 `of:` 和 `by:`。",
+        "rulepackDerivedSumRanges": "规则包：“{{stat}}”的 `sum_ranges` 需要同时给出 `of:` 和 `ranges:`。",
+        "rulepackDerivedExprKeys": "规则包：“{{stat}}”的 expr 定义含有未知键 {{keys}}——只会读取 `expr` 与 `format`。",
+        "rulepackDerivedExprText": "规则包：“{{stat}}”的 expr 必须是非空字符串。",
+        "rulepackDerivedUnknownStat": "规则包：“{{stat}}”派生自“{{of}}”，但本包从未声明它——引擎会按 0 读取。",
+        "rulepackTurnCheckMapping": "规则包：turn_checks[{{index}}] 必须是映射。",
+        "rulepackTurnCheckKey": "规则包：turn_checks[{{index}}] 含有未知键“{{field}}”。",
+        "rulepackTurnCheckWhen": "规则包：turn_checks[{{index}}] 需要一个 `when:` 条件名。",
+        "rulepackThin": "规则包：这个文件既没有扩展某个系统，也没有定义一个——其中的内容不会改变牌桌的玩法。"
       },
       "panels": {
         "title": "模组 UI 面板（M15）",
@@ -964,7 +986,20 @@
         }
       },
       "needsBytes": "恢复时缺少字节：{{name}}（{{size}} 字节）。其余内容都已恢复。",
-      "reattach": "重新附加"
+      "reattach": "重新附加",
+      "rulepack": {
+        "title": "规则系统",
+        "mode": "模式",
+        "modePatch": "在内置系统上打补丁",
+        "modeFull": "完整规则系统",
+        "load": "载入 .yaml…",
+        "patchHint": "在引擎已自带的系统上 `extends:`——只覆盖几个默认值，其余照旧。",
+        "fullHint": "在这里编写一整套系统：属性、派生公式、判定、角色卡、子系统、命令。两种模式写出的都是同一个 rulepacks/<id>.yaml；文件名就是玩家在 `.set` 里输入的 id。",
+        "yamlFull": "规则包 YAML",
+        "summary": "基底：{{base}} · {{stats}} 项属性 · {{derived}} 项派生 · {{subsystems}} 个子系统 · {{commands}} 条命令",
+        "noBase": "无（独立系统）",
+        "advisory": "仅供参考——引擎会在构建时重新解析这个文件，以它的判定为准。"
+      }
     },
     "lint": {
       "title": "建议性检查",

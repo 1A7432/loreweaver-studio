@@ -799,7 +799,29 @@
         "packPresentationTemplateDuplicate": "Presentation kit: “{{value}}” is listed twice in the shape allowlist.",
         "packPresentationPaletteCount": "Presentation kit: at most {{max}} palette entries.",
         "packPresentationPaletteTooLong": "Presentation kit: palette entry {{index}} is longer than {{max}} characters.",
-        "packItemNeedsBytes": "“{{file}}” is missing its file contents — re-attach it on the Classify step before building."
+        "packItemNeedsBytes": "“{{file}}” is missing its file contents — re-attach it on the Classify step before building.",
+        "rulepackYaml": "Rulepack: invalid YAML — {{detail}}",
+        "rulepackYamlAt": "Rulepack: invalid YAML at line {{line}} — {{detail}}",
+        "rulepackAlias": "Rulepack: YAML anchors/aliases are refused by the engine's loader rather than expanded — write the value out.",
+        "rulepackNotMapping": "Rulepack: the YAML root must be a mapping of sections.",
+        "rulepackUnknownSection": "Rulepack: “{{section}}” is not a section the engine reads, so it will be silently ignored — check the spelling.",
+        "rulepackExtendsType": "Rulepack: `extends:` must be the id of one system to patch.",
+        "rulepackSectionMapping": "Rulepack: `{{section}}:` must be a mapping.",
+        "rulepackSectionList": "Rulepack: `{{section}}:` must be a list.",
+        "rulepackDefaultScalar": "Rulepack: the default for “{{stat}}” must be a single value.",
+        "rulepackAliasList": "Rulepack: aliases for “{{stat}}” must be a list of names.",
+        "rulepackDerivedMapping": "Rulepack: the derived spec for “{{stat}}” must be a mapping.",
+        "rulepackDerivedOp": "Rulepack: the derived spec for “{{stat}}” names no operation. One of: {{ops}}.",
+        "rulepackDerivedComputer": "Rulepack: “{{stat}}” uses `{{op}}:`, which resolves only where the operator registered code at startup — the engine ships that registry empty, so this pack will not load on a stock server.",
+        "rulepackDerivedFloorDiv": "Rulepack: `floor_div` for “{{stat}}” needs both `of:` and `by:`.",
+        "rulepackDerivedSumRanges": "Rulepack: `sum_ranges` for “{{stat}}” needs both `of:` and `ranges:`.",
+        "rulepackDerivedExprKeys": "Rulepack: the expr spec for “{{stat}}” has unknown key(s) {{keys}} — only `expr` and `format` are read.",
+        "rulepackDerivedExprText": "Rulepack: the expr for “{{stat}}” must be a non-empty string.",
+        "rulepackDerivedUnknownStat": "Rulepack: “{{stat}}” derives from “{{of}}”, which this pack never declares — the engine will read it as 0.",
+        "rulepackTurnCheckMapping": "Rulepack: turn_checks[{{index}}] must be a mapping.",
+        "rulepackTurnCheckKey": "Rulepack: turn_checks[{{index}}] has an unknown key “{{field}}”.",
+        "rulepackTurnCheckWhen": "Rulepack: turn_checks[{{index}}] needs a `when:` condition name.",
+        "rulepackThin": "Rulepack: this file neither extends a system nor defines one — nothing in it will change how the table plays."
       },
       "panels": {
         "title": "Module UI panels (M15)",
@@ -964,7 +986,20 @@
         }
       },
       "needsBytes": "Restored without its bytes: {{name}} ({{size}} bytes). Everything else came back.",
-      "reattach": "Re-attach"
+      "reattach": "Re-attach",
+      "rulepack": {
+        "title": "Rule system",
+        "mode": "Mode",
+        "modePatch": "Patch a built-in system",
+        "modeFull": "Full rule system",
+        "load": "Load a .yaml…",
+        "patchHint": "An `extends:` over a system the engine already ships — override a few defaults and leave the rest alone.",
+        "fullHint": "A whole system authored here: stats, derived formulas, resolution, sheet, subsystems, commands. Both modes write the same rulepacks/<id>.yaml; the file stem is the id players type in `.set`.",
+        "yamlFull": "Rulepack YAML",
+        "summary": "Base: {{base}} · {{stats}} stat(s) · {{derived}} derived · {{subsystems}} subsystem(s) · {{commands}} command(s)",
+        "noBase": "none (a standalone system)",
+        "advisory": "Advisory only — the engine parses this file again at build time and its verdict is the one that counts."
+      }
     },
     "lint": {
       "title": "Advisory lint",

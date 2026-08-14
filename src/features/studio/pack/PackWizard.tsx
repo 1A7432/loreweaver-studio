@@ -39,6 +39,7 @@ import { lintPack } from "../lint/packLint"
 import { lintSourceFromPackBench } from "../lint/sources"
 import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
 import { buildPackSourcePlan, presentationSummary } from "../split/packSource"
+import { readRulepack } from "../split/rulepack"
 import PresentationStage from "./PresentationStage"
 import PromoteTable from "../split/PromoteTable"
 import type { Issue } from "../model"
@@ -282,6 +283,101 @@ function TestDrivePanel({
           {isTestDriveErrorKey(drive.error) ? t(`studio.pack.${drive.error}`) : drive.error}
         </p>
       ) : null}
+    </section>
+  )
+}
+
+// i18n-exempt: a YAML sample — code, identical in every locale.
+const FULL_RULEPACK_SAMPLE = `names: [My System]
+set_keys: [mysys]
+defaults:
+  力量: 50
+  体质: 50
+derived:
+  体力:
+    floor_div: {of: 体质, by: 10}
+resolution:
+  kind: percentile`
+// i18n-exempt: as above.
+const PATCH_RULEPACK_SAMPLE = `extends: coc7
+defaults:
+  San: 60`
+
+/** The rulepack editor. Two modes over ONE artifact: a `patch` is an `extends:`
+ * over a built-in system (what the bench has always offered), a `full` pack is
+ * a whole rule system authored here. Both emit `rulepacks/<id>.yaml` and the
+ * engine does not distinguish them — the mode changes the editor and the
+ * advice, not the file. Validation is advisory: `core/rulepacks.py` parses this
+ * again at build time and its verdict is the only one that counts. */
+function RulepackSection() {
+  const { t } = useTranslation()
+  const metadata = usePackStore((s) => s.metadata)
+  const setMetadata = usePackStore((s) => s.setMetadata)
+  const full = metadata.rulepackMode === "full"
+  const reading = readRulepack(metadata.rulepackPatch)
+
+  const loadFromFile = async () => {
+    const files = await pickAnyFiles()
+    if (files.length === 0) return
+    setMetadata({
+      rulepackPatch: new TextDecoder("utf-8").decode(files[0].bytes),
+      rulepackMode: "full",
+      // The file stem IS the system id players type in `.set`, so adopt it.
+      rulepackId: metadata.rulepackId || files[0].name.replace(/\.[^.]*$/, ""),
+    })
+  }
+
+  return (
+    <section className="pack-extra-section">
+      <h3>{t("studio.pack.rulepack.title")}</h3>
+      <div className="dialog-row">
+        <label className="field field-narrow">
+          {t("studio.pack.rulepack.mode")}
+          <select
+            value={metadata.rulepackMode}
+            onChange={(e) => setMetadata({ rulepackMode: e.target.value as "patch" | "full" })}
+          >
+            <option value="patch">{t("studio.pack.rulepack.modePatch")}</option>
+            <option value="full">{t("studio.pack.rulepack.modeFull")}</option>
+          </select>
+        </label>
+        <button type="button" className="ghost-button" onClick={() => void loadFromFile()}>
+          {t("studio.pack.rulepack.load")}
+        </button>
+      </div>
+      <p className="studio-hint">
+        {t(full ? "studio.pack.rulepack.fullHint" : "studio.pack.rulepack.patchHint")}
+      </p>
+      <label className="field field-wide">
+        {t(full ? "studio.pack.rulepack.yamlFull" : "studio.pack.meta.rulepackPatch")}
+        <textarea
+          className={full ? "wizard-yaml" : undefined}
+          rows={full ? 22 : 4}
+          value={metadata.rulepackPatch}
+          onChange={(e) => setMetadata({ rulepackPatch: e.target.value })}
+          placeholder={full ? FULL_RULEPACK_SAMPLE : PATCH_RULEPACK_SAMPLE}
+          spellCheck={false}
+        />
+      </label>
+      {metadata.rulepackPatch.trim() ? (
+        <p className="studio-hint">
+          {t("studio.pack.rulepack.summary", {
+            base: reading.summary.extends || t("studio.pack.rulepack.noBase"),
+            stats: reading.summary.stats,
+            derived: reading.summary.derived,
+            subsystems: reading.summary.subsystems,
+            commands: reading.summary.commands,
+          })}
+        </p>
+      ) : null}
+      {reading.issues.length > 0 ? (
+        <ul className="issue-list">
+          {reading.issues.map((issue, index) => (
+            <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params)}</li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="studio-hint">{t("studio.pack.rulepack.advisory")}</p>
     </section>
   )
 }
@@ -783,18 +879,9 @@ export default function PackWizard() {
                 spellCheck={false}
               />
             </label>
-            <label className="field field-wide">
-              {t("studio.pack.meta.rulepackPatch")}
-              <textarea
-                rows={4}
-                value={store.metadata.rulepackPatch}
-                onChange={(e) => store.setMetadata({ rulepackPatch: e.target.value })}
-                // i18n-exempt: a YAML sample — code, identical in every locale.
-                placeholder={"extends: coc7\ndefaults:\n  San: 60"}
-                spellCheck={false}
-              />
-            </label>
           </div>
+
+          <RulepackSection />
 
           <section className="pack-extra-section">
             <h3>{t("studio.pack.panels.title")}</h3>

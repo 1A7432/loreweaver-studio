@@ -96,6 +96,11 @@ export interface PackMetadataForm {
   /** Rulepack file stem = the system id players type in `.set`. Blank falls
    * back to `<packId>-rules` (the historical default). */
   rulepackId: string
+  /** `patch` = an `extends:` over a built-in system (what the bench has always
+   * offered); `full` = a whole rule system authored here. Both emit the same
+   * `rulepacks/<id>.yaml`; the mode changes the editor and the advice, not the
+   * artifact — `core/rulepacks.py` does not distinguish them either. */
+  rulepackMode: "patch" | "full"
 }
 
 const EMPTY_METADATA: PackMetadataForm = {
@@ -109,6 +114,7 @@ const EMPTY_METADATA: PackMetadataForm = {
   license: "",
   rulepackPatch: "",
   rulepackId: "",
+  rulepackMode: "patch",
 }
 
 function uid(): string {

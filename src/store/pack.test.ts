@@ -159,6 +159,7 @@ describe("pack store pipeline", () => {
       license: "MIT",
       rulepackPatch: "",
       rulepackId: "",
+      rulepackMode: "patch" as const,
     })
     expect(draft.cards).toHaveLength(1)
     // Manifest v2: the author draft carries NO kind — detection stamps it.
@@ -189,6 +190,7 @@ describe("pack store pipeline", () => {
       license: "MIT",
       rulepackPatch: "",
       rulepackId: "",
+      rulepackMode: "patch" as const,
     })
     expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64 }])
   })
@@ -208,6 +210,7 @@ describe("presentation kit (M19) store actions", () => {
     license: "MIT",
     rulepackPatch: "",
     rulepackId: "",
+    rulepackMode: "patch" as const,
   }
 
   it("opts in explicitly (null by default), and addPresentation is idempotent", () => {
@@ -316,6 +319,7 @@ describe("pack session persistence", () => {
     license: "MIT",
     rulepackPatch: "",
     rulepackId: "",
+    rulepackMode: "patch" as const,
   }
 
   /** What zustand's `persist` would write, without going through localStorage. */
