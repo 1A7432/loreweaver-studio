@@ -93,9 +93,7 @@ output and the engine's real parsers drift apart. It pins four things:
   so engine-side world detection is exercised on the SillyTavern path too), and
   a PNG-embedded card — plus a skill, a rulepack patch, a stage-E rules-script
   rulepack, a lorebook, tier-1/2 panels, a presentation kit, assets, and a
-  prep-phase plan script. The rules-script lane needs the engine's optional
-  `ejs` extra (QuickJS); the gate probes for it and says out loud when it is
-  skipping that lane rather than quietly covering less;
+  prep-phase plan script, and a keeper prompt preset;
 - **the engine's conformance suites** for the pinned fixtures
   (`test_studio_export_fixture`, `test_lorecard`, `test_visible_when_vectors`);
 - **the live-connect smoke gate** (`scripts/check_live_connect.sh`) — the three
@@ -107,10 +105,12 @@ output and the engine's real parsers drift apart. It pins four things:
   `LIVE_CONNECT=0` on a machine without cargo.
 
 It needs a checkout of the engine repo (default `../trpg_kp`, override with
-`TRPG_KP_REPO`) with `uv` available:
+`TRPG_KP_REPO`) with `uv` available, and the engine's optional `ejs` extra —
+the fixture's rules-script rulepack compiles through QuickJS at pack-build time:
 
 ```sh
 git clone https://github.com/1A7432/loreweaver.git ../trpg_kp   # once
+(cd ../trpg_kp && uv sync --extra ejs)                          # once
 bun run roundtrip
 ```
 

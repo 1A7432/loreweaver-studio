@@ -9,6 +9,10 @@
 #      detection results (world card, hooks, presentation kit) in `trust`
 #   3. the engine's own conformance suites for the pinned fixtures
 #      (studio_export + lorecard + visible_when golden vectors)
+# Prerequisite: the engine's optional `ejs` extra (`uv sync --extra ejs`) — the
+# fixture ships a stage-E rules-script rulepack, which compiles through QuickJS
+# at pack-build time.
+#
 #   4. the live-connect smoke gate — a REAL `--serve` engine dialed through the
 #      REAL Rust transport (scripts/check_live_connect.sh). The formats above
 #      are all static; this is the only stage that proves the two processes can
@@ -33,6 +37,12 @@ fail() {
 ENGINE_REPO="$(cd "$ENGINE_REPO" && pwd)"
 [ -f "$ENGINE_REPO/core/pack.py" ] || fail "$ENGINE_REPO does not look like the loreweaver engine repo (core/pack.py missing)"
 command -v bun >/dev/null 2>&1 || fail "bun not found on PATH"
+# The fixture ships a stage-E rules-script rulepack so `has_rules_script` is
+# actually exercised, and that compiles through QuickJS at pack-BUILD time. The
+# engine keeps quickjs behind its optional `ejs` extra, so the gate needs it —
+# checked here, by name, rather than surfacing as a confusing PackError later.
+(cd "$ENGINE_REPO" && uv run python -c "import sys; from core.ejs_full import quickjs_available; sys.exit(0 if quickjs_available() else 1)" >/dev/null 2>&1) \
+  || fail "the engine's optional 'ejs' extra (quickjs) is not installed, and the fixture's rules-script rulepack needs it at build time — run 'uv sync --extra ejs' in $ENGINE_REPO"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -48,19 +58,7 @@ fi
 echo "ok: byte-identical to tests/fixtures/studio_export.lorecard.json"
 
 say "2/5 pack source tree: real buildPackSourcePlan emission"
-# The stage-E rules-script lane compiles through QuickJS at BUILD time, and the
-# engine ships that as an OPTIONAL extra (`ejs`). Probe rather than assume: the
-# fixture includes the lane when it can be built, and says so when it cannot —
-# a gate that quietly covers less is worse than one that admits it.
-if (cd "$ENGINE_REPO" && uv run python -c "import sys; from core.ejs_full import quickjs_available; sys.exit(0 if quickjs_available() else 1)" >/dev/null 2>&1); then
-  RULES_SCRIPT_LANE=1
-  echo "ok: quickjs present — the rules-script rulepack is in the fixture"
-else
-  RULES_SCRIPT_LANE=0
-  echo "note: quickjs (the engine's optional 'ejs' extra) is absent — SKIPPING the rules-script lane; has_rules_script stays unexercised"
-fi
-export RULES_SCRIPT_LANE
-RULES_SCRIPT_LANE="$RULES_SCRIPT_LANE" bun "$STUDIO_ROOT/scripts/gen_roundtrip_pack.ts" "$WORK/pack"
+bun "$STUDIO_ROOT/scripts/gen_roundtrip_pack.ts" "$WORK/pack"
 TREE="$WORK/pack/corridor-apartment"
 
 say "3/5 engine pack build: python -m app --pack --json + trust assertions"
@@ -71,7 +69,7 @@ RESULT="$WORK/pack-result.json"
 )
 (
   cd "$ENGINE_REPO"
-  RULES_SCRIPT_LANE="$RULES_SCRIPT_LANE" uv run python - "$RESULT" <<'PY'
+  uv run python - "$RESULT" <<'PY'
 """Assert the engine accepted the studio's tree AND detected it as expected —
 an `ok: true` alone would miss a silent world→character kind drift."""
 import json
@@ -91,18 +89,15 @@ trust = result.get("trust") or {}
 # available) a stage-E rules-script rulepack; one lorebook; two panels; one kit
 # subject licensing imagegen; seven assets; one prep-phase plan script; one
 # keeper-style prompt preset (validated with the engine's real preset parser).
-import os
-
-rules_script = os.environ.get("RULES_SCRIPT_LANE") == "1"
 expected = {
     "skills": 1,
-    "rulepacks": 2 if rules_script else 1,
+    "rulepacks": 2,
     "cards": 4,
     "lorebooks": 1,
     "assets": 7,
     "has_hooks": True,
     "has_ejs": True,
-    "has_rules_script": rules_script,
+    "has_rules_script": True,
     "world_cards": 2,
     "panels": 2,
     "presentation": 1,

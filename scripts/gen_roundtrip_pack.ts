@@ -22,14 +22,6 @@ import {
   type WorldPackDraft,
 } from "../src/features/studio/split/packSource"
 
-// The stage-E rules-script lane needs the engine's OPTIONAL `ejs` extra
-// (QuickJS): `parse_rulepack_text` builds a `RulesScriptEngine` at BUILD time,
-// so shipping the script rulepack unconditionally would break the gate on a
-// plain `uv sync`. `check_roundtrip.sh` probes the engine and sets this; when
-// it is off the lane is left out and the gate SAYS so rather than quietly
-// covering less.
-const RULES_SCRIPT_LANE = process.env.RULES_SCRIPT_LANE === "1"
-
 const outDir = process.argv[2]
 if (!outDir) {
   console.error("usage: bun scripts/gen_roundtrip_pack.ts <out-dir>")
@@ -470,15 +462,14 @@ const draft: WorldPackDraft = {
   ],
   rulepacks: [
     { id: "corridor-rules", yamlText: RULEPACK_YAML },
-    ...(RULES_SCRIPT_LANE
-      ? [
-          {
-            id: "corridor-fate",
-            yamlText: SCRIPT_RULEPACK_YAML,
-            scripts: [{ fileName: "corridor-resolver.js", source: RULES_SCRIPT_JS }],
-          },
-        ]
-      : []),
+    // The stage-E script lane. It compiles through QuickJS at pack-BUILD time,
+    // so `check_roundtrip.sh` requires the engine's `ejs` extra up front and
+    // names it — the alternative was a gate that silently covered less.
+    {
+      id: "corridor-fate",
+      yamlText: SCRIPT_RULEPACK_YAML,
+      scripts: [{ fileName: "corridor-resolver.js", source: RULES_SCRIPT_JS }],
+    },
   ],
   assets: [{ fileName: "cover.png", base64: PNG_1X1 }],
   // M20 F prep-phase script (`contents.prep`): the engine's build checks it
