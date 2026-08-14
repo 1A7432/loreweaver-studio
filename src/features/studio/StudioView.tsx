@@ -13,6 +13,9 @@ import CardTab from "./CardTab"
 import { exportFileName, exportNativeBundle, exportSillyTavernCard } from "./exporters"
 import { embedCardIntoPng } from "./pngCard"
 import HooksTab from "./HooksTab"
+import LintPanel, { LintBadge } from "./lint/LintPanel"
+import { lintPack } from "./lint/packLint"
+import { lintSourceFromProject } from "./lint/sources"
 import { validateProject } from "./model"
 import PackWizard from "./pack/PackWizard"
 import PregensTab from "./PregensTab"
@@ -41,8 +44,12 @@ export default function StudioView() {
   const [aiOpen, setAiOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [presetsOpen, setPresetsOpen] = useState(false)
+  const [lintOpen, setLintOpen] = useState(false)
 
   const validation = project ? validateProject(project) : null
+  // Two different questions, deliberately two different readouts: `validation`
+  // is "will the engine accept this", the lint is "will it do anything".
+  const lintFindings = project ? lintPack(lintSourceFromProject(project)) : []
 
   const doExport = async (flavor: "native" | "st") => {
     if (!project || !validation) return
@@ -178,6 +185,7 @@ export default function StudioView() {
                   : t("studio.clean")}
               </span>
             ) : null}
+            {project ? <LintBadge findings={lintFindings} onClick={() => setLintOpen(!lintOpen)} /> : null}
             {project ? (
               <>
                 <button type="button" className="ghost-button" onClick={() => void doExport("native")}>
@@ -198,6 +206,8 @@ export default function StudioView() {
               {notice}
             </p>
           ) : null}
+
+          {project && lintOpen ? <LintPanel findings={lintFindings} /> : null}
 
           {project ? (
             <>

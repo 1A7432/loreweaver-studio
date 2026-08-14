@@ -34,6 +34,9 @@ import { PACK_METADATA_SYSTEM } from "../ai/prompts"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { draftToPackMetadata } from "../ai/schemas"
 import { isTestDriveErrorKey, useTestDriveStore } from "../../../store/testDrive"
+import LintPanel from "../lint/LintPanel"
+import { lintPack } from "../lint/packLint"
+import { lintSourceFromPackBench } from "../lint/sources"
 import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
 import { buildPackSourcePlan, presentationSummary } from "../split/packSource"
 import PresentationStage from "./PresentationStage"
@@ -528,6 +531,17 @@ export default function PackWizard() {
     store.manualSkills,
     store.presentation,
   )
+  // Advisory, alongside the blocking `issues` above and never mixed with them:
+  // these are packs that build fine and then do nothing.
+  const lintFindings = lintPack(
+    lintSourceFromPackBench({
+      items: store.items,
+      metadata: store.metadata,
+      panels: store.panels,
+      manualSkills: store.manualSkills,
+      presentation: store.presentation,
+    }),
+  )
   // Kit issues live on the presentation step (every kit key shares the
   // packPresentation prefix; kit-raised path collisions are tagged `from`) —
   // the metadata step only gates on its own fields, the build gates on ALL.
@@ -614,6 +628,7 @@ export default function PackWizard() {
       {store.step === "review" ? (
         <div className="pack-panel">
           <p className="studio-hint">{t("studio.pack.reviewHint")}</p>
+          <LintPanel findings={lintFindings} collapsible />
           {store.items.map((item) => (
             <ItemRow key={item.uid} item={item} />
           ))}

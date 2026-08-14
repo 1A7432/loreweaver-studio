@@ -939,6 +939,34 @@
           "notKeeper": "This connection is not a keeper, and a world import is keeper-only."
         }
       }
+    },
+    "lint": {
+      "title": "Advisory lint",
+      "hint": "Advisory only — the engine build stays the authority. These are the things that build fine and then do nothing.",
+      "clean": "Lint clean",
+      "count": "{{warn}} warning(s), {{info}} note(s)",
+      "show": "Show",
+      "hide": "Hide",
+      "severity": {
+        "warn": "warning",
+        "info": "note"
+      },
+      "msg": {
+        "variableUnused": "Variable “{{id}}” is declared but never mentioned by any lore entry, panel or hook.",
+        "loreNeverActivates": "Lore entry “{{title}}” can never activate: no keys, not constant, no condition.",
+        "bilingualGapVariable": "Variable “{{id}}” has a label in one language only (missing: {{missing}}).",
+        "bilingualGapPanel": "Panel “{{panel}}”: the {{field}} text is in one language only (missing: {{missing}}).",
+        "bilingualGapPack": "The pack {{field}} is in one language only (missing: {{missing}}).",
+        "panelBindsHiddenVariable": "Panel “{{panel}}” binds the keeper-only variable “{{id}}”: hidden variables never reach a player's client, so the block renders blank for them.",
+        "panelConditionHiddenVariable": "Panel “{{panel}}” gates a block on the keeper-only variable “{{id}}”: the condition never decides true for a player, and the condition string ships with the pack, so the variable's name leaks.",
+        "panelBindsUnknownVariable": "Panel “{{panel}}” binds “{{id}}”, which this pack never declares.",
+        "codeUnknownVariable": "{{origin}} reads or writes “{{id}}”, which this pack never declares.",
+        "loreUnknownVariable": "Lore entry “{{title}}” names “{{id}}”, which this pack never declares.",
+        "stubMarker": "{{origin}} still carries the wizard's draft stub, so the update rules never run.",
+        "packDescriptionMissing": "The pack has no description in either language — it is what a reader sees before installing.",
+        "packLicenseMissing": "The pack declares no license.",
+        "assetMissing": "{{from}} points at “{{path}}”, which this pack does not ship."
+      }
     }
   }
 }
