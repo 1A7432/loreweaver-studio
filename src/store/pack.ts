@@ -1,10 +1,20 @@
 // The auto-import pipeline (③): drop files → deterministic classify + split →
 // promotion drafts → (AI-drafted, human-confirmed) metadata → source tree →
 // the ENGINE builds/installs. Every step is inspectable and editable — the
-// pipeline is a wizard, not a black box. Nothing here persists: it is a
-// working session over files the user just dropped.
+// pipeline is a wizard, not a black box.
+//
+// The session PERSISTS. It used to say "nothing here persists: it is a working
+// session over files the user just dropped" — which was true, and which meant a
+// tab switch threw away every classification, promotion decision, metadata field
+// and panel the author had typed. What cannot survive is raw BYTES: a dropped
+// PNG or MP3 would be megabytes of localStorage, so binary payloads are dropped
+// on write and the item comes back flagged `needsBytes`. Everything the author
+// typed or decided survives; the file itself is asked for again, and the build
+// is blocked until it is (`packItemNeedsBytes`) rather than shipping an empty
+// file under the right name.
 
 import { create } from "zustand"
+import { createJSONStorage, persist } from "zustand/middleware"
 import { parseCardBytes, type StCharacterCard } from "../features/studio/split/charcard"
 import {
   payloadsAny,
@@ -45,6 +55,12 @@ export interface PackItem {
   base64: string
   /** UTF-8 text when the file is JSON (cards ride as text for readable diffs). */
   jsonText: string | null
+  /** Byte size of the dropped file, kept so a restored item can be recognized
+   * (and a re-attach compared) after `base64` is gone. */
+  size: number
+  /** True when a persisted session came back without this item's bytes. Every
+   * edit survived; the file itself has to be handed over again. */
+  needsBytes: boolean
 
   // --- card-only fields ---
   card: StCharacterCard | null
@@ -160,6 +176,8 @@ async function itemFromFile(file: PickedFile): Promise<PackItem> {
     sourceName: file.name,
     base64: bytesToBase64(file.bytes),
     jsonText: null as string | null,
+    size: file.bytes.length,
+    needsBytes: false,
     card: null as StCharacterCard | null,
     payloads: null as WorldPayloads | null,
     cardKind: "character" as const,
@@ -298,6 +316,10 @@ interface PackState {
 
   setStep: (step: PackStep) => void
   addFiles: (files: PickedFile[]) => Promise<void>
+  /** Hand back the bytes of an item a reload restored without them. */
+  reattachItem: (uid: string, file: PickedFile) => void
+  /** Same, for a tier-2 panel's binary file. */
+  reattachPanelFile: (path: string, file: PickedFile) => void
   removeItem: (uid: string) => void
   updateItem: (uid: string, patch: Partial<PackItem>) => void
   updateDraft: (itemUid: string, draftUid: string, patch: Partial<PromotionDraft>) => void
@@ -402,298 +424,9 @@ function newPresentationCue(): PackPresentationAudioDraft {
   return { uid: uid(), id: "", layer: "bgm", assetFileName: "", assetBase64: "", title: "" }
 }
 
-export const usePackStore = create<PackState>()((set) => ({
-  step: "input",
-  items: [],
-  metadata: EMPTY_METADATA,
-  loadError: null,
-  panels: null,
-  presentation: null,
-  manualSkills: [],
-  outputDir: null,
-  writtenDir: null,
-  candidates: [],
-  selectedCandidate: 0,
-  installAfterBuild: false,
-  running: false,
-  runResult: null,
-  packResult: null,
-  builtPackPath: null,
-
-  setStep: (step) => set({ step }),
-
-  addFiles: async (files) => {
-    const items: PackItem[] = []
-    let loadError: string | null = null
-    for (const file of files) {
-      try {
-        items.push(await itemFromFile(file))
-      } catch (error) {
-        loadError = `${file.name}: ${error instanceof Error ? error.message : String(error)}`
-      }
-    }
-    set((state) => ({ items: [...state.items, ...items], loadError }))
-  },
-
-  removeItem: (uid) => set((state) => ({ items: state.items.filter((item) => item.uid !== uid) })),
-
-  updateItem: (uid, patch) =>
-    set((state) => ({
-      items: state.items.map((item) => {
-        if (item.uid !== uid) return item
-        const next = { ...item, ...patch }
-        // Manifest v2: `kind` is DETECTED, never declared — pin the stored
-        // kind to the detection result on every edit, in both directions.
-        if (next.payloads !== null) next.cardKind = payloadsAny(next.payloads) ? "world" : "character"
-        return next
-      }),
-    })),
-
-  updateDraft: (itemUid, draftUid, patch) =>
-    set((state) => ({
-      items: state.items.map((item) =>
-        item.uid === itemUid
-          ? {
-              ...item,
-              drafts: item.drafts.map((draft) =>
-                draft.uid === draftUid
-                  ? { ...draft, ...patch, variable: patch.variable ?? draft.variable }
-                  : draft,
-              ),
-            }
-          : item,
-      ),
-    })),
-
-  setMetadata: (patch) => set((state) => ({ metadata: { ...state.metadata, ...patch } })),
-
-  setPanelsYaml: (yamlText) => set((state) => ({ panels: { yamlText, files: state.panels?.files ?? [] } })),
-
-  addPanelFiles: (files, subdir) =>
-    set((state) => {
-      const existing = state.panels ?? { yamlText: "", files: [] }
-      const additions = files.map((file) => panelFileFromPicked(file, subdir))
-      const kept = existing.files.filter((file) => !additions.some((next) => next.path === file.path))
-      return { panels: { ...existing, files: [...kept, ...additions] } }
-    }),
-
-  updatePanelFilePath: (path, nextPath) =>
-    set((state) =>
-      state.panels === null
-        ? {}
-        : {
-            panels: {
-              ...state.panels,
-              files: state.panels.files.map((file) =>
-                file.path === path ? { ...file, path: nextPath } : file,
-              ),
-            },
-          },
-    ),
-
-  removePanelFile: (path) =>
-    set((state) =>
-      state.panels === null
-        ? {}
-        : { panels: { ...state.panels, files: state.panels.files.filter((file) => file.path !== path) } },
-    ),
-
-  clearPanels: () => set({ panels: null }),
-
-  addPresentation: () =>
-    set((state) => (state.presentation !== null ? {} : { presentation: newPresentationDraft() })),
-
-  clearPresentation: () => set({ presentation: null }),
-
-  updatePresentation: (patch) =>
-    set((state) =>
-      state.presentation === null ? {} : { presentation: { ...state.presentation, ...patch } },
-    ),
-
-  addPresentationSubject: () =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              subjects: [...state.presentation.subjects, newPresentationSubject()],
-            },
-          },
-    ),
-
-  updatePresentationSubject: (subjectUid, patch) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              subjects: state.presentation.subjects.map((subject) =>
-                subject.uid === subjectUid ? { ...subject, ...patch } : subject,
-              ),
-            },
-          },
-    ),
-
-  removePresentationSubject: (subjectUid) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              subjects: state.presentation.subjects.filter((subject) => subject.uid !== subjectUid),
-            },
-          },
-    ),
-
-  setPresentationSubjectRef: (subjectUid, file) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              subjects: state.presentation.subjects.map((subject) =>
-                subject.uid === subjectUid
-                  ? {
-                      ...subject,
-                      refFileName: kitMediaFileName(file.name, "reference"),
-                      refBase64: bytesToBase64(file.bytes),
-                    }
-                  : subject,
-              ),
-            },
-          },
-    ),
-
-  clearPresentationSubjectRef: (subjectUid) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              subjects: state.presentation.subjects.map((subject) =>
-                subject.uid === subjectUid ? { ...subject, refFileName: "", refBase64: "" } : subject,
-              ),
-            },
-          },
-    ),
-
-  addPresentationCue: () =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              audio: [...state.presentation.audio, newPresentationCue()],
-            },
-          },
-    ),
-
-  updatePresentationCue: (cueUid, patch) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              audio: state.presentation.audio.map((cue) => (cue.uid === cueUid ? { ...cue, ...patch } : cue)),
-            },
-          },
-    ),
-
-  removePresentationCue: (cueUid) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              audio: state.presentation.audio.filter((cue) => cue.uid !== cueUid),
-            },
-          },
-    ),
-
-  setPresentationCueAsset: (cueUid, file) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              audio: state.presentation.audio.map((cue) =>
-                cue.uid === cueUid
-                  ? {
-                      ...cue,
-                      assetFileName: kitMediaFileName(file.name, "audio"),
-                      assetBase64: bytesToBase64(file.bytes),
-                    }
-                  : cue,
-              ),
-            },
-          },
-    ),
-
-  clearPresentationCueAsset: (cueUid) =>
-    set((state) =>
-      state.presentation === null
-        ? {}
-        : {
-            presentation: {
-              ...state.presentation,
-              audio: state.presentation.audio.map((cue) =>
-                cue.uid === cueUid ? { ...cue, assetFileName: "", assetBase64: "" } : cue,
-              ),
-            },
-          },
-    ),
-
-  addManualSkill: () =>
-    set((state) => ({
-      manualSkills: [
-        ...state.manualSkills,
-        { slug: "", nameEn: "", descriptionEn: "", descriptionZh: "", hooks: [], skillMd: "" },
-      ],
-    })),
-
-  updateManualSkill: (index, patch) =>
-    set((state) => ({
-      manualSkills: state.manualSkills.map((skill, i) => (i === index ? { ...skill, ...patch } : skill)),
-    })),
-
-  removeManualSkill: (index) =>
-    set((state) => ({ manualSkills: state.manualSkills.filter((_, i) => i !== index) })),
-
-  seedFromSplit: (item, notesZh, notesEn) =>
-    set({
-      step: "metadata",
-      items: [{ ...item, notesZh, notesEn }],
-      metadata: { ...EMPTY_METADATA },
-      panels: null,
-      presentation: null,
-      manualSkills: [],
-      writtenDir: null,
-      runResult: null,
-      packResult: null,
-      builtPackPath: null,
-    }),
-
-  setOutputDir: (outputDir) => set({ outputDir }),
-  setWritten: (writtenDir) => set({ writtenDir }),
-  setCandidates: (candidates) => set({ candidates, selectedCandidate: 0 }),
-  setSelectedCandidate: (selectedCandidate) => set({ selectedCandidate }),
-  setInstallAfterBuild: (installAfterBuild) => set({ installAfterBuild }),
-  setRunning: (running) => set({ running }),
-  setRunResult: (runResult) => set({ runResult }),
-  setPackResult: (packResult) => set({ packResult }),
-  setBuiltPackPath: (builtPackPath) => set({ builtPackPath }),
-
-  reset: () =>
-    set({
+export const usePackStore = create<PackState>()(
+  persist(
+    (set) => ({
       step: "input",
       items: [],
       metadata: EMPTY_METADATA,
@@ -703,13 +436,378 @@ export const usePackStore = create<PackState>()((set) => ({
       manualSkills: [],
       outputDir: null,
       writtenDir: null,
+      candidates: [],
+      selectedCandidate: 0,
+      installAfterBuild: false,
+      running: false,
       runResult: null,
       packResult: null,
       builtPackPath: null,
-      running: false,
-      installAfterBuild: false,
+
+      setStep: (step) => set({ step }),
+
+      addFiles: async (files) => {
+        const items: PackItem[] = []
+        let loadError: string | null = null
+        for (const file of files) {
+          try {
+            items.push(await itemFromFile(file))
+          } catch (error) {
+            loadError = `${file.name}: ${error instanceof Error ? error.message : String(error)}`
+          }
+        }
+        set((state) => ({ items: [...state.items, ...items], loadError }))
+      },
+
+      reattachItem: (uid, file) =>
+        set((state) => ({
+          items: state.items.map((item) =>
+            item.uid === uid
+              ? {
+                  ...item,
+                  base64: bytesToBase64(file.bytes),
+                  size: file.bytes.length,
+                  needsBytes: false,
+                }
+              : item,
+          ),
+        })),
+
+      reattachPanelFile: (path, file) =>
+        set((state) =>
+          state.panels === null
+            ? {}
+            : {
+                panels: {
+                  ...state.panels,
+                  files: state.panels.files.map((entry) =>
+                    entry.path === path ? { path: entry.path, base64: bytesToBase64(file.bytes) } : entry,
+                  ),
+                },
+              },
+        ),
+
+      removeItem: (uid) => set((state) => ({ items: state.items.filter((item) => item.uid !== uid) })),
+
+      updateItem: (uid, patch) =>
+        set((state) => ({
+          items: state.items.map((item) => {
+            if (item.uid !== uid) return item
+            const next = { ...item, ...patch }
+            // Manifest v2: `kind` is DETECTED, never declared — pin the stored
+            // kind to the detection result on every edit, in both directions.
+            if (next.payloads !== null) next.cardKind = payloadsAny(next.payloads) ? "world" : "character"
+            return next
+          }),
+        })),
+
+      updateDraft: (itemUid, draftUid, patch) =>
+        set((state) => ({
+          items: state.items.map((item) =>
+            item.uid === itemUid
+              ? {
+                  ...item,
+                  drafts: item.drafts.map((draft) =>
+                    draft.uid === draftUid
+                      ? { ...draft, ...patch, variable: patch.variable ?? draft.variable }
+                      : draft,
+                  ),
+                }
+              : item,
+          ),
+        })),
+
+      setMetadata: (patch) => set((state) => ({ metadata: { ...state.metadata, ...patch } })),
+
+      setPanelsYaml: (yamlText) =>
+        set((state) => ({ panels: { yamlText, files: state.panels?.files ?? [] } })),
+
+      addPanelFiles: (files, subdir) =>
+        set((state) => {
+          const existing = state.panels ?? { yamlText: "", files: [] }
+          const additions = files.map((file) => panelFileFromPicked(file, subdir))
+          const kept = existing.files.filter((file) => !additions.some((next) => next.path === file.path))
+          return { panels: { ...existing, files: [...kept, ...additions] } }
+        }),
+
+      updatePanelFilePath: (path, nextPath) =>
+        set((state) =>
+          state.panels === null
+            ? {}
+            : {
+                panels: {
+                  ...state.panels,
+                  files: state.panels.files.map((file) =>
+                    file.path === path ? { ...file, path: nextPath } : file,
+                  ),
+                },
+              },
+        ),
+
+      removePanelFile: (path) =>
+        set((state) =>
+          state.panels === null
+            ? {}
+            : { panels: { ...state.panels, files: state.panels.files.filter((file) => file.path !== path) } },
+        ),
+
+      clearPanels: () => set({ panels: null }),
+
+      addPresentation: () =>
+        set((state) => (state.presentation !== null ? {} : { presentation: newPresentationDraft() })),
+
+      clearPresentation: () => set({ presentation: null }),
+
+      updatePresentation: (patch) =>
+        set((state) =>
+          state.presentation === null ? {} : { presentation: { ...state.presentation, ...patch } },
+        ),
+
+      addPresentationSubject: () =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  subjects: [...state.presentation.subjects, newPresentationSubject()],
+                },
+              },
+        ),
+
+      updatePresentationSubject: (subjectUid, patch) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  subjects: state.presentation.subjects.map((subject) =>
+                    subject.uid === subjectUid ? { ...subject, ...patch } : subject,
+                  ),
+                },
+              },
+        ),
+
+      removePresentationSubject: (subjectUid) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  subjects: state.presentation.subjects.filter((subject) => subject.uid !== subjectUid),
+                },
+              },
+        ),
+
+      setPresentationSubjectRef: (subjectUid, file) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  subjects: state.presentation.subjects.map((subject) =>
+                    subject.uid === subjectUid
+                      ? {
+                          ...subject,
+                          refFileName: kitMediaFileName(file.name, "reference"),
+                          refBase64: bytesToBase64(file.bytes),
+                        }
+                      : subject,
+                  ),
+                },
+              },
+        ),
+
+      clearPresentationSubjectRef: (subjectUid) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  subjects: state.presentation.subjects.map((subject) =>
+                    subject.uid === subjectUid ? { ...subject, refFileName: "", refBase64: "" } : subject,
+                  ),
+                },
+              },
+        ),
+
+      addPresentationCue: () =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  audio: [...state.presentation.audio, newPresentationCue()],
+                },
+              },
+        ),
+
+      updatePresentationCue: (cueUid, patch) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  audio: state.presentation.audio.map((cue) =>
+                    cue.uid === cueUid ? { ...cue, ...patch } : cue,
+                  ),
+                },
+              },
+        ),
+
+      removePresentationCue: (cueUid) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  audio: state.presentation.audio.filter((cue) => cue.uid !== cueUid),
+                },
+              },
+        ),
+
+      setPresentationCueAsset: (cueUid, file) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  audio: state.presentation.audio.map((cue) =>
+                    cue.uid === cueUid
+                      ? {
+                          ...cue,
+                          assetFileName: kitMediaFileName(file.name, "audio"),
+                          assetBase64: bytesToBase64(file.bytes),
+                        }
+                      : cue,
+                  ),
+                },
+              },
+        ),
+
+      clearPresentationCueAsset: (cueUid) =>
+        set((state) =>
+          state.presentation === null
+            ? {}
+            : {
+                presentation: {
+                  ...state.presentation,
+                  audio: state.presentation.audio.map((cue) =>
+                    cue.uid === cueUid ? { ...cue, assetFileName: "", assetBase64: "" } : cue,
+                  ),
+                },
+              },
+        ),
+
+      addManualSkill: () =>
+        set((state) => ({
+          manualSkills: [
+            ...state.manualSkills,
+            { slug: "", nameEn: "", descriptionEn: "", descriptionZh: "", hooks: [], skillMd: "" },
+          ],
+        })),
+
+      updateManualSkill: (index, patch) =>
+        set((state) => ({
+          manualSkills: state.manualSkills.map((skill, i) => (i === index ? { ...skill, ...patch } : skill)),
+        })),
+
+      removeManualSkill: (index) =>
+        set((state) => ({ manualSkills: state.manualSkills.filter((_, i) => i !== index) })),
+
+      seedFromSplit: (item, notesZh, notesEn) =>
+        set({
+          step: "metadata",
+          items: [{ ...item, notesZh, notesEn }],
+          metadata: { ...EMPTY_METADATA },
+          panels: null,
+          presentation: null,
+          manualSkills: [],
+          writtenDir: null,
+          runResult: null,
+          packResult: null,
+          builtPackPath: null,
+        }),
+
+      setOutputDir: (outputDir) => set({ outputDir }),
+      setWritten: (writtenDir) => set({ writtenDir }),
+      setCandidates: (candidates) => set({ candidates, selectedCandidate: 0 }),
+      setSelectedCandidate: (selectedCandidate) => set({ selectedCandidate }),
+      setInstallAfterBuild: (installAfterBuild) => set({ installAfterBuild }),
+      setRunning: (running) => set({ running }),
+      setRunResult: (runResult) => set({ runResult }),
+      setPackResult: (packResult) => set({ packResult }),
+      setBuiltPackPath: (builtPackPath) => set({ builtPackPath }),
+
+      reset: () =>
+        set({
+          step: "input",
+          items: [],
+          metadata: EMPTY_METADATA,
+          loadError: null,
+          panels: null,
+          presentation: null,
+          manualSkills: [],
+          outputDir: null,
+          writtenDir: null,
+          runResult: null,
+          packResult: null,
+          builtPackPath: null,
+          running: false,
+          installAfterBuild: false,
+        }),
     }),
-}))
+    {
+      name: "loreweaver-studio-pack",
+      storage: createJSONStorage(() => localStorage),
+      // What survives: every classification, promotion decision, metadata
+      // field, panel, kit entry and the paths the build already used. What does
+      // not: raw bytes (dropped, flagged for re-attach), the engine probe and
+      // the last run's terminal output — all cheap to redo, and the terminal
+      // capture can be a quarter-megabyte on its own.
+      partialize: (state) => ({
+        step: state.step,
+        items: state.items.map((item) => ({
+          ...item,
+          base64: item.jsonText === null && item.base64 !== "" ? "" : item.base64,
+          needsBytes: item.jsonText === null && item.base64 !== "",
+        })),
+        metadata: state.metadata,
+        panels:
+          state.panels === null
+            ? null
+            : {
+                ...state.panels,
+                files: state.panels.files.map((file) =>
+                  file.contents === undefined ? { path: file.path } : file,
+                ),
+              },
+        presentation:
+          state.presentation === null
+            ? null
+            : {
+                ...state.presentation,
+                subjects: state.presentation.subjects.map((subject) => ({ ...subject, refBase64: "" })),
+                audio: state.presentation.audio.map((cue) => ({ ...cue, assetBase64: "" })),
+              },
+        manualSkills: state.manualSkills,
+        outputDir: state.outputDir,
+        writtenDir: state.writtenDir,
+        installAfterBuild: state.installAfterBuild,
+        packResult: state.packResult,
+        builtPackPath: state.builtPackPath,
+      }),
+    },
+  ),
+)
 
 /** Suggested `.var expose` lines across every world card in the pack. */
 export function packExposeLines(items: PackItem[]): string[] {
@@ -811,5 +909,15 @@ export function packValidationIssues(
   manualSkills: PackSkillDraft[] = [],
   presentation: PackPresentationDraft | null = null,
 ): Issue[] {
-  return validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills, presentation))
+  // A restored session knows an item's name, kind and every decision made about
+  // it, but not its bytes. Building anyway would write an empty file under a
+  // name that promises content — so this blocks, and the review step offers the
+  // re-attach.
+  const missing = items
+    .filter((item) => item.needsBytes)
+    .map((item) => ({ key: "packItemNeedsBytes", params: { file: item.fileName } }))
+  return [
+    ...missing,
+    ...validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills, presentation)),
+  ]
 }

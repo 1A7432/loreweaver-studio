@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "../../../i18n"
+import { useSplitStore } from "../../../store/split"
 import { useStudioStore } from "../../../store/studio"
 import SplitView from "./SplitView"
 
@@ -36,6 +37,8 @@ vi.mock("../../../lib/native", async (importOriginal) => {
 
 function reset() {
   useStudioStore.setState({ projects: [], activeUid: null, tab: "card", view: "split" })
+  // The session persists now, so a test that wants an empty bench has to say so.
+  useSplitStore.getState().clear()
 }
 
 describe("SplitView", () => {
@@ -73,5 +76,19 @@ describe("SplitView", () => {
     expect(state.projects[0].variables).toHaveLength(1)
     expect(state.projects[0].hooks).toContain("turn_start")
     expect(state.projects[0].lorebook).toHaveLength(1)
+  })
+
+  it("survives an unmount — a tab switch no longer destroys the session", async () => {
+    const user = userEvent.setup()
+    const first = render(<SplitView />)
+    await user.click(screen.getByRole("button", { name: "Open a card…" }))
+    await screen.findByText("Character half")
+    await user.clear(screen.getByLabelText("Description"))
+    await user.type(screen.getByLabelText("Description"), "rewritten by hand")
+    first.unmount()
+
+    render(<SplitView />)
+    expect(await screen.findByText("Character half")).toBeInTheDocument()
+    expect(screen.getByLabelText("Description")).toHaveValue("rewritten by hand")
   })
 })

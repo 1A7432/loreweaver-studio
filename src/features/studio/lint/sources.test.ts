@@ -80,6 +80,8 @@ function cardItem(patch: Partial<PackItem>): PackItem {
     kind: "card",
     base64: "",
     jsonText: null,
+    size: 0,
+    needsBytes: false,
     card: null,
     payloads: null,
     cardKind: "world",

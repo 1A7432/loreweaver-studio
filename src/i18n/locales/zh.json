@@ -578,7 +578,11 @@
         "nullKept": "空值——保留在 MVU 树",
         "enumGuessed": "已按描述推断为 enum",
         "boundsGuessed": "已按描述推断上下限"
-      }
+      },
+      "reattach": "重新附加文件",
+      "reattachHint": "所有编辑都恢复了，只有卡片的原始字节没有。把这张卡交给模组包工作台之前，请重新附加 {{name}}（{{size}} 字节，sha256 {{hash}}…）。",
+      "reattached": "已重新附加 {{name}}。",
+      "reattachNeeded": "这张卡的字节缺失——请先重新附加文件。"
     },
     "ai": {
       "open": "AI 制卡…",
@@ -794,7 +798,8 @@
         "packPresentationTemplateKind": "演出资料包：“{{value}}”不是导演可以演出的形态。",
         "packPresentationTemplateDuplicate": "演出资料包：形态白名单里“{{value}}”出现了两次。",
         "packPresentationPaletteCount": "演出资料包：配色最多 {{max}} 条。",
-        "packPresentationPaletteTooLong": "演出资料包：第 {{index}} 条配色超过 {{max}} 个字符。"
+        "packPresentationPaletteTooLong": "演出资料包：第 {{index}} 条配色超过 {{max}} 个字符。",
+        "packItemNeedsBytes": "“{{file}}”缺少文件内容——请先在「分类」步骤重新附加，再进行构建。"
       },
       "panels": {
         "title": "模组 UI 面板（M15）",
@@ -957,7 +962,9 @@
           "connectTimeout": "本地服务器始终没有上线。",
           "notKeeper": "当前连接不是 keeper，而世界导入仅限 keeper。"
         }
-      }
+      },
+      "needsBytes": "恢复时缺少字节：{{name}}（{{size}} 字节）。其余内容都已恢复。",
+      "reattach": "重新附加"
     },
     "lint": {
       "title": "建议性检查",

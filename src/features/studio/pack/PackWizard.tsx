@@ -47,9 +47,26 @@ function ItemRow({ item }: { item: PackItem }) {
   const { t } = useTranslation()
   const updateItem = usePackStore((s) => s.updateItem)
   const removeItem = usePackStore((s) => s.removeItem)
+  const reattachItem = usePackStore((s) => s.reattachItem)
+
+  const reattach = async () => {
+    const files = await pickAnyFiles()
+    if (files.length > 0) reattachItem(item.uid, files[0])
+  }
 
   return (
     <div className="pack-item">
+      {item.needsBytes ? (
+        // The session came back from storage with everything except this file's
+        // bytes. Nothing else was lost, and the build stays blocked until it
+        // returns rather than shipping an empty file under the right name.
+        <p className="studio-notice split-error" role="alert">
+          {t("studio.pack.needsBytes", { name: item.sourceName, size: item.size })}{" "}
+          <button type="button" className="ghost-button" onClick={() => void reattach()}>
+            {t("studio.pack.reattach")}
+          </button>
+        </p>
+      ) : null}
       <div className="pack-item-head">
         <span className="pack-item-name" title={item.sourceName}>
           {item.sourceName}
@@ -272,6 +289,11 @@ export default function PackWizard() {
   const addPanelAssets = async () => {
     const files = await pickAnyFiles()
     if (files.length > 0) store.addPanelFiles(files, panelDir)
+  }
+
+  const reattachPanelFile = async (path: string) => {
+    const files = await pickAnyFiles()
+    if (files.length > 0) store.reattachPanelFile(path, files[0])
   }
 
   // Native drag-drop (Tauri swallows HTML5 DnD): file paths arrive as an event.
@@ -816,6 +838,15 @@ export default function PackWizard() {
                         ? t("studio.pack.panels.textFile")
                         : t("studio.pack.panels.binaryFile")}
                     </span>
+                    {file.contents === undefined && file.base64 === undefined ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => void reattachPanelFile(file.path)}
+                      >
+                        {t("studio.pack.reattach")}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="ghost-button"

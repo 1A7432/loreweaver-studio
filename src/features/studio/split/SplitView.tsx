@@ -5,33 +5,21 @@
 
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { bytesToBase64, pickCardFile, type PickedFile } from "../../../lib/native"
+import { bytesToBase64, pickCardFile } from "../../../lib/native"
 import { saveTextFile } from "../../../lib/files"
 import { useStudioStore } from "../../../store/studio"
 import { initvarLeaves, usePackStore, type PackItem } from "../../../store/pack"
+import { isTextCard, sessionBytes, sha256Hex, useSplitStore } from "../../../store/split"
 import { aiFillLabels } from "../ai/labels"
 import { aiReady, useAiStore } from "../ai/provider"
 import { exportFileName, exportNativeBundle } from "../exporters"
 import { uid, validateProject } from "../model"
-import { parseCardBytes, type StCharacterCard } from "./charcard"
-import { payloadsAny, splitCard, type SplitCardResult } from "./cardSplit"
+import { parseCardBytes } from "./charcard"
+import { payloadsAny, splitCard } from "./cardSplit"
 import { characterHalfToStCard, splitToProject } from "./convert"
-import type { MvuLeaf } from "./mvu"
 import PromoteTable from "./PromoteTable"
-import { promoteLeaves, suggestExposePrefixes, type PromotionDraft } from "./promote"
+import { promoteLeaves, suggestExposePrefixes } from "./promote"
 import { safeFileName } from "./packSource"
-
-interface SplitSession {
-  file: PickedFile
-  /** The card exactly as parsed — what a keeper's world import would read. */
-  original: StCharacterCard
-  /** The (editable) character half. */
-  character: StCharacterCard
-  split: SplitCardResult
-  leaves: MvuLeaf[]
-  truncated: boolean
-  drafts: PromotionDraft[]
-}
 
 type ProseField = "description" | "personality" | "scenario" | "firstMes" | "mesExample" | "creatorNotes"
 const PROSE_FIELDS: ProseField[] = [
@@ -49,7 +37,13 @@ export default function SplitView() {
   const setView = useStudioStore((s) => s.setView)
   const seedFromSplit = usePackStore((s) => s.seedFromSplit)
   const aiSettings = useAiStore()
-  const [session, setSession] = useState<SplitSession | null>(null)
+  // Persisted: a tab switch or a reload used to destroy every edit here.
+  const session = useSplitStore((s) => s.session)
+  const setSession = useSplitStore((s) => s.setSession)
+  const patchSession = useSplitStore((s) => s.patchSession)
+  const patchCharacter = useSplitStore((s) => s.patchCharacter)
+  const patchDraft = useSplitStore((s) => s.patchDraft)
+  const reattach = useSplitStore((s) => s.reattach)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [aiBusy, setAiBusy] = useState(false)
@@ -64,7 +58,14 @@ export default function SplitView() {
       const split = splitCard(card)
       const { leaves, truncated } = initvarLeaves(split.initvarEntries)
       setSession({
-        file,
+        file: {
+          name: file.name,
+          path: file.path,
+          size: file.bytes.length,
+          sha256: await sha256Hex(file.bytes),
+        },
+        base64: bytesToBase64(file.bytes),
+        needsReattach: false,
         original: card,
         character: split.character,
         split,
@@ -77,29 +78,26 @@ export default function SplitView() {
     }
   }
 
-  const patchCharacter = (patch: Partial<StCharacterCard>) => {
-    setSession((current) =>
-      current === null ? null : { ...current, character: { ...current.character, ...patch } },
-    )
-  }
-
-  const patchDraft = (uid: string, patch: Partial<PromotionDraft>) => {
-    setSession((current) =>
-      current === null
-        ? null
-        : {
-            ...current,
-            drafts: current.drafts.map((draft) => (draft.uid === uid ? { ...draft, ...patch } : draft)),
-          },
-    )
+  /** Hand back the bytes of a session restored without them (a PNG card). The
+   * name is checked, not enforced: an author who renamed the file still knows
+   * which card it is, and the size/hash readout is there to be compared. */
+  const reattachCard = async () => {
+    setError(null)
+    try {
+      const file = await pickCardFile()
+      if (file === null) return
+      reattach(file)
+      setNotice(t("studio.split.reattached", { name: file.name }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   const runAiLabels = async () => {
     if (session === null) return
     setAiBusy(true)
     try {
-      const drafts = await aiFillLabels(session.drafts)
-      setSession((current) => (current === null ? null : { ...current, drafts }))
+      patchSession({ drafts: await aiFillLabels(session.drafts) })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -131,8 +129,15 @@ export default function SplitView() {
 
   const toPack = () => {
     if (session === null) return
+    const bytes = sessionBytes(session)
+    if (bytes === null) {
+      // The pack bench ships the card file as-is, so there is nothing honest to
+      // hand it without the original bytes.
+      setError(t("studio.split.reattachNeeded"))
+      return
+    }
     const exposeLines = suggestExposePrefixes(session.drafts).map((prefix) => `.var expose ${prefix}`)
-    const isJson = session.file.name.toLowerCase().endsWith(".json")
+    const isJson = isTextCard(session.file.name)
     const item: PackItem = {
       uid: uid(),
       fileName: isJson
@@ -140,8 +145,10 @@ export default function SplitView() {
         : `${safeFileName(session.character.name || session.file.name, "card")}.png`,
       sourceName: session.file.name,
       kind: "card",
-      base64: bytesToBase64(session.file.bytes),
-      jsonText: isJson ? new TextDecoder().decode(session.file.bytes) : null,
+      base64: bytesToBase64(bytes),
+      jsonText: isJson ? new TextDecoder().decode(bytes) : null,
+      size: bytes.length,
+      needsBytes: false,
       card: session.original,
       payloads: session.split.payloads,
       cardKind: payloadsAny(session.split.payloads) ? "world" : "character",
@@ -199,6 +206,20 @@ export default function SplitView() {
           {t("studio.split.openAnother")}
         </button>
       </div>
+      {session.needsReattach ? (
+        // Every EDIT survived the reload; only the file's raw bytes did not,
+        // and only the hand-off to the pack bench needs them.
+        <p className="studio-notice split-error" role="alert">
+          {t("studio.split.reattachHint", {
+            name: session.file.name,
+            size: session.file.size,
+            hash: session.file.sha256.slice(0, 12),
+          })}{" "}
+          <button type="button" className="ghost-button" onClick={() => void reattachCard()}>
+            {t("studio.split.reattach")}
+          </button>
+        </p>
+      ) : null}
       {notice !== null ? (
         <p className="studio-notice" role="status">
           {notice}

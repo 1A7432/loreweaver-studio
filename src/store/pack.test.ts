@@ -301,3 +301,106 @@ describe("presentation kit (M19) store actions", () => {
     expect(usePackStore.getState().presentation).toBeNull()
   })
 })
+
+describe("pack session persistence", () => {
+  beforeEach(reset)
+
+  const metadata = {
+    id: "corridor",
+    version: "0.1.0",
+    nameEn: "Corridor",
+    nameZh: "走廊",
+    descriptionEn: "d",
+    descriptionZh: "描述",
+    authors: "tests",
+    license: "MIT",
+    rulepackPatch: "",
+    rulepackId: "",
+  }
+
+  /** What zustand's `persist` would write, without going through localStorage. */
+  function persisted() {
+    return usePackStore.persist.getOptions().partialize?.(usePackStore.getState()) as {
+      items: { fileName: string; base64: string; needsBytes: boolean; jsonText: string | null }[]
+      panels: { files: { path: string; base64?: string; contents?: string }[] } | null
+      presentation: { subjects: { refBase64: string }[]; audio: { assetBase64: string }[] } | null
+      metadata: { id: string }
+      packResult: unknown
+      runResult?: unknown
+      candidates?: unknown
+    }
+  }
+
+  it("keeps a JSON item's text but drops a binary item's bytes", async () => {
+    await usePackStore
+      .getState()
+      .addFiles([file("heavy.json", heavyCardJson()), file("cover.png", "\x89PNG")])
+    const written = persisted()
+    const [card, cover] = written.items
+    // The card's own text IS its bytes, so nothing is lost keeping it.
+    expect(card.jsonText).toContain("深渊之主")
+    expect(card.needsBytes).toBe(false)
+    // The PNG's are megabytes of localStorage for something one click restores.
+    expect(cover.base64).toBe("")
+    expect(cover.needsBytes).toBe(true)
+    // …and the name survives, so the author knows which file to hand back.
+    expect(cover.fileName).toBe("cover.png")
+  })
+
+  it("blocks the build while an item is missing its bytes, and unblocks on re-attach", async () => {
+    await usePackStore.getState().addFiles([file("cover.png", "\x89PNG")])
+    const item = usePackStore.getState().items[0]
+    usePackStore.getState().updateItem(item.uid, { needsBytes: true, base64: "" })
+
+    const blocked = packValidationIssues(usePackStore.getState().items, metadata)
+    expect(blocked.map((issue) => issue.key)).toContain("packItemNeedsBytes")
+
+    usePackStore
+      .getState()
+      .reattachItem(item.uid, { name: "cover.png", path: null, bytes: encoder.encode("\x89PNG") })
+    const after = usePackStore.getState().items[0]
+    expect(after.needsBytes).toBe(false)
+    expect(after.base64).not.toBe("")
+    expect(
+      packValidationIssues(usePackStore.getState().items, metadata).map((issue) => issue.key),
+    ).not.toContain("packItemNeedsBytes")
+  })
+
+  it("keeps panel TEXT files whole and drops only the binary ones", () => {
+    usePackStore.getState().setPanelsYaml("panels: []")
+    usePackStore
+      .getState()
+      .addPanelFiles([file("view.html", "<p>hi</p>"), file("map.png", "\x89PNG")], "board")
+    const written = persisted()
+    expect(written.panels?.files).toEqual([
+      { path: "ui/board/view.html", contents: "<p>hi</p>" },
+      { path: "ui/board/map.png" },
+    ])
+  })
+
+  it("keeps the kit's structure and drops only its media bytes", () => {
+    usePackStore.getState().addPresentation()
+    usePackStore.getState().addPresentationSubject()
+    const subject = usePackStore.getState().presentation!.subjects[0]
+    usePackStore.getState().updatePresentationSubject(subject.uid, { id: "wen", nameZh: "温" })
+    usePackStore.getState().setPresentationSubjectRef(subject.uid, file("wen.png", "\x89PNG"))
+
+    const written = persisted()
+    expect(written.presentation?.subjects[0]).toMatchObject({
+      id: "wen",
+      nameZh: "温",
+      refFileName: "wen.png",
+    })
+    expect(written.presentation?.subjects[0].refBase64).toBe("")
+  })
+
+  it("does not persist the engine probe or the last run's terminal output", async () => {
+    usePackStore.getState().setCandidates([{ kind: "python-module", program: "py", args: [], cwd: null }])
+    usePackStore.getState().setRunResult({ code: 0, stdout: "x".repeat(1000), stderr: "", timedOut: false })
+    const written = persisted()
+    expect(written.candidates).toBeUndefined()
+    expect(written.runResult).toBeUndefined()
+    // The build RESULT does survive — "Test now" is one click away after a reload.
+    expect(written).toHaveProperty("packResult")
+  })
+})

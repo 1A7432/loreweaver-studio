@@ -578,7 +578,11 @@
         "nullKept": "null value — stays in the MVU tree",
         "enumGuessed": "enum guessed from the description",
         "boundsGuessed": "bounds guessed from the description"
-      }
+      },
+      "reattach": "Re-attach the file",
+      "reattachHint": "Every edit came back; the card's raw bytes did not. Re-attach {{name}} ({{size}} bytes, sha256 {{hash}}…) before handing this card to the pack bench.",
+      "reattached": "Re-attached {{name}}.",
+      "reattachNeeded": "This card's bytes are missing — re-attach the file first."
     },
     "ai": {
       "open": "AI draft…",
@@ -794,7 +798,8 @@
         "packPresentationTemplateKind": "Presentation kit: “{{value}}” is not a performance shape the Director can stage.",
         "packPresentationTemplateDuplicate": "Presentation kit: “{{value}}” is listed twice in the shape allowlist.",
         "packPresentationPaletteCount": "Presentation kit: at most {{max}} palette entries.",
-        "packPresentationPaletteTooLong": "Presentation kit: palette entry {{index}} is longer than {{max}} characters."
+        "packPresentationPaletteTooLong": "Presentation kit: palette entry {{index}} is longer than {{max}} characters.",
+        "packItemNeedsBytes": "“{{file}}” is missing its file contents — re-attach it on the Classify step before building."
       },
       "panels": {
         "title": "Module UI panels (M15)",
@@ -957,7 +962,9 @@
           "connectTimeout": "The local server never came online.",
           "notKeeper": "This connection is not a keeper, and a world import is keeper-only."
         }
-      }
+      },
+      "needsBytes": "Restored without its bytes: {{name}} ({{size}} bytes). Everything else came back.",
+      "reattach": "Re-attach"
     },
     "lint": {
       "title": "Advisory lint",
