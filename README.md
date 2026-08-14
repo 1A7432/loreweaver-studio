@@ -75,7 +75,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 ### Cross-repo round-trip gate
 
 `bun run roundtrip` (`scripts/check_roundtrip.sh`) fails when the studio's real
-output and the engine's real parsers drift apart. It pins three things:
+output and the engine's real parsers drift apart. It pins four things:
 
 - **lorecard v1 byte drift** — the real `exportNativeBundle` output, regenerated
   on the spot, must stay byte-identical to the engine's pinned
@@ -87,7 +87,14 @@ output and the engine's real parsers drift apart. It pins three things:
   through the engine's `python -m app --pack --json`, with the expected
   detection results in the returned `trust` object;
 - **the engine's conformance suites** for the pinned fixtures
-  (`test_studio_export_fixture`, `test_lorecard`, `test_visible_when_vectors`).
+  (`test_studio_export_fixture`, `test_lorecard`, `test_visible_when_vectors`);
+- **the live-connect smoke gate** (`scripts/check_live_connect.sh`) — the three
+  above are all static formats, so they cannot notice that the two _processes_
+  stopped talking. This stage spawns a real `python -m app --serve` engine in a
+  sandboxed data dir and dials it through the real Rust transport crate
+  (`crates/transport/tests/live_connect.rs`, `#[ignore]`d for a normal
+  `cargo test`), asserting the join handshake ends in a `welcome`. Skip it with
+  `LIVE_CONNECT=0` on a machine without cargo.
 
 It needs a checkout of the engine repo (default `../trpg_kp`, override with
 `TRPG_KP_REPO`) with `uv` available:
