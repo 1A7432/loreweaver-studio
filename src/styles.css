@@ -3184,3 +3184,96 @@ body {
 .version-badge.has-drift {
   color: var(--warn);
 }
+
+/* --- media + audio decks -------------------------------------------------- */
+
+.media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.media-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.media-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.media-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--ink-faint);
+}
+
+.media-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-from {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.audio-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.audio-layer-name {
+  flex: none;
+  width: 70px;
+  color: var(--ink-dim);
+}
+
+.audio-now {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-mute {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.audio-gain {
+  flex: none;
+  width: 72px;
+}
+
+.member-avatar {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 1px solid var(--border-soft);
+}

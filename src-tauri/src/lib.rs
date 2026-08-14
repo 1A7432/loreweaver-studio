@@ -3,6 +3,7 @@ mod engine;
 mod files;
 mod host_local;
 mod llm;
+mod media;
 mod panel_serve;
 mod secrets;
 mod transport_bridge;
@@ -39,6 +40,8 @@ pub fn run() {
             asset_cache::asset_cache_status,
             asset_cache::asset_fetch,
             asset_cache::asset_read_base64,
+            media::media_prepare,
+            media::media_upload,
             panel_serve::panel_serve_register,
             panel_serve::panel_serve_unregister
         ])

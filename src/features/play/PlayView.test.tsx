@@ -56,7 +56,8 @@ describe("PlayView", () => {
     await user.click(screen.getByRole("menuitem", { name: /Enter game/ }))
     expect(screen.getByText("r1 · Nyx")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument()
-    expect(screen.getByRole("textbox")).toBeInTheDocument()
+    // Named, not "the one textbox": the keeper's audio deck has fields too.
+    expect(screen.getByLabelText("Speak, act, or type a command…")).toBeInTheDocument()
     // Esc backs out to the menu.
     await user.keyboard("{Escape}")
     expect(screen.getByText(/Table “r1”/)).toBeInTheDocument()

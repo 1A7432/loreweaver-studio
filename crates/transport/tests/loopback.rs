@@ -400,3 +400,90 @@ async fn fetch_blob_roundtrip_and_error_reply() {
     expect_status(&mut rx, ConnStatus::Offline).await;
     server.await.expect("server task");
 }
+
+#[tokio::test]
+async fn put_blob_roundtrip_and_error_reply() {
+    let (endpoint, ticket) = bind_server().await;
+    // Big enough to cross the 64 KiB chunk boundary the protocol fixes, so a
+    // single-write implementation would not pass.
+    let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let expected = body.clone();
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let join = conn.read_frame().await;
+        assert_eq!(join["type"], "join");
+        conn.write_frame(&welcome_frame("2.1")).await;
+
+        // First PUT: header line, then the body until the client finishes.
+        let (mut psend, mut precv) = conn.conn.accept_bi().await.expect("put stream");
+        let mut decoder = LineDecoder::new();
+        let mut header = None;
+        let mut received: Vec<u8> = Vec::new();
+        let mut buf = vec![0u8; 64 * 1024];
+        while let Ok(Some(n)) = precv.read(&mut buf).await {
+            if header.is_none() {
+                received.extend_from_slice(&buf[..n]);
+                if let Some(at) = received.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = received.drain(..=at).collect();
+                    header = Some(
+                        decoder
+                            .push(&line)
+                            .expect("decode put header")
+                            .pop()
+                            .expect("one header"),
+                    );
+                }
+                continue;
+            }
+            received.extend_from_slice(&buf[..n]);
+        }
+        let header = header.expect("a put header arrived");
+        assert_eq!(header["op"], "put");
+        assert_eq!(header["upload_id"], "u-1");
+        assert_eq!(received.len(), expected.len(), "the whole body arrived");
+        assert_eq!(received, expected, "the body arrived unmangled");
+        psend
+            .write_all(&encode_line(&json!({"op": "put_ok", "hash": "cafe01"})))
+            .await
+            .expect("put_ok write");
+        let _ = psend.finish();
+
+        // Second PUT: a rejection line.
+        let (mut esend, mut erecv) = conn.conn.accept_bi().await.expect("put stream 2");
+        let mut sink = vec![0u8; 64 * 1024];
+        while let Ok(Some(_)) = erecv.read(&mut sink).await {}
+        esend
+            .write_all(&encode_line(&json!({
+                "type": "error",
+                "code": "media_too_large",
+                "message": "over the per-file cap",
+            })))
+            .await
+            .expect("error write");
+        let _ = esend.finish();
+
+        conn.conn.closed().await;
+    });
+
+    let (handle, mut rx) = connect(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+
+    let hash = tokio::time::timeout(STEP, handle.put_blob("u-1".to_owned(), body))
+        .await
+        .expect("upload inside the deadline")
+        .expect("upload succeeds");
+    // The SERVER's hash is the answer — it is what every later broadcast names.
+    assert_eq!(hash, "cafe01");
+
+    let err = tokio::time::timeout(STEP, handle.put_blob("u-2".to_owned(), vec![1, 2, 3]))
+        .await
+        .expect("upload inside the deadline")
+        .expect_err("a server error line fails the upload");
+    assert!(err.contains("media_too_large"), "unexpected error: {err}");
+
+    handle.close();
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.await.expect("server task");
+}

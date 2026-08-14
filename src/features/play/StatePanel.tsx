@@ -9,6 +9,9 @@ import {
 import { transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
+import AudioDeck from "./AudioDeck"
+import Avatar from "./Avatar"
+import MediaDeck from "./MediaDeck"
 import Meter, { type MeterTone } from "./Meter"
 import UiBlocks from "./UiBlocks"
 
@@ -47,6 +50,7 @@ function CharacterCard({ character }: { character: CharacterState }) {
   return (
     <section className="desk-card">
       <header className="desk-title">
+        <Avatar ref={character.avatar} name={character.name} />
         {stripControlChars(character.name)}
         <span className="desk-tag">{stripControlChars(character.system)}</span>
       </header>
@@ -163,6 +167,7 @@ function PartyCard({ game }: { game: StateFrame }) {
             className={`party-row${member.active ? " is-active" : ""}${member.online ? "" : " is-offline"}`}
           >
             <span className={`presence-dot ${member.online ? "online" : "offline"}`} aria-hidden="true" />
+            <Avatar ref={member.avatar} name={member.name} />
             <span className="party-name">{stripControlChars(member.name)}</span>
             {member.ai ? <span className="chip chip-ai">AI</span> : null}
             {(member.resources ?? []).map((resource) => (
@@ -321,6 +326,8 @@ export default function StatePanel() {
       {game ? <SceneCard game={game} /> : null}
       {game ? <InitiativeCard game={game} /> : null}
       <PresenceCard />
+      <MediaDeck />
+      <AudioDeck />
       {game ? <UsageCard game={game} /> : null}
     </div>
   )

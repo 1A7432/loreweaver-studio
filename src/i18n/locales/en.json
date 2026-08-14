@@ -247,6 +247,49 @@
         "mark": "marked",
         "stat_delta": "changed"
       }
+    },
+    "media": {
+      "title": "Shared pictures",
+      "share": "Share a picture…",
+      "empty": "Nothing has been shared with this room yet.",
+      "allowUploads": "Players may upload",
+      "uploadsOff": "The keeper has turned player uploads off for this room.",
+      "useAsAvatar": "Use as avatar",
+      "dismiss": "Dismiss",
+      "uploadFailed": "{{name}} could not be shared: {{detail}}",
+      "phase": {
+        "offering": "Offering {{name}}…",
+        "sending": "Uploading {{name}}…",
+        "done": "Shared {{name}}."
+      }
+    },
+    "audio": {
+      "title": "Sound",
+      "layers": {
+        "bgm": "Music",
+        "ambience": "Ambience",
+        "sfx": "Effects"
+      },
+      "silent": "—",
+      "untitled": "(untitled)",
+      "mute": "mute",
+      "muteAll": "Mute everything",
+      "muteLayer": "Mute {{layer}}",
+      "gainLayer": "{{layer}} volume",
+      "unlock": "Turn sound on",
+      "unlockHint": "This window blocks sound until you interact with it, so the keeper's cue is queued rather than lost.",
+      "keeperLayer": "Layer",
+      "keeperTrack": "Track",
+      "keeperPick": "(pick one)",
+      "keeperLoop": "loop",
+      "keeperPlay": "Play",
+      "keeperPause": "Pause",
+      "keeperResume": "Resume",
+      "keeperStop": "Stop",
+      "keeperVolume": "Broadcast volume",
+      "keeperImport": "Import a pack's audio",
+      "keeperImportRun": "Import",
+      "keeperHint": "These send the same keeper commands the TUI does (.bgm / .ambience / .sfx / .audio import), and the server broadcasts the result to everyone. The track list is this room's own audio library — a pack install is host-wide, so bringing its soundtrack into a room stays your call."
     }
   },
   "studio": {

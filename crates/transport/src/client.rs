@@ -28,7 +28,14 @@ pub const MAX_BLOB_BYTES: u64 = 64 * 1024 * 1024;
 /// End-to-end deadline for one blob fetch, header and body included.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// End-to-end deadline for one blob upload. Longer than a fetch: the protocol
+/// allows 128 MiB of audio per file, and the sender is usually the slow side.
+pub const PUT_TIMEOUT: Duration = Duration::from_secs(600);
+
 const READ_CHUNK: usize = 64 * 1024;
+
+/// Upload chunk size. `docs/protocol.md` fixes this at "up to 64 KiB".
+const PUT_CHUNK: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct ConnectParams {
@@ -95,6 +102,11 @@ enum Command {
         hash: String,
         reply: oneshot::Sender<Result<FetchedBlob, String>>,
     },
+    PutBlob {
+        upload_id: String,
+        bytes: Vec<u8>,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
     Close,
 }
 
@@ -121,6 +133,22 @@ impl ClientHandle {
         let (reply, rx) = oneshot::channel();
         self.cmd
             .send(Command::FetchBlob { hash, reply })
+            .map_err(|_| "transport is closed".to_owned())?;
+        rx.await.map_err(|_| "transport is closed".to_owned())?
+    }
+
+    /// Push one blob up the media byte channel for an accepted upload.
+    /// `upload_id` is the one the server handed back in `media_accept`; the
+    /// answer is the sha256 the server stored it under. Fails fast while the
+    /// transport is offline or closed.
+    pub async fn put_blob(&self, upload_id: String, bytes: Vec<u8>) -> Result<String, String> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd
+            .send(Command::PutBlob {
+                upload_id,
+                bytes,
+                reply,
+            })
             .map_err(|_| "transport is closed".to_owned())?;
         rx.await.map_err(|_| "transport is closed".to_owned())?
     }
@@ -230,8 +258,11 @@ async fn run(
                             }
                             Some(Command::Send(_)) => continue,
                             // No live connection to open a stream on: fail the
-                            // fetch instead of queueing it into the redial.
+                            // transfer instead of queueing it into the redial.
                             Some(Command::FetchBlob { reply, .. }) => {
+                                let _ = reply.send(Err("transport offline".to_owned()));
+                            }
+                            Some(Command::PutBlob { reply, .. }) => {
                                 let _ = reply.send(Err("transport offline".to_owned()));
                             }
                         },
@@ -326,6 +357,23 @@ async fn session(
                         {
                             Ok(result) => result,
                             Err(_) => Err("blob fetch timed out".to_owned()),
+                        };
+                        let _ = reply.send(result);
+                    });
+                }
+                Some(Command::PutBlob { upload_id, bytes, reply }) => {
+                    // Same shape as a fetch: its own stream, its own deadline,
+                    // and the control loop never waits on the bytes.
+                    let conn = conn.clone();
+                    tokio::spawn(async move {
+                        let result = match tokio::time::timeout(
+                            PUT_TIMEOUT,
+                            put_blob_on(&conn, &upload_id, &bytes),
+                        )
+                        .await
+                        {
+                            Ok(result) => result,
+                            Err(_) => Err("blob upload timed out".to_owned()),
                         };
                         let _ = reply.send(result);
                     });
@@ -484,4 +532,69 @@ async fn fetch_blob_on(
         mime,
         name,
     })
+}
+
+/// One media-channel PUT, per `docs/protocol.md` ("Upload flow", step 3–4):
+/// write the `{op:"put", upload_id}` header line on a fresh bidirectional
+/// stream, then the raw body in chunks of up to 64 KiB, then read one
+/// newline-terminated reply — `{op:"put_ok", hash}` once the server has
+/// verified the exact size and sha256 and stored the blob, or
+/// `{type:"error", code, message}` on rejection.
+///
+/// The returned hash is the SERVER's, not ours: it is the one it stored the
+/// blob under and the one every later `media`/`audio_library_item` broadcast
+/// will name, so it is what the caller has to keep.
+async fn put_blob_on(
+    conn: &iroh::endpoint::Connection,
+    upload_id: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .map_err(|err| format!("media stream open failed: {err}"))?;
+    let header = json!({ "op": "put", "upload_id": upload_id });
+    send.write_all(&encode_line(&header))
+        .await
+        .map_err(|err| format!("media header write failed: {err}"))?;
+    for chunk in bytes.chunks(PUT_CHUNK) {
+        send.write_all(chunk)
+            .await
+            .map_err(|err| format!("media body write failed: {err}"))?;
+    }
+    // The body is the whole request; close our side so the server stops waiting.
+    let _ = send.finish();
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; READ_CHUNK];
+    loop {
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            let line = &line[..line.len() - 1];
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            let reply: Value = serde_json::from_slice(line)
+                .map_err(|err| format!("bad media put reply: {err}"))?;
+            if reply.get("type").and_then(Value::as_str) == Some("error") {
+                let code = reply.get("code").and_then(Value::as_str).unwrap_or("error");
+                let message = reply.get("message").and_then(Value::as_str).unwrap_or("");
+                return Err(format!("{code}: {message}"));
+            }
+            if reply.get("op").and_then(Value::as_str) != Some("put_ok") {
+                return Err(format!("unexpected media put reply: {reply}"));
+            }
+            return reply
+                .get("hash")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| "media put reply carries no hash".to_owned());
+        }
+        if buf.len() > MAX_LINE_BYTES {
+            return Err("media put reply exceeds the line cap".to_owned());
+        }
+        match recv.read(&mut chunk).await {
+            Ok(Some(n)) => buf.extend_from_slice(&chunk[..n]),
+            Ok(None) => return Err("media stream closed before a put reply".to_owned()),
+            Err(err) => return Err(format!("media put reply read failed: {err}")),
+        }
+    }
 }

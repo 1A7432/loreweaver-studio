@@ -10,6 +10,8 @@ import {
   type TransportStatus,
 } from "../lib/transport"
 import { useAdminStore } from "./admin"
+import { useAudioStore } from "./audio"
+import { useMediaStore } from "./media"
 import { useSessionStore } from "./session"
 
 /** Tolerate the ticket shapes people actually paste: the engine writes
@@ -48,6 +50,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
     set({ status: "connecting", attempt: 0, lastError: null, welcome: null })
     useSessionStore.getState().clear()
+    useMediaStore.getState().reset()
+    useAudioStore.getState().reset()
     try {
       await transportConnect({ ...params, ticket: sanitizeTicket(params.ticket), key: params.key.trim() })
     } catch (err) {
@@ -102,6 +106,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
     // Keeper-admin replies feed the admin store; they never reach the chronicle.
     if (useAdminStore.getState().ingest(frame)) return
+    // The media and audio families are room furniture, not chronicle lines:
+    // pictures and library entries land in their own index beside the log, and
+    // playback intent drives the mixer.
+    if (useMediaStore.getState().ingest(frame)) return
+    if (useAudioStore.getState().ingest(frame)) return
     useSessionStore.getState().ingest(frame)
   },
 }))
