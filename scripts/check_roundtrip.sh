@@ -48,7 +48,19 @@ fi
 echo "ok: byte-identical to tests/fixtures/studio_export.lorecard.json"
 
 say "2/5 pack source tree: real buildPackSourcePlan emission"
-bun "$STUDIO_ROOT/scripts/gen_roundtrip_pack.ts" "$WORK/pack"
+# The stage-E rules-script lane compiles through QuickJS at BUILD time, and the
+# engine ships that as an OPTIONAL extra (`ejs`). Probe rather than assume: the
+# fixture includes the lane when it can be built, and says so when it cannot —
+# a gate that quietly covers less is worse than one that admits it.
+if (cd "$ENGINE_REPO" && uv run python -c "import sys; from core.ejs_full import quickjs_available; sys.exit(0 if quickjs_available() else 1)" >/dev/null 2>&1); then
+  RULES_SCRIPT_LANE=1
+  echo "ok: quickjs present — the rules-script rulepack is in the fixture"
+else
+  RULES_SCRIPT_LANE=0
+  echo "note: quickjs (the engine's optional 'ejs' extra) is absent — SKIPPING the rules-script lane; has_rules_script stays unexercised"
+fi
+export RULES_SCRIPT_LANE
+RULES_SCRIPT_LANE="$RULES_SCRIPT_LANE" bun "$STUDIO_ROOT/scripts/gen_roundtrip_pack.ts" "$WORK/pack"
 TREE="$WORK/pack/corridor-apartment"
 
 say "3/5 engine pack build: python -m app --pack --json + trust assertions"
@@ -59,7 +71,7 @@ RESULT="$WORK/pack-result.json"
 )
 (
   cd "$ENGINE_REPO"
-  uv run python - "$RESULT" <<'PY'
+  RULES_SCRIPT_LANE="$RULES_SCRIPT_LANE" uv run python - "$RESULT" <<'PY'
 """Assert the engine accepted the studio's tree AND detected it as expected —
 an `ok: true` alone would miss a silent world→character kind drift."""
 import json
@@ -70,20 +82,27 @@ if not result.get("ok"):
     print(f"engine pack build failed: {result.get('error')}", file=sys.stderr)
     sys.exit(1)
 trust = result.get("trust") or {}
-# One world lorecard (hooks + typed specs + secret entry) + one clean ST
-# character card; one skill with hooks; one CoC7 patch; one lorebook; two
-# panels; one kit subject licensing imagegen; seven assets (cover, 2 panel
-# images, tier-2 entry+js, kit ref, kit cue); one prep-phase plan script.
+# FOUR cards, covering every shape a pack can carry one in: the world lorecard
+# (native), a clean ST character card, an ST-flavored WORLD card (hooks +
+# [InitVar] + an EJS span, so engine-side world detection is exercised on the
+# SillyTavern path too), and the same character embedded in a PNG — the shape a
+# community editor hands around, which had never passed through the engine's
+# own parser. Plus one skill with hooks; a CoC7 patch and (when QuickJS is
+# available) a stage-E rules-script rulepack; one lorebook; two panels; one kit
+# subject licensing imagegen; seven assets; one prep-phase plan script.
+import os
+
+rules_script = os.environ.get("RULES_SCRIPT_LANE") == "1"
 expected = {
     "skills": 1,
-    "rulepacks": 1,
-    "cards": 2,
+    "rulepacks": 2 if rules_script else 1,
+    "cards": 4,
     "lorebooks": 1,
     "assets": 7,
     "has_hooks": True,
-    "has_ejs": False,
-    "has_rules_script": False,
-    "world_cards": 1,
+    "has_ejs": True,
+    "has_rules_script": rules_script,
+    "world_cards": 2,
     "panels": 2,
     "presentation": 1,
     "imagegen": True,

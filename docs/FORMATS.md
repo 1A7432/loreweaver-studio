@@ -113,9 +113,18 @@ Loreweaver through its ST importer (M12/M13):
 - **Excluded on purpose**: keeper-only variables and `secret` entries — an ST
   card is entirely player-visible, so they have no safe representation there.
 
-Not yet implemented (planned): PNG embedding (`chara` tEXt for V2 + `ccv3`
-tEXt for V3 written together), alternate greetings, and a token-count readout —
-the table-stakes features of community editors (AICharED, Chub, RisuAI).
+**PNG embedding** ships: `pngCard.ts::embedCardIntoPng` writes the `chara`
+(V2) and `ccv3` (V3) tEXt chunks together into a base image the author picks,
+wired into both export points (the forge toolbar and the wizard's finish).
+**Alternate greetings** ship too — `exporters.ts` emits `alternate_greetings`
+on the ST card and `alternate_openings` on the native bundle.
+
+Every ST/PNG export point names which FLAVOR it is writing (safe-to-circulate
+with keeper-only entries stripped, or release-with-secrets), because an ST card
+has no hidden half and the difference decides what a reader can see.
+
+Still not implemented: a token-count readout — the remaining table-stakes
+feature of the community editors (AICharED, Chub, RisuAI).
 
 ## 3. Card split (拆卡) — what the studio detects and emits
 

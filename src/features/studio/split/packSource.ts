@@ -197,11 +197,26 @@ export interface PackPrepScriptDraft {
   source: string
 }
 
+/** One rules script a rulepack ships (stage-E `resolution.script` /
+ * `subsystems.*.script`). The engine reads it from NEXT TO the YAML and refuses
+ * a name with a path separator, so this is a bare file name and nothing else
+ * (`core/pack.py::_rulepack_script_files`). */
+export interface PackRulepackScriptDraft {
+  fileName: string
+  source: string
+}
+
 export interface PackRulepackDraft {
   /** Becomes `rulepacks/<id>.yaml`; the id must be a slug. */
   id: string
   yamlText: string
+  /** Rules scripts shipped beside the YAML. Their presence is what lights
+   * `has_rules_script` on the trust card — code, disclosed like hooks. */
+  scripts?: PackRulepackScriptDraft[]
 }
+
+/** `core/rules_script.py::MAX_SCRIPT_CHARS` — the same cap as a hooks.js. */
+export const MAX_RULES_SCRIPT_CHARS = 40_000
 
 export interface PackLorebookDraft extends EpisodeTagged {
   fileName: string
@@ -319,6 +334,22 @@ export function validatePackDraft(draft: WorldPackDraft): Issue[] {
   for (const rulepack of draft.rulepacks) {
     if (!PACK_ID_RE.test(rulepack.id)) {
       issues.push({ key: "packRulepackIdInvalid", params: { file: rulepack.id } })
+    }
+    for (const script of rulepack.scripts ?? []) {
+      // The engine reads a script from beside its YAML and refuses anything
+      // with a separator before any read happens.
+      if (script.fileName.includes("/") || script.fileName.includes("\\")) {
+        issues.push({ key: "packRulesScriptPath", params: { file: script.fileName } })
+      }
+      if (!script.fileName.toLowerCase().endsWith(".js")) {
+        issues.push({ key: "packRulesScriptNotJs", params: { file: script.fileName } })
+      }
+      if (script.source.length > MAX_RULES_SCRIPT_CHARS) {
+        issues.push({
+          key: "packRulesScriptTooLong",
+          params: { file: script.fileName, max: MAX_RULES_SCRIPT_CHARS },
+        })
+      }
     }
   }
   for (const lorebook of draft.lorebooks) {
@@ -1103,6 +1134,11 @@ export function buildPackSourcePlan(input: WorldPackDraft): PackSourcePlan {
   }
   for (const rulepack of draft.rulepacks) {
     files.push({ path: `rulepacks/${rulepack.id}.yaml`, contents: rulepack.yamlText })
+    // Beside the YAML, exactly where `_validate_rulepack_file`'s script loader
+    // looks for it.
+    for (const script of rulepack.scripts ?? []) {
+      files.push({ path: `rulepacks/${script.fileName}`, contents: script.source })
+    }
   }
   for (const asset of draft.assets) {
     binaries.push({ path: `assets/${asset.fileName}`, base64: asset.base64 })

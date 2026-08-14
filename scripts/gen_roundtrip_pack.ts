@@ -14,12 +14,21 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { exportNativeBundle, exportSillyTavernCard } from "../src/features/studio/exporters"
+import { embedCardIntoPng } from "../src/features/studio/pngCard"
 import { newLoreEntry, newProject, newVariable, validateProject } from "../src/features/studio/model"
 import {
   buildPackSourcePlan,
   validatePackDraft,
   type WorldPackDraft,
 } from "../src/features/studio/split/packSource"
+
+// The stage-E rules-script lane needs the engine's OPTIONAL `ejs` extra
+// (QuickJS): `parse_rulepack_text` builds a `RulesScriptEngine` at BUILD time,
+// so shipping the script rulepack unconditionally would break the gate on a
+// plain `uv sync`. `check_roundtrip.sh` probes the engine and sets this; when
+// it is off the lane is left out and the gate SAYS so rather than quietly
+// covering less.
+const RULES_SCRIPT_LANE = process.env.RULES_SCRIPT_LANE === "1"
 
 const outDir = process.argv[2]
 if (!outDir) {
@@ -186,6 +195,66 @@ const lorebookText =
     2,
   ) + "\n"
 
+// --- the world-flavored ST card (the OTHER world shape) ---------------------
+// The world lorecard above is the NATIVE shape. This is the same machinery in
+// a stock SillyTavern card: an `[InitVar]` declaration entry, a hooks
+// extension, and an `<% … %>` EJS span in the prose. `core.pack` must detect
+// all three (`kind: world`, `has_hooks`, `has_ejs`) from the ST shape too — the
+// gate had no ST-flavored world card before, so engine-side world detection on
+// this path was never exercised.
+
+const stWorldCardText =
+  JSON.stringify(
+    {
+      spec: "chara_card_v3",
+      spec_version: "3.0",
+      data: {
+        name: "管理员",
+        description: "公寓的管理员。今晚的雨势 <%= getvar('理智') %> 分。",
+        personality: "沉默，答非所问。",
+        scenario: "值班室的灯彻夜亮着。",
+        first_mes: "「五层？这栋楼只有四层。」",
+        creator_notes: "roundtrip pack fixture — ST-flavored world card",
+        tags: ["调查", "都市怪谈"],
+        extensions: {
+          loreweaver_hooks: [
+            "on('turn_start', () => { if (Number(getvar('值班')) > 0) narrate('值班室的灯闪了一下。') })",
+          ],
+        },
+        character_book: {
+          entries: [
+            {
+              id: 0,
+              comment: "[InitVar]",
+              content: '{"值班": [1, "管理员是否在岗 [0,1]"]}',
+              keys: [],
+              constant: true,
+              enabled: true,
+            },
+            {
+              id: 1,
+              comment: "值班室",
+              content: "值班室的窗永远蒙着水汽。",
+              keys: ["值班室"],
+              enabled: true,
+            },
+          ],
+        },
+      },
+    },
+    null,
+    2,
+  ) + "\n"
+
+// --- the PNG-embedded card --------------------------------------------------
+// `embedCardIntoPng` writes the `chara` (V2) and `ccv3` (V3) tEXt chunks into a
+// real PNG. Nothing had ever pushed one of those through the ENGINE's parser,
+// so the studio's chunk writer and `core.pack`'s reader had never met.
+
+const linWanPngBase64 = Buffer.from(
+  embedCardIntoPng(Buffer.from(PNG_1X1, "base64"), characterCard as Record<string, unknown>),
+).toString("base64")
+
 // --- skill / rulepack patch / panels / presentation -------------------------
 
 const SKILL_MD = `---
@@ -232,6 +301,50 @@ const RULEPACK_YAML = `# 回廊公寓 house rules — a patch over the built-in 
 extends: coc7
 defaults:
   理智: 45
+`
+
+// A THIRD-PARTY-shaped rulepack carrying a stage-E rules script. Bundled packs
+// stay DSL-only by doctrine (`core/rules_script.py`), so the script lane only
+// ever ships the way an extension pack ships it — which is exactly why the gate
+// has to build one: `has_rules_script` was pinned false and the shape was never
+// exercised. The engine pre-rolls every die and hands the script plain JSON; it
+// cannot roll, and its return is validated and clamped before anything applies.
+const SCRIPT_RULEPACK_YAML = `# 回廊公寓 — the stairwell's own ladder (stage-E script lane).
+names: [corridor-fate]
+set_keys: [corridor-fate]
+defaults:
+  胆识: 2
+  谨慎: 1
+resolution:
+  version: 1
+  roll: 2d6
+  target: dc
+  compare: ">="
+  script: corridor-resolver.js
+labels:
+  en:
+    climb: [Climb]
+    hold: [Hold]
+    fall: [Fall]
+  zh:
+    climb: [登楼]
+    hold: [驻足]
+    fall: [坠落]
+`
+
+const RULES_SCRIPT_JS = `// One resolve(input) → rank. No callables, no state: the engine pre-rolls the
+// dice, serializes them in as plain JSON, and validates everything coming back.
+function resolve(input) {
+  var target = input.target === null ? 7 : input.target
+  var doubled = input.dice.length === 2 && input.dice[0] === input.dice[1]
+  if (input.roll >= target) {
+    return { rank: { id: "climb", tier: 2, success: true, critical: doubled }, margin: input.roll - target }
+  }
+  if (input.roll === target - 1) {
+    return { rank: { id: "hold", tier: 1 }, margin: input.roll - target }
+  }
+  return { rank: { id: "fall", tier: 0, fumble: true }, margin: input.roll - target }
+}
 `
 
 const PANELS_YAML = `panels:
@@ -296,6 +409,20 @@ const draft: WorldPackDraft = {
       notesEn: "",
       notesZh: "",
     },
+    {
+      fileName: "administrator.st.json",
+      jsonText: stWorldCardText,
+      notesEn: "Import as world; the ST-flavored half of the module.",
+      notesZh: "以世界卡导入；模组的 ST 形态那一半。",
+    },
+    {
+      // The same character, embedded in a PNG — the shape a community editor
+      // hands around, and the one path the gate never covered.
+      fileName: "lin-wan.png",
+      base64: linWanPngBase64,
+      notesEn: "",
+      notesZh: "",
+    },
   ],
   lorebooks: [{ fileName: "corridor-notices.json", jsonText: lorebookText }],
   skills: [
@@ -308,7 +435,18 @@ const draft: WorldPackDraft = {
       skillMd: SKILL_MD,
     },
   ],
-  rulepacks: [{ id: "corridor-rules", yamlText: RULEPACK_YAML }],
+  rulepacks: [
+    { id: "corridor-rules", yamlText: RULEPACK_YAML },
+    ...(RULES_SCRIPT_LANE
+      ? [
+          {
+            id: "corridor-fate",
+            yamlText: SCRIPT_RULEPACK_YAML,
+            scripts: [{ fileName: "corridor-resolver.js", source: RULES_SCRIPT_JS }],
+          },
+        ]
+      : []),
+  ],
   assets: [{ fileName: "cover.png", base64: PNG_1X1 }],
   // M20 F prep-phase script (`contents.prep`): the engine's build checks it
   // statically (extension, the 20 000-char cap, UTF-8) and counts it on the

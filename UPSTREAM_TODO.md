@@ -58,9 +58,11 @@ catch-up itself.
    `.preset` surface + the bounded v0 style-fold in `agent/prompt_builder.py:360-383`
    all exist. Still missing: a `contents.presets` pack-asset convention (install →
    `data_dir/presets/`, and `.preset import` understanding the pack-relative
-   `packId/path` resolver from item 6 — it reads literal server paths only,
-   `gateway/commands.py:984`), and the finer marker→section mapping contract
-   (prompt_builder's own comment still calls the single-fold policy v0).
+   `packId/path` resolver from item 6 — **that half landed too**: `cmd_preset`
+   (`gateway/commands.py:1178`) now resolves a pack-relative ref through
+   `resolve_installed_path` before falling back to a literal server path
+   (`:1212–1215`). What remains open is only the finer marker→section mapping
+   contract — prompt_builder's own comment still calls the single-fold policy v0.
 
 10. **A world card's PROSE has nowhere to go.** **LANDED upstream `884fe51`** — the
     prose now seeds a keeper-only module brief at import. Studio-side: nothing is
@@ -77,8 +79,9 @@ catch-up itself.
 11. **`.var` has no keeper-side write.** **LANDED upstream `96c7228`** — keeper-gated
     `.var set` / `.var add`, over `core.modvars` validation.
     Studio-side consumption (a keeper write control on the state panel) is outstanding.
-    Original ask below. Still `list|expose|hide` only
-    (`gateway/commands.py:1801-1859`); the validated primitives
+    Original ask below. It read `list|expose|hide` only when this was written
+    (`cmd_var` is at `gateway/commands.py:2033-2128` today, and its docstring
+    now names set/add); the validated primitives
     (`core/modvars.set_modvar`/`adjust_modvar`) exist and are called from agent-side
     code, only the command surface is missing. Narrowed by M15: `panel_intent`
     already routes panel input through the real command engine, so the ask is now

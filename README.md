@@ -50,9 +50,13 @@ Two modes, one app:
   (`sudo xcodebuild -license accept`) on this machine; signing needs a development team.
 - **Android**: blocked on local tooling — the SDK lacks `cmdline-tools` and an NDK
   (`sdkmanager "ndk;…"`); `tauri android init` bails until they exist.
-- **Card forge**: local authoring + dual export, card splitting, MVU→VarSpec promotion,
-  AI drafting, and the pack pipeline ([formats](docs/FORMATS.md)); native-bundle import
-  awaits upstream M14.
+- **Card forge**: local authoring + dual export (JSON and PNG-embedded, each naming
+  the flavor it writes), native-bundle import, card splitting, MVU→VarSpec promotion,
+  AI drafting, an advisory pack lint, and the pack pipeline — build, install, and
+  "test now" straight into a live local table ([formats](docs/FORMATS.md)).
+- **Serialized modules**: one pack, cumulative versions. The release at episode N
+  carries episodes 1..N and nothing of N+1, so the file that circulates is
+  spoiler-safe by construction rather than by gating.
 - Protocol feedback for upstream lives in [PROTOCOL_NOTES.md](PROTOCOL_NOTES.md);
   engine/tooling asks from the forge work live in [UPSTREAM_TODO.md](UPSTREAM_TODO.md).
 
@@ -80,12 +84,18 @@ output and the engine's real parsers drift apart. It pins four things:
 - **lorecard v1 byte drift** — the real `exportNativeBundle` output, regenerated
   on the spot, must stay byte-identical to the engine's pinned
   `tests/fixtures/studio_export.lorecard.json`;
-- **pack manifest v2 full-tree build** — a full-surface module pack (world
-  lorecard, ST character card, lorebook, skill, rulepack patch, tier-1/2
-  panels, presentation kit, assets) is laid out by the real
-  `buildPackSourcePlan` (`scripts/gen_roundtrip_pack.ts`) and must build clean
-  through the engine's `python -m app --pack --json`, with the expected
-  detection results in the returned `trust` object;
+- **pack manifest v2 full-tree build** — a full-surface module pack is laid out
+  by the real `buildPackSourcePlan` (`scripts/gen_roundtrip_pack.ts`) and must
+  build clean through the engine's `python -m app --pack --json`, with the
+  expected detection results in the returned `trust` object. It carries every
+  shape a pack can hold a card in — a world lorecard (native), a clean ST
+  character card, an ST-flavored WORLD card (hooks + `[InitVar]` + an EJS span,
+  so engine-side world detection is exercised on the SillyTavern path too), and
+  a PNG-embedded card — plus a skill, a rulepack patch, a stage-E rules-script
+  rulepack, a lorebook, tier-1/2 panels, a presentation kit, assets, and a
+  prep-phase plan script. The rules-script lane needs the engine's optional
+  `ejs` extra (QuickJS); the gate probes for it and says out loud when it is
+  skipping that lane rather than quietly covering less;
 - **the engine's conformance suites** for the pinned fixtures
   (`test_studio_export_fixture`, `test_lorecard`, `test_visible_when_vectors`);
 - **the live-connect smoke gate** (`scripts/check_live_connect.sh`) — the three

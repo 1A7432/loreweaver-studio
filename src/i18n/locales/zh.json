@@ -950,7 +950,10 @@
         "packPrepNotJs": "准备脚本“{{file}}”必须是 .js 文件——引擎构建会拒绝其他扩展名。",
         "packPrepPath": "准备脚本“{{file}}”：请使用普通文件名；脚本直接放在 prep/ 下。",
         "packPrepTooLong": "准备脚本“{{file}}”超过了沙箱的 {{max}} 字符上限。",
-        "packPrepEmpty": "准备脚本“{{file}}”是空的。"
+        "packPrepEmpty": "准备脚本“{{file}}”是空的。",
+        "packRulesScriptPath": "规则脚本“{{file}}”：请使用纯文件名——引擎只会在规则包 YAML 旁边读取脚本，并拒绝任何路径。",
+        "packRulesScriptNotJs": "规则脚本“{{file}}”必须是 .js 文件。",
+        "packRulesScriptTooLong": "规则脚本“{{file}}”超过了 {{max}} 字符上限。"
       },
       "panels": {
         "title": "模组 UI 面板（M15）",

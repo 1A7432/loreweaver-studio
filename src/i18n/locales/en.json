@@ -950,7 +950,10 @@
         "packPrepNotJs": "Prep script “{{file}}” must be a .js file — the engine's build rejects any other extension.",
         "packPrepPath": "Prep script “{{file}}”: use a plain file name; scripts land directly under prep/.",
         "packPrepTooLong": "Prep script “{{file}}” exceeds the sandbox's {{max}}-character cap.",
-        "packPrepEmpty": "Prep script “{{file}}” is empty."
+        "packPrepEmpty": "Prep script “{{file}}” is empty.",
+        "packRulesScriptPath": "Rules script “{{file}}”: use a bare file name — the engine reads a script from beside its rulepack YAML and refuses a path.",
+        "packRulesScriptNotJs": "Rules script “{{file}}” must be a .js file.",
+        "packRulesScriptTooLong": "Rules script “{{file}}” exceeds the {{max}}-character cap."
       },
       "panels": {
         "title": "Module UI panels (M15)",
