@@ -27,8 +27,14 @@ export type PackLintRuleId =
   | "packMetadataThin"
   /** An asset referenced by a panel or the kit that the pack does not ship. */
   | "assetMissing"
+  /** Content tagged to an episode this pack never declares. */
+  | "episodeUnknown"
+  /** An episode that will ship with no release notes. */
+  | "episodeNoNotes"
+  /** An earlier episode's content naming something a later one introduces. */
+  | "episodeForwardReference"
 
-export type PackLintTargetKind = "variable" | "lore" | "panel" | "code" | "pack" | "asset"
+export type PackLintTargetKind = "variable" | "lore" | "panel" | "code" | "pack" | "asset" | "episode"
 
 export interface PackLintTarget {
   kind: PackLintTargetKind
@@ -60,6 +66,8 @@ export interface LintLoreEntry {
   id: string
   title: string
   content: string
+  /** Serialized-module tag ("" / absent = evergreen). */
+  episode?: string
   /** Trigger keywords, comma/newline separated exactly as authored. */
   keys: string
   condition: string
@@ -89,6 +97,14 @@ export interface LintAssetRef {
   from: string
 }
 
+/** What the lint needs to know about one installment. */
+export interface LintEpisode {
+  id: string
+  ordinal: number
+  title: string
+  releaseNotes: string
+}
+
 export interface PackLintSource {
   /** Null in the forge, where there is no pack yet: the pack rules go quiet. */
   meta: LintPackMeta | null
@@ -97,6 +113,10 @@ export interface PackLintSource {
   /** Raw `ui/panels.yaml`; null when the pack ships no panels. */
   panelsYaml: string | null
   code: LintCodeBlock[]
+  /** Serialized installments, and the ordinal the next build stops at. Empty
+   * episodes means an ordinary one-shot pack and the episode rules go quiet. */
+  episodes: LintEpisode[]
+  buildUpTo: number
   /** Every media file the pack ships, as a pack-relative path — `assets/…` for
    * dropped assets and kit media, `ui/…` for panel files. A panel's `src` can
    * name either (`ui/handouts/page.png` is as legal as `assets/cover.png`), so
@@ -106,5 +126,15 @@ export interface PackLintSource {
 }
 
 export function emptyLintSource(): PackLintSource {
-  return { meta: null, variables: [], lore: [], panelsYaml: null, code: [], shippedFiles: [], assetRefs: [] }
+  return {
+    meta: null,
+    variables: [],
+    lore: [],
+    panelsYaml: null,
+    code: [],
+    episodes: [],
+    buildUpTo: 0,
+    shippedFiles: [],
+    assetRefs: [],
+  }
 }

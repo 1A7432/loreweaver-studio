@@ -20,6 +20,7 @@ import {
   type ModvarSpec,
   type SelectiveLogic,
 } from "./model"
+import { EPISODE_FIELD } from "./split/episodes"
 
 /** Stock SillyTavern world-info selectiveLogic integers (confirmed against the
  * Loreweaver importer's `_SELECTIVE_LOGIC_INTS`). */
@@ -34,7 +35,12 @@ const clamp = (value: number, lo: number, hi: number) => Math.min(hi, Math.max(l
 
 function loreToNative(entry: ForgeLoreEntry): Record<string, unknown> {
   const stableId = entry.stableId?.trim() ?? ""
+  const episode = entry.episode?.trim() ?? ""
   return {
+    // Studio-private serialization tag, carried so a later "build up to episode
+    // N" can still tell which installment this entry belongs to. It never
+    // reaches a built pack — `filterEpisodeContent` strips it at write time.
+    ...(episode ? { [EPISODE_FIELD]: episode } : {}),
     // The stable entry id rides first when set — the cross-pack reference
     // handle (`<pack-id>#<entry-id>`), carried verbatim by the engine.
     ...(stableId ? { id: stableId } : {}),
@@ -67,6 +73,8 @@ function pregenToNative(pregen: ForgePregen): Record<string, unknown> {
   const out: Record<string, unknown> = {
     name: pregen.name.trim().slice(0, MAX_PREGEN_NAME_LEN),
   }
+  const episode = pregen.episode?.trim() ?? ""
+  if (episode) out[EPISODE_FIELD] = episode
   const concept = pregen.concept.trim().slice(0, MAX_PREGEN_CONCEPT_LEN)
   if (concept) out["concept"] = concept
   const notes = pregen.notes.trim().slice(0, MAX_PREGEN_NOTES_LEN)

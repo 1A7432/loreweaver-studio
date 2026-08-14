@@ -7,6 +7,14 @@
 
 import { parse, stringify } from "yaml"
 import { evaluate } from "@loreweaver/protocol"
+import {
+  buildChangelog,
+  filterEpisodeContent,
+  includedInBuild,
+  latestOrdinal,
+  type EpisodeTagged,
+  type PackEpisode,
+} from "./episodes"
 import type { Issue } from "../model"
 
 export const PACK_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
@@ -88,7 +96,7 @@ const PERFORMANCE_FIELD_CAPS: Record<string, number> = {
   subtitle: MAX_UI_CAPTION_CHARS,
 }
 
-export interface PackCardDraft {
+export interface PackCardDraft extends EpisodeTagged {
   /** File name under `cards/` (already sanitized, extension included). */
   fileName: string
   /** Exactly one of these: JSON card text, or original PNG bytes. */
@@ -195,14 +203,14 @@ export interface PackRulepackDraft {
   yamlText: string
 }
 
-export interface PackLorebookDraft {
+export interface PackLorebookDraft extends EpisodeTagged {
   fileName: string
   jsonText: string
 }
 
 /** One media asset. The author side only declares the path — sha256/mime/size
  * are filled in by the engine at build time. */
-export interface PackAssetDraft {
+export interface PackAssetDraft extends EpisodeTagged {
   fileName: string
   base64: string
 }
@@ -229,6 +237,13 @@ export interface WorldPackDraft {
   /** M19 presentation kit; null when the pack ships none — the Stage Director
    * is kit-gated, so null means "no staged beats for rooms of this module". */
   presentation: PackPresentationDraft | null
+  /** Serialized installments. Empty = an ordinary one-shot pack, which builds
+   * exactly as it always did. */
+  episodes: PackEpisode[]
+  /** Build up to this episode ordinal; 0 (or absent) means "everything". A
+   * release at episode N carries episodes 1..N and NOTHING of N+1, which is
+   * what makes the circulating file spoiler-safe by construction. */
+  buildUpTo?: number
 }
 
 export interface PackTextFile {
@@ -942,7 +957,46 @@ function cardEntryToYaml(card: PackCardDraft): unknown {
   return { path, notes }
 }
 
-export function buildManifestYaml(draft: WorldPackDraft): string {
+/** The build's horizon: the episode ordinal this release stops at. 0 episodes
+ * (an ordinary pack) or an unset `buildUpTo` both mean "everything". */
+export function buildHorizon(draft: WorldPackDraft): number {
+  const latest = latestOrdinal(draft.episodes)
+  if (latest === 0) return Number.MAX_SAFE_INTEGER
+  const upTo = draft.buildUpTo ?? latest
+  return upTo > 0 ? upTo : latest
+}
+
+/**
+ * The draft as it will actually SHIP: content tagged past the horizon is gone.
+ *
+ * Everything downstream — the manifest, the file plan, the asset block — reads
+ * this and only this, so there is exactly one place a future episode can be
+ * excluded and no way for two of them to disagree about what a release
+ * contains. That is what makes "the circulating file has no future content"
+ * a structural claim rather than a promise.
+ */
+export function draftForRelease(draft: WorldPackDraft): WorldPackDraft {
+  const upTo = buildHorizon(draft)
+  if (upTo === Number.MAX_SAFE_INTEGER) return draft
+  const keep = <T extends EpisodeTagged>(item: T) => includedInBuild(draft.episodes, item, upTo)
+  // A whole FILE can belong to an installment, and so can one entry inside it:
+  // an author who adds a chapter to an existing world tags entries, not files.
+  // Both are cut here, and the studio's own tag never reaches the artifact.
+  const trim = (jsonText: string) => filterEpisodeContent(jsonText, draft.episodes, upTo)
+  return {
+    ...draft,
+    cards: draft.cards
+      .filter(keep)
+      .map((card) => (card.jsonText === undefined ? card : { ...card, jsonText: trim(card.jsonText) })),
+    lorebooks: draft.lorebooks
+      .filter(keep)
+      .map((lorebook) => ({ ...lorebook, jsonText: trim(lorebook.jsonText) })),
+    assets: draft.assets.filter(keep),
+  }
+}
+
+export function buildManifestYaml(input: WorldPackDraft): string {
+  const draft = draftForRelease(input)
   const contents: Record<string, unknown> = {}
   if (draft.skills.length > 0) contents.skills = draft.skills.map((skill) => `skills/${skill.slug}`)
   if (draft.rulepacks.length > 0) {
@@ -1013,9 +1067,23 @@ export function buildSkillMd(skill: PackSkillDraft): string {
 
 /** Lay out the full source tree. Callers hand the plan to the Rust side to
  * write, then run the engine CLI on the resulting directory. */
-export function buildPackSourcePlan(draft: WorldPackDraft): PackSourcePlan {
+export function buildPackSourcePlan(input: WorldPackDraft): PackSourcePlan {
+  // ONE filtered view for the whole plan: the manifest and the files it names
+  // are built from the same object, so a future episode cannot survive in one
+  // and not the other.
+  const draft = draftForRelease(input)
   const files: PackTextFile[] = [{ path: "pack.yaml", contents: buildManifestYaml(draft) }]
   const binaries: PackBinaryFile[] = []
+
+  const changelog = buildChangelog(
+    input.nameEn || input.nameZh,
+    input.version,
+    input.episodes,
+    buildHorizon(input),
+  )
+  // Only when there is something to say. The Bomb-3 `--publish`/`--update`
+  // rails will read this; an empty one would be noise in every one-shot pack.
+  if (changelog) files.push({ path: "CHANGELOG.md", contents: changelog })
 
   for (const card of draft.cards) {
     if (card.jsonText !== undefined) {

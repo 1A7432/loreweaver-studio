@@ -192,7 +192,7 @@ describe("pack store pipeline", () => {
       rulepackId: "",
       rulepackMode: "patch" as const,
     })
-    expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64 }])
+    expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64, episode: "" }])
   })
 })
 

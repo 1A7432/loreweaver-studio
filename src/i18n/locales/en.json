@@ -1153,6 +1153,23 @@
         "readingLoop": "a loop plans an unknown number — the engine caps a plan at {{ops}} operations",
         "forbidden": "This script names {{names}}, which the sandbox does not expose. It will fail at preview.",
         "invoke": "The keeper runs it with: run_prep_plan(script_ref=\"{{ref}}\")"
+      },
+      "episodes": {
+        "title": "Episodes (serialized module)",
+        "hint": "One pack, cumulative versions: the release at episode N contains episodes 1..N and nothing of N+1. That is what makes the file you circulate spoiler-safe — there is no gating machinery, because there is nothing later inside it. Add episodes here, tag files on the Classify step, and pick the release checkpoint on Build.",
+        "add": "Add an episode",
+        "ordinal": "Episode {{n}}",
+        "id": "Tag",
+        "episodeTitle": "Title",
+        "summary": "What this installment is",
+        "releaseNotes": "Release notes",
+        "releaseNotesPlaceholder": "What a reader who already played the previous installment needs to know.",
+        "itemTag": "Episode",
+        "evergreen": "Evergreen (always shipped)",
+        "buildUpTo": "Build up to",
+        "buildUpToHint": "Episodes 1–{{n}} ship; anything tagged later is left out of the source tree entirely.",
+        "versionHint": "The convention is MINOR = episode, so this build would be {{suggested}} rather than {{version}}.",
+        "versionApply": "Use {{suggested}}"
       }
     },
     "lint": {
@@ -1180,7 +1197,10 @@
         "stubMarker": "{{origin}} still carries the wizard's draft stub, so the update rules never run.",
         "packDescriptionMissing": "The pack has no description in either language — it is what a reader sees before installing.",
         "packLicenseMissing": "The pack declares no license.",
-        "assetMissing": "{{from}} points at “{{path}}”, which this pack does not ship."
+        "assetMissing": "{{from}} points at “{{path}}”, which this pack does not ship.",
+        "episodeUnknown": "Lore entry “{{title}}” is tagged to episode “{{tag}}”, which this pack does not declare. It will still ship — a typo must not silently cut your work — but it is in every release, not the one you meant.",
+        "episodeNoNotes": "Episode {{ordinal}} (“{{title}}”) will ship with no release notes, so its CHANGELOG entry says nothing about what changed.",
+        "episodeForwardReference": "Lore entry “{{title}}” (episode {{ordinal}}) names “{{name}}”, which episode {{ahead}} introduces. In the release that ships episode {{ordinal}}, that reference has nothing behind it."
       }
     },
     "undo": {

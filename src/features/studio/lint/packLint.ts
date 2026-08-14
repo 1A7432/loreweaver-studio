@@ -334,6 +334,83 @@ function lintAssets(source: PackLintSource, panels: LintPanel[], findings: PackL
   for (const ref of source.assetRefs) report(ref.path, ref.from)
 }
 
+/** The three serialization rules (Batch 5).
+ *
+ * They exist because the model deliberately has NO gating machinery: what makes
+ * a release spoiler-safe is that the file simply does not contain future
+ * content. That is only true if the tags are right, so the tags are what gets
+ * checked.
+ *
+ * Quiet for a pack with no episodes — an ordinary one-shot must not grow
+ * findings about a feature it does not use. */
+function lintEpisodes(source: PackLintSource, findings: PackLintFinding[]): void {
+  const episodes = source.episodes
+  if (episodes.length === 0) return
+  const byId = new Map(episodes.map((episode) => [episode.id, episode]))
+  const upTo = source.buildUpTo > 0 ? source.buildUpTo : Math.max(...episodes.map((e) => e.ordinal))
+
+  // 1. A tag nothing declares. The BUILD includes such content rather than
+  //    dropping it (a typo must not silently cut an author's work), so this is
+  //    the only thing that will tell them.
+  for (const entry of source.lore) {
+    const tag = (entry.episode ?? "").trim()
+    if (!tag || byId.has(tag)) continue
+    findings.push(
+      finding(
+        "episodeUnknown",
+        "warn",
+        "episodeUnknown",
+        { title: entry.title || entry.id, tag },
+        { kind: "lore", id: entry.id },
+      ),
+    )
+  }
+
+  // 2. An episode that ships with nothing to say about itself. The changelog is
+  //    what a subscriber reads to find out the new chapter arrived.
+  for (const episode of episodes) {
+    if (episode.ordinal > upTo) continue
+    if (episode.releaseNotes.trim()) continue
+    findings.push(
+      finding(
+        "episodeNoNotes",
+        "warn",
+        "episodeNoNotes",
+        { ordinal: episode.ordinal, title: episode.title || episode.id },
+        { kind: "episode", id: episode.id },
+      ),
+    )
+  }
+
+  // 3. An earlier episode's content naming a later one's. In a cumulative pack
+  //    the reference is not broken — episode 4's release contains episode 2 —
+  //    but at the release that ships episode 2, it dangles, and that release is
+  //    the one someone is reading right now.
+  const laterTitles = episodes
+    .filter((episode) => episode.ordinal > 1)
+    .map((episode) => ({ episode, title: episode.title.trim() }))
+    .filter((row) => row.title.length >= 2)
+  if (laterTitles.length > 0) {
+    for (const entry of source.lore) {
+      const ordinal = byId.get((entry.episode ?? "").trim())?.ordinal ?? 1
+      const haystack = `${entry.title}\n${entry.content}`
+      for (const row of laterTitles) {
+        if (row.episode.ordinal <= ordinal) continue
+        if (!haystack.includes(row.title)) continue
+        findings.push(
+          finding(
+            "episodeForwardReference",
+            "info",
+            "episodeForwardReference",
+            { title: entry.title || entry.id, ordinal, ahead: row.episode.ordinal, name: row.title },
+            { kind: "lore", id: entry.id },
+          ),
+        )
+      }
+    }
+  }
+}
+
 /** Run every rule. Findings come back grouped by rule, in rule order, so the
  * panel reads as a checklist rather than a stream. */
 export function lintPack(source: PackLintSource): PackLintFinding[] {
@@ -347,6 +424,7 @@ export function lintPack(source: PackLintSource): PackLintFinding[] {
   lintLoreMacros(source, findings)
   lintPackMetadata(source, findings)
   lintAssets(source, panels, findings)
+  lintEpisodes(source, findings)
   return findings
 }
 

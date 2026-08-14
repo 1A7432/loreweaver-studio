@@ -8,6 +8,7 @@
 import { normalizeVarId, type ForgeProject } from "../model"
 import type { PackMetadataForm, PackItem } from "../../../store/pack"
 import type { PackPanelsDraft, PackPresentationDraft, PackSkillDraft } from "../split/packSource"
+import { latestOrdinal, type PackEpisode } from "../split/episodes"
 import { isRecord, asText } from "../split/charcard"
 import type { LintLoreEntry, LintVariable, PackLintSource } from "./model"
 
@@ -32,6 +33,7 @@ export function lintSourceFromProject(project: ForgeProject): PackLintSource {
       id: entry.uid || `#${index + 1}`,
       title: entry.title,
       content: entry.content,
+      episode: entry.episode,
       keys: entry.keys,
       condition: entry.condition,
       constant: entry.constant,
@@ -39,6 +41,10 @@ export function lintSourceFromProject(project: ForgeProject): PackLintSource {
     })),
     panelsYaml: null,
     code: project.hooks.trim() ? [{ origin: "hooks", source: project.hooks }] : [],
+    // The forge edits one card; installments belong to a pack, so the episode
+    // rules have nothing to say here.
+    episodes: [],
+    buildUpTo: 0,
     shippedFiles: [],
     assetRefs: [],
   }
@@ -69,6 +75,7 @@ export function loreFromJson(jsonText: string, fileName: string): LintLoreEntry[
     const keys = item.keys ?? item.key
     entries.push({
       id: `${fileName}#${index + 1}`,
+      episode: typeof item.episode === "string" ? item.episode : undefined,
       title: asText(item.comment) || asText(item.name) || "",
       content: asText(item.content),
       keys: Array.isArray(keys) ? keys.map(asText).join(", ") : asText(keys),
@@ -89,6 +96,8 @@ export interface PackBenchLintInput {
   panels: PackPanelsDraft | null
   manualSkills: PackSkillDraft[]
   presentation: PackPresentationDraft | null
+  episodes?: PackEpisode[]
+  buildUpTo?: number
 }
 
 /** The pack bench's whole session. */
@@ -102,12 +111,26 @@ export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSour
   for (const item of input.items) {
     if (item.kind === "asset") shippedFiles.push(`assets/${item.fileName}`)
     if (item.kind === "lorebook" && item.jsonText !== null) {
-      lore.push(...loreFromJson(item.jsonText, item.fileName))
+      // A file tagged to an installment tags everything it carries, unless an
+      // entry says otherwise.
+      lore.push(
+        ...loreFromJson(item.jsonText, item.fileName).map((entry) => ({
+          ...entry,
+          episode: entry.episode || item.episode || undefined,
+        })),
+      )
     }
     if (item.kind !== "card") continue
     // A card's own embedded lorebook is content too — and the place a secret
     // entry with no trigger most often hides.
-    if (item.jsonText !== null) lore.push(...loreFromJson(item.jsonText, item.fileName))
+    if (item.jsonText !== null) {
+      lore.push(
+        ...loreFromJson(item.jsonText, item.fileName).map((entry) => ({
+          ...entry,
+          episode: entry.episode || item.episode || undefined,
+        })),
+      )
+    }
     for (const draft of item.drafts) {
       if (!draft.include) continue
       const id = normalizeVarId(draft.variable.id)
@@ -161,6 +184,13 @@ export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSour
     lore,
     panelsYaml: input.panels?.yamlText.trim() ? input.panels.yamlText : null,
     code,
+    episodes: (input.episodes ?? []).map((episode) => ({
+      id: episode.id,
+      ordinal: episode.ordinal,
+      title: episode.title,
+      releaseNotes: episode.releaseNotes,
+    })),
+    buildUpTo: input.buildUpTo ?? latestOrdinal(input.episodes ?? []),
     shippedFiles,
     assetRefs,
   }

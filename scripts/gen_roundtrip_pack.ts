@@ -314,6 +314,9 @@ const draft: WorldPackDraft = {
   // statically (extension, the 20 000-char cap, UTF-8) and counts it on the
   // trust card. It never runs — not at build, not at install.
   prep: [{ fileName: "setup.js", source: PREP_SCRIPT }],
+  // A one-shot pack: no installments, so the source tree is byte-identical to
+  // what it was before serialized modules existed.
+  episodes: [],
   panels: {
     yamlText: PANELS_YAML,
     files: [

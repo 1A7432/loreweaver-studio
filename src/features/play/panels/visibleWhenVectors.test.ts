@@ -80,6 +80,7 @@ function draftWithCondition(condition: string): WorldPackDraft {
     rulepacks: [],
     assets: [],
     prep: [],
+    episodes: [],
     presentation: null,
     panels: {
       yamlText:

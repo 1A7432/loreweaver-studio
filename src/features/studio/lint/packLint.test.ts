@@ -317,3 +317,65 @@ describe("lintSummary", () => {
     expect(findings).toEqual([])
   })
 })
+
+describe("serialized-module rules", () => {
+  const EPISODES = [
+    { id: "ep1", ordinal: 1, title: "雨夜", releaseNotes: "首次发布。" },
+    { id: "ep2", ordinal: 2, title: "第五层", releaseNotes: "" },
+  ]
+
+  it("says nothing at all about an ordinary one-shot pack", () => {
+    // A pack that does not use the feature must not grow findings about it.
+    const findings = lintPack(source({ lore: [LORE] }))
+    expect(findings.map((f) => f.ruleId).filter((id) => id.startsWith("episode"))).toEqual([])
+  })
+
+  it("reports content tagged to an episode nothing declares", () => {
+    // The BUILD includes it (a typo must not cut an author's work), so this
+    // finding is the only thing that will tell them.
+    const findings = lintPack(
+      source({ episodes: EPISODES, buildUpTo: 2, lore: [{ ...LORE, episode: "ep9" }] }),
+    )
+    const unknown = findings.filter((f) => f.ruleId === "episodeUnknown")
+    expect(unknown).toHaveLength(1)
+    expect(unknown[0].params).toMatchObject({ tag: "ep9" })
+  })
+
+  it("reports an episode that will ship with no release notes", () => {
+    const findings = lintPack(source({ episodes: EPISODES, buildUpTo: 2 }))
+    const missing = findings.filter((f) => f.ruleId === "episodeNoNotes")
+    expect(missing).toHaveLength(1)
+    expect(missing[0].params).toMatchObject({ ordinal: 2 })
+  })
+
+  it("ignores a later episode's missing notes when this build stops short of it", () => {
+    const findings = lintPack(source({ episodes: EPISODES, buildUpTo: 1 }))
+    expect(findings.map((f) => f.ruleId)).not.toContain("episodeNoNotes")
+  })
+
+  it("reports an earlier entry naming what a later episode introduces", () => {
+    // Cumulatively the reference resolves; in the release that ships episode 1
+    // — the one someone is reading now — it dangles.
+    const findings = lintPack(
+      source({
+        episodes: EPISODES,
+        buildUpTo: 2,
+        lore: [{ ...LORE, episode: "ep1", content: "楼梯通向第五层。" }],
+      }),
+    )
+    const forward = findings.filter((f) => f.ruleId === "episodeForwardReference")
+    expect(forward).toHaveLength(1)
+    expect(forward[0].params).toMatchObject({ ordinal: 1, ahead: 2, name: "第五层" })
+  })
+
+  it("does not flag a LATER entry naming an earlier episode", () => {
+    const findings = lintPack(
+      source({
+        episodes: EPISODES,
+        buildUpTo: 2,
+        lore: [{ ...LORE, episode: "ep2", content: "那个雨夜之后。" }],
+      }),
+    )
+    expect(findings.map((f) => f.ruleId)).not.toContain("episodeForwardReference")
+  })
+})

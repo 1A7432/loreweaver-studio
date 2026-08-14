@@ -1153,6 +1153,23 @@
         "readingLoop": "循环会计划出未知数量——引擎将一份计划限制在 {{ops}} 个操作以内",
         "forbidden": "这个脚本用到了 {{names}}，而沙箱并不提供它们。预览时会失败。",
         "invoke": "keeper 用这条命令运行它：run_prep_plan(script_ref=\"{{ref}}\")"
+      },
+      "episodes": {
+        "title": "连载话数（连载模组）",
+        "hint": "一个模组包，版本累积：发布到第 N 话的版本包含第 1..N 话，且完全不含第 N+1 话。这正是你分发出去的文件天然不剧透的原因——不需要任何门控机制，因为里面根本没有后续内容。在这里添加话数，在「分类」步骤给文件打标记，在「构建」步骤选择发布到哪一话。",
+        "add": "添加一话",
+        "ordinal": "第 {{n}} 话",
+        "id": "标记",
+        "episodeTitle": "标题",
+        "summary": "这一话讲什么",
+        "releaseNotes": "更新说明",
+        "releaseNotesPlaceholder": "已经玩过上一话的读者需要知道的东西。",
+        "itemTag": "所属话数",
+        "evergreen": "常驻（始终发布）",
+        "buildUpTo": "构建至",
+        "buildUpToHint": "第 1–{{n}} 话会被发布；标记在其后的内容根本不会写进源目录。",
+        "versionHint": "约定是次版本号 = 话数，因此这次构建应为 {{suggested}} 而不是 {{version}}。",
+        "versionApply": "改用 {{suggested}}"
       }
     },
     "lint": {
@@ -1180,7 +1197,10 @@
         "stubMarker": "{{origin}} 里还留着向导生成的草稿占位，更新规则实际不会执行。",
         "packDescriptionMissing": "模组包没有任何语言的描述——那是安装前读者唯一能看到的东西。",
         "packLicenseMissing": "模组包未声明许可协议。",
-        "assetMissing": "{{from}} 指向“{{path}}”，但本包并未携带该文件。"
+        "assetMissing": "{{from}} 指向“{{path}}”，但本包并未携带该文件。",
+        "episodeUnknown": "世界书条目“{{title}}”被标记到了话数“{{tag}}”，但本包并未声明它。它仍会发布——拼错不该悄悄砍掉你的内容——但会出现在每一个版本里，而不是你想要的那一话。",
+        "episodeNoNotes": "第 {{ordinal}} 话（“{{title}}”）将在没有更新说明的情况下发布，它在 CHANGELOG 里不会说明任何改动。",
+        "episodeForwardReference": "世界书条目“{{title}}”（第 {{ordinal}} 话）提到了“{{name}}”，而它是第 {{ahead}} 话才引入的。在只发布到第 {{ordinal}} 话的版本里，这个指涉背后空无一物。"
       }
     },
     "undo": {

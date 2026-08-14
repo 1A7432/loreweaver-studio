@@ -165,6 +165,7 @@ export default function SplitView() {
       leaves: session.leaves,
       leavesTruncated: session.truncated,
       initvarProblems: session.initvarProblems,
+      episode: "",
       drafts: session.drafts,
       extractSkill: false,
       notesEn: exposeLines.length > 0 ? `After world import: ${exposeLines.join(" · ")}` : "",

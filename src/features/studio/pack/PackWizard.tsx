@@ -48,6 +48,7 @@ import {
   readPrepScript,
 } from "../split/packSource"
 import { readRulepack } from "../split/rulepack"
+import { latestOrdinal, suggestedVersion, versionMatchesConvention } from "../split/episodes"
 import PresentationStage from "./PresentationStage"
 import PromoteTable from "../split/PromoteTable"
 import type { Issue } from "../model"
@@ -57,6 +58,7 @@ function ItemRow({ item }: { item: PackItem }) {
   const updateItem = usePackStore((s) => s.updateItem)
   const removeItem = usePackStore((s) => s.removeItem)
   const reattachItem = usePackStore((s) => s.reattachItem)
+  const episodes = usePackStore((s) => s.episodes)
 
   const reattach = async () => {
     const files = await pickAnyFiles()
@@ -132,14 +134,29 @@ function ItemRow({ item }: { item: PackItem }) {
         </ul>
       ) : null}
 
-      <label className="field">
-        {t("studio.pack.fileName")}
-        <input
-          value={item.fileName}
-          onChange={(e) => updateItem(item.uid, { fileName: e.target.value })}
-          spellCheck={false}
-        />
-      </label>
+      <div className="dialog-row">
+        <label className="field">
+          {t("studio.pack.fileName")}
+          <input
+            value={item.fileName}
+            onChange={(e) => updateItem(item.uid, { fileName: e.target.value })}
+            spellCheck={false}
+          />
+        </label>
+        {episodes.length > 0 ? (
+          <label className="field field-narrow">
+            {t("studio.pack.episodes.itemTag")}
+            <select value={item.episode} onChange={(e) => updateItem(item.uid, { episode: e.target.value })}>
+              <option value="">{t("studio.pack.episodes.evergreen")}</option>
+              {episodes.map((episode) => (
+                <option key={episode.id} value={episode.id}>
+                  {episode.ordinal}. {episode.title || episode.id}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
       {item.kind === "card" ? (
         <>
           {item.hooks.length > 0 && item.jsonText !== null ? (
@@ -509,6 +526,128 @@ function PrepScriptSection() {
   )
 }
 
+/** The serialized-module timeline (连载模组).
+ *
+ * One pack, cumulative versions: the release at episode N contains episodes
+ * 1..N and nothing of N+1, which is what makes the circulating file spoiler-safe
+ * without any gating machinery. This is where the installments are declared and
+ * where each one's release notes are written; the tag on each dropped file is on
+ * the Classify step, and the "build up to" selector is on the Build step. */
+function EpisodeTimeline() {
+  const { t } = useTranslation()
+  const episodes = usePackStore((s) => s.episodes)
+  const addEpisode = usePackStore((s) => s.addEpisode)
+  const updateEpisode = usePackStore((s) => s.updateEpisode)
+  const removeEpisode = usePackStore((s) => s.removeEpisode)
+
+  return (
+    <section className="pack-extra-section">
+      <h3>{t("studio.pack.episodes.title")}</h3>
+      <p className="studio-hint">{t("studio.pack.episodes.hint")}</p>
+      {episodes.map((episode) => (
+        <div className="pack-item" key={episode.id}>
+          <div className="pack-item-head">
+            <span className="split-badge">{t("studio.pack.episodes.ordinal", { n: episode.ordinal })}</span>
+            <label className="field field-narrow">
+              {t("studio.pack.episodes.id")}
+              <input
+                value={episode.id}
+                onChange={(e) => updateEpisode(episode.id, { id: e.target.value })}
+                spellCheck={false}
+              />
+            </label>
+            <label className="field">
+              {t("studio.pack.episodes.episodeTitle")}
+              <input
+                value={episode.title}
+                onChange={(e) => updateEpisode(episode.id, { title: e.target.value })}
+              />
+            </label>
+            <div className="header-spacer" />
+            <button type="button" className="ghost-button" onClick={() => removeEpisode(episode.id)}>
+              {t("studio.remove")}
+            </button>
+          </div>
+          <label className="field field-wide">
+            {t("studio.pack.episodes.summary")}
+            <textarea
+              rows={2}
+              value={episode.summary}
+              onChange={(e) => updateEpisode(episode.id, { summary: e.target.value })}
+            />
+          </label>
+          <label className="field field-wide">
+            {t("studio.pack.episodes.releaseNotes")}
+            <textarea
+              rows={3}
+              value={episode.releaseNotes}
+              onChange={(e) => updateEpisode(episode.id, { releaseNotes: e.target.value })}
+              placeholder={t("studio.pack.episodes.releaseNotesPlaceholder")}
+            />
+          </label>
+        </div>
+      ))}
+      <button type="button" className="ghost-button" onClick={() => addEpisode()}>
+        {t("studio.pack.episodes.add")}
+      </button>
+    </section>
+  )
+}
+
+/** "Build up to episode N" — the release checkpoint.
+ *
+ * Content tagged past N is excluded from the written source tree entirely, so
+ * the `.lwpack` that circulates at this release cannot contain a future
+ * chapter. The version convention (MINOR = episode) is surfaced next to it and
+ * never applied behind the author's back. */
+function ReleaseHorizon() {
+  const { t } = useTranslation()
+  const episodes = usePackStore((s) => s.episodes)
+  const buildUpTo = usePackStore((s) => s.buildUpTo)
+  const setBuildUpTo = usePackStore((s) => s.setBuildUpTo)
+  const version = usePackStore((s) => s.metadata.version)
+  const setMetadata = usePackStore((s) => s.setMetadata)
+
+  const latest = latestOrdinal(episodes)
+  const upTo = buildUpTo > 0 ? buildUpTo : latest
+  const suggested = suggestedVersion(version, upTo)
+  const conventional = versionMatchesConvention(version, upTo)
+
+  return (
+    <section className="pack-extra-section">
+      <div className="dialog-row">
+        <label className="field field-narrow">
+          {t("studio.pack.episodes.buildUpTo")}
+          <select value={upTo} onChange={(e) => setBuildUpTo(Number(e.target.value))}>
+            {episodes
+              .slice()
+              .sort((a, b) => a.ordinal - b.ordinal)
+              .map((episode) => (
+                <option key={episode.id} value={episode.ordinal}>
+                  {episode.ordinal}. {episode.title || episode.id}
+                </option>
+              ))}
+          </select>
+        </label>
+        <span className="studio-hint">{t("studio.pack.episodes.buildUpToHint", { n: upTo })}</span>
+      </div>
+      {!conventional ? (
+        <p className="studio-hint">
+          {t("studio.pack.episodes.versionHint", { version, suggested })}{" "}
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => setMetadata({ version: suggested })}
+            disabled={suggested === version}
+          >
+            {t("studio.pack.episodes.versionApply", { suggested })}
+          </button>
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
 export default function PackWizard() {
   const { t } = useTranslation()
   const store = usePackStore()
@@ -688,6 +827,8 @@ export default function PackWizard() {
       store.manualSkills,
       store.presentation,
       store.prepScripts,
+      store.episodes,
+      store.buildUpTo,
     )
     const plan = buildPackSourcePlan(draft)
     const root = `${store.outputDir}/${plan.dirName}`
@@ -787,6 +928,8 @@ export default function PackWizard() {
     store.manualSkills,
     store.presentation,
     store.prepScripts,
+    store.episodes,
+    store.buildUpTo,
   )
   // Advisory, alongside the blocking `issues` above and never mixed with them:
   // these are packs that build fine and then do nothing.
@@ -797,6 +940,8 @@ export default function PackWizard() {
       panels: store.panels,
       manualSkills: store.manualSkills,
       presentation: store.presentation,
+      episodes: store.episodes,
+      buildUpTo: store.buildUpTo,
     }),
   )
   // Kit issues live on the presentation step (every kit key shares the
@@ -1014,6 +1159,8 @@ export default function PackWizard() {
 
           <PrepScriptSection />
 
+          <EpisodeTimeline />
+
           <section className="pack-extra-section">
             <h3>{t("studio.pack.panels.title")}</h3>
             <p className="studio-hint">{t("studio.pack.panels.hint")}</p>
@@ -1162,6 +1309,7 @@ export default function PackWizard() {
       {store.step === "build" ? (
         <div className="pack-panel">
           <h3>{t("studio.pack.writeTitle")}</h3>
+          {store.episodes.length > 0 ? <ReleaseHorizon /> : null}
           {store.presentation !== null ? (
             // The review the author gets right before the engine speaks: what
             // the kit stages, and what the trust card will disclose.

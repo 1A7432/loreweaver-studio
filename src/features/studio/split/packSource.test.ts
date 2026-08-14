@@ -35,6 +35,7 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
     rulepacks: [],
     assets: [],
     prep: [],
+    episodes: [],
     panels: null,
     presentation: null,
     ...overrides,
@@ -906,5 +907,94 @@ plan("define_variable", { var_id: "floor_seen", kind: "number" })
     const reaching = readPrepScript('const s = "plan(" \nawait fetch("https://x")\n')
     expect(reaching.literalPlanCalls).toBe(0)
     expect(reaching.forbidden).toEqual(["fetch"])
+  })
+})
+
+describe("serialized modules (连载模组)", () => {
+  const EPISODES = [
+    { id: "ep1", ordinal: 1, title: "雨夜", summary: "第一夜。", releaseNotes: "首次发布。" },
+    { id: "ep2", ordinal: 2, title: "第五层", summary: "楼梯尽头。", releaseNotes: "新增第五层。" },
+  ]
+
+  function serialized(buildUpTo: number): WorldPackDraft {
+    return draft({
+      episodes: EPISODES,
+      buildUpTo,
+      cards: [
+        {
+          fileName: "keeper.lorecard.json",
+          jsonText: JSON.stringify({
+            format: "loreweaver.card",
+            worldbook: [
+              { title: "雨夜的规则", content: "雨夜才有第五层。" },
+              { title: "第五层的住户", content: "他早已不是人类。", episode: "ep2" },
+            ],
+          }),
+          notesEn: "",
+          notesZh: "",
+        },
+        { fileName: "later.json", jsonText: "{}", notesEn: "", notesZh: "", episode: "ep2" },
+      ],
+      lorebooks: [{ fileName: "fifth-floor.json", jsonText: "{}", episode: "ep2" }],
+      assets: [
+        { fileName: "cover.png", base64: "aGk=" },
+        { fileName: "stairwell.png", base64: "aGk=", episode: "ep2" },
+      ],
+    })
+  }
+
+  it("leaves every future-episode file out of the source tree AND the manifest", () => {
+    // The claim the whole design rests on: the file circulating at episode 1
+    // contains nothing of episode 2, so there is no gating machinery to get
+    // wrong and nothing to leak.
+    const plan = buildPackSourcePlan(serialized(1))
+    const paths = [...plan.files.map((f) => f.path), ...plan.binaries.map((b) => b.path)]
+    expect(paths).toContain("cards/keeper.lorecard.json")
+    expect(paths).toContain("assets/cover.png")
+    expect(paths).not.toContain("cards/later.json")
+    expect(paths).not.toContain("lorebooks/fifth-floor.json")
+    expect(paths).not.toContain("assets/stairwell.png")
+
+    // The manifest is built from the same filtered view, so it cannot name a
+    // file the tree does not carry.
+    const manifest = parse(plan.files[0].contents) as {
+      contents: Record<string, unknown>
+      assets: { path: string }[]
+    }
+    // A card with no install notes rides as a bare path string.
+    expect(manifest.contents.cards).toEqual(["cards/keeper.lorecard.json"])
+    expect(manifest.contents.lorebooks).toBeUndefined()
+    expect(manifest.assets).toEqual([{ path: "assets/cover.png" }])
+  })
+
+  it("leaves a future-episode ENTRY out of a card that does ship", () => {
+    const plan = buildPackSourcePlan(serialized(1))
+    const card = plan.files.find((file) => file.path === "cards/keeper.lorecard.json")!
+    expect(card.contents).toContain("雨夜才有第五层")
+    expect(card.contents).not.toContain("他早已不是人类")
+    // …and no artifact carries the studio's own tag.
+    expect(card.contents).not.toContain("episode")
+  })
+
+  it("ships everything once the horizon reaches it", () => {
+    const plan = buildPackSourcePlan(serialized(2))
+    const paths = [...plan.files.map((f) => f.path), ...plan.binaries.map((b) => b.path)]
+    expect(paths).toContain("cards/later.json")
+    expect(paths).toContain("lorebooks/fifth-floor.json")
+    expect(paths).toContain("assets/stairwell.png")
+    const card = plan.files.find((file) => file.path === "cards/keeper.lorecard.json")!
+    expect(card.contents).toContain("他早已不是人类")
+  })
+
+  it("writes CHANGELOG.md from the release-notes chain of this build only", () => {
+    const changelog = buildPackSourcePlan(serialized(1)).files.find((file) => file.path === "CHANGELOG.md")
+    expect(changelog?.contents).toContain("首次发布。")
+    expect(changelog?.contents).not.toContain("新增第五层。")
+    expect(changelog?.contents).not.toContain("第五层")
+  })
+
+  it("writes no CHANGELOG.md for an ordinary one-shot pack", () => {
+    const plan = buildPackSourcePlan(draft())
+    expect(plan.files.map((file) => file.path)).not.toContain("CHANGELOG.md")
   })
 })

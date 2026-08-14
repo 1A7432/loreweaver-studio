@@ -62,6 +62,10 @@ export interface ForgeVariable {
 
 export interface ForgeLoreEntry {
   uid: string
+  /** Serialized-module tag: the episode this entry belongs to. Empty/absent =
+   * evergreen, so a project that never heard of episodes is unchanged. The tag
+   * is studio-private — it is stripped from every built artifact. */
+  episode?: string
   /** Optional STABLE entry id — the cross-pack reference handle
    * (`<pack-id>#<entry-id>`). Empty/unset = omitted from the native export.
    * Optional because projects persisted before this field lack it. */
@@ -92,6 +96,8 @@ export interface ForgeLoreEntry {
  * overrides — deterministic, no LLM. */
 export interface ForgePregen {
   uid: string
+  /** Serialized-module tag; see {@link ForgeLoreEntry.episode}. */
+  episode?: string
   name: string
   concept: string
   notes: string

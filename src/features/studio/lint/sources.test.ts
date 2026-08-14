@@ -89,6 +89,7 @@ function cardItem(patch: Partial<PackItem>): PackItem {
     leaves: [],
     leavesTruncated: false,
     initvarProblems: [],
+    episode: "",
     drafts: [],
     extractSkill: false,
     notesEn: "",

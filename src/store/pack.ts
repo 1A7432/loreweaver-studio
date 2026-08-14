@@ -39,6 +39,7 @@ import {
   type WorldPackDraft,
 } from "../features/studio/split/packSource"
 import { countVariableSpecs, looksLikeLorecard, lorecardToCard } from "../features/studio/split/lorecard"
+import type { PackEpisode } from "../features/studio/split/episodes"
 import type { PackBuildSuccess } from "../features/studio/pack/buildResult"
 import type { Issue } from "../features/studio/model"
 import { bytesToBase64, type EngineCandidate, type EngineRunResult, type PickedFile } from "../lib/native"
@@ -74,6 +75,9 @@ export interface PackItem {
   leavesTruncated: boolean
   /** `[InitVar]` blocks that did not parse — the card still imported. */
   initvarProblems: Issue[]
+  /** Serialized-module tag: the episode this file belongs to ("" = evergreen /
+   * episode 1). A build "up to episode N" leaves later ones out entirely. */
+  episode: string
   drafts: PromotionDraft[]
   /** Extract hooks into a `skills/<slug>/` directory (JSON cards only). */
   extractSkill: boolean
@@ -219,6 +223,7 @@ async function itemFromFile(file: PickedFile): Promise<PackItem> {
     jsonText: null as string | null,
     size: file.bytes.length,
     needsBytes: false,
+    episode: "",
     card: null as StCharacterCard | null,
     payloads: null as WorldPayloads | null,
     cardKind: "character" as const,
@@ -343,6 +348,10 @@ interface PackState {
   /** M19 presentation kit (演出资料包): the Stage Director's creative brief.
    * Null = the pack ships no kit and the Director never stages its rooms. */
   presentation: PackPresentationDraft | null
+  /** Serialized installments (连载模组). Empty = an ordinary one-shot pack. */
+  episodes: PackEpisode[]
+  /** Build up to this ordinal; 0 = the latest episode there is. */
+  buildUpTo: number
   /** Hand-authored skills (full SKILL.md + optional hooks.js), alongside the
    * ones extracted from cards. */
   manualSkills: PackSkillDraft[]
@@ -396,6 +405,10 @@ interface PackState {
   removePresentationCue: (uid: string) => void
   setPresentationCueAsset: (uid: string, file: PickedFile) => void
   clearPresentationCueAsset: (uid: string) => void
+  addEpisode: () => void
+  updateEpisode: (id: string, patch: Partial<PackEpisode>) => void
+  removeEpisode: (id: string) => void
+  setBuildUpTo: (upTo: number) => void
   addManualSkill: () => void
   updateManualSkill: (index: number, patch: Partial<PackSkillDraft>) => void
   removeManualSkill: (index: number) => void
@@ -485,6 +498,8 @@ export const usePackStore = create<PackState>()(
       presentation: null,
       manualSkills: [],
       prepScripts: [],
+      episodes: [],
+      buildUpTo: 0,
       outputDir: null,
       writtenDir: null,
       candidates: [],
@@ -836,6 +851,41 @@ export const usePackStore = create<PackState>()(
           manualSkills: state.manualSkills.map((skill, i) => (i === index ? { ...skill, ...patch } : skill)),
         })),
 
+      addEpisode: () =>
+        set((state) => {
+          const ordinal = state.episodes.length + 1
+          return {
+            episodes: [
+              ...state.episodes,
+              { id: `ep${ordinal}`, ordinal, title: "", summary: "", releaseNotes: "" },
+            ],
+          }
+        }),
+
+      updateEpisode: (id, patch) =>
+        set((state) => ({
+          episodes: state.episodes.map((episode) => (episode.id === id ? { ...episode, ...patch } : episode)),
+        })),
+
+      removeEpisode: (id) =>
+        set((state) => {
+          const index = state.episodes.findIndex((episode) => episode.id === id)
+          const removed = state.episodes[index]
+          if (removed !== undefined) {
+            useUndoStore.getState().push("episode", removed.title || removed.id, () => {
+              set((s) => ({
+                episodes: [...s.episodes.slice(0, index), removed, ...s.episodes.slice(index)],
+              }))
+            })
+          }
+          // Content tagged to it is deliberately left tagged: the tag now
+          // resolves to nothing, the lint says so, and the build INCLUDES it —
+          // deleting an episode must never silently delete an author's work.
+          return { episodes: state.episodes.filter((episode) => episode.id !== id) }
+        }),
+
+      setBuildUpTo: (buildUpTo) => set({ buildUpTo: Math.max(0, Math.trunc(buildUpTo)) }),
+
       addPrepScript: () =>
         set((state) => ({
           prepScripts: [
@@ -887,6 +937,8 @@ export const usePackStore = create<PackState>()(
           presentation: null,
           manualSkills: [],
           prepScripts: [],
+          episodes: [],
+          buildUpTo: 0,
           writtenDir: null,
           runResult: null,
           packResult: null,
@@ -913,6 +965,8 @@ export const usePackStore = create<PackState>()(
           presentation: null,
           manualSkills: [],
           prepScripts: [],
+          episodes: [],
+          buildUpTo: 0,
           outputDir: null,
           writtenDir: null,
           runResult: null,
@@ -957,6 +1011,8 @@ export const usePackStore = create<PackState>()(
               },
         manualSkills: state.manualSkills,
         prepScripts: state.prepScripts,
+        episodes: state.episodes,
+        buildUpTo: state.buildUpTo,
         outputDir: state.outputDir,
         writtenDir: state.writtenDir,
         installAfterBuild: state.installAfterBuild,
@@ -988,6 +1044,8 @@ export function buildDraftFromState(
   manualSkills: PackSkillDraft[] = [],
   presentation: PackPresentationDraft | null = null,
   prep: PackPrepScriptDraft[] = [],
+  episodes: PackEpisode[] = [],
+  buildUpTo = 0,
 ): WorldPackDraft {
   const cards = items
     .filter((item) => item.kind === "card")
@@ -998,6 +1056,7 @@ export function buildDraftFromState(
       base64: item.jsonText === null ? item.base64 : undefined,
       notesEn: item.notesEn,
       notesZh: item.notesZh,
+      episode: item.episode,
     }))
   const skills = items
     .filter((item) => item.kind === "card" && item.extractSkill && item.hooks.length > 0)
@@ -1032,15 +1091,17 @@ export function buildDraftFromState(
     cards,
     lorebooks: items
       .filter((item) => item.kind === "lorebook" && item.jsonText !== null)
-      .map((item) => ({ fileName: item.fileName, jsonText: item.jsonText ?? "" })),
+      .map((item) => ({ fileName: item.fileName, jsonText: item.jsonText ?? "", episode: item.episode })),
     skills: [...skills, ...manualSkills],
     rulepacks,
     assets: items
       .filter((item) => item.kind === "asset")
-      .map((item) => ({ fileName: item.fileName, base64: item.base64 })),
+      .map((item) => ({ fileName: item.fileName, base64: item.base64, episode: item.episode })),
     prep,
     panels: panels !== null && panels.yamlText.trim() ? panels : null,
     presentation,
+    episodes,
+    buildUpTo,
   }
 }
 
@@ -1069,6 +1130,8 @@ export function packValidationIssues(
   manualSkills: PackSkillDraft[] = [],
   presentation: PackPresentationDraft | null = null,
   prep: PackPrepScriptDraft[] = [],
+  episodes: PackEpisode[] = [],
+  buildUpTo = 0,
 ): Issue[] {
   // A restored session knows an item's name, kind and every decision made about
   // it, but not its bytes. Building anyway would write an empty file under a
@@ -1079,6 +1142,8 @@ export function packValidationIssues(
     .map((item) => ({ key: "packItemNeedsBytes", params: { file: item.fileName } }))
   return [
     ...missing,
-    ...validatePackDraft(buildDraftFromState(items, metadata, panels, manualSkills, presentation, prep)),
+    ...validatePackDraft(
+      buildDraftFromState(items, metadata, panels, manualSkills, presentation, prep, episodes, buildUpTo),
+    ),
   ]
 }
