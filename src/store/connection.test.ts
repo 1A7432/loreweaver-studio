@@ -81,6 +81,36 @@ describe("connection store", () => {
     expect(state.lastError).toContain(PROTOCOL_VERSION)
   })
 
+  it("accepts the live engine's welcome verbatim", () => {
+    // The exact shape `net/session.py::welcome_frame` puts on the wire at
+    // engine HEAD — extra keys and all. The transport crate forwards it
+    // unjudged (see `welcome_of_any_protocol_version_is_forwarded_verbatim`),
+    // so this store is the only protocol gate; if it ever refused a real
+    // engine, the app would be unable to connect to anything.
+    const handle = useConnectionStore.getState().handleEvent
+    handle({ kind: "status", status: "connecting", attempt: 0 })
+    handle({
+      kind: "frame",
+      frame: {
+        type: "welcome",
+        protocol: "2.1",
+        features: ["media", "audio"],
+        room: "r1",
+        you: { id: "u1", name: "Nyx", role: "keeper" },
+        locale: "zh",
+        server: "loreweaver/1",
+        version: "0.9.3",
+      },
+    })
+    handle({ kind: "status", status: "online", attempt: 0 })
+
+    const state = useConnectionStore.getState()
+    expect(state.status).toBe("online")
+    expect(state.lastError).toBeNull()
+    expect(state.welcome?.features).toEqual(["media", "audio"])
+    expect(state.welcome?.version).toBe("0.9.3")
+  })
+
   it("accepts a newer minor on the same major", () => {
     const handle = useConnectionStore.getState().handleEvent
     const major = PROTOCOL_VERSION.split(".")[0]

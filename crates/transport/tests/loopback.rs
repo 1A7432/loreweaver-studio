@@ -220,22 +220,47 @@ async fn fatal_bad_key_surfaces_and_stops_retrying() {
     server.await.expect("server task");
 }
 
+/// The transport does not judge the wire version — it forwards the banner and
+/// lets `store/connection.ts` decide. This test is the regression guard for the
+/// bug where a hardcoded `1.x` check in Rust refused every real engine (which
+/// announces 2.1) before the frontend ever saw the frame.
 #[tokio::test]
-async fn unsupported_protocol_major_is_fatal() {
-    let (endpoint, ticket) = bind_server().await;
-    let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let _join = conn.read_frame().await;
-        conn.write_frame(&welcome_frame("2.0")).await;
-        conn.conn.closed().await;
-    });
+async fn welcome_of_any_protocol_version_is_forwarded_verbatim() {
+    for announced in ["1.6", "2.1", "3.0", "99.99", ""] {
+        let (endpoint, ticket) = bind_server().await;
+        let expected = welcome_frame(announced);
+        let sent = expected.clone();
+        let server = tokio::spawn(async move {
+            let mut conn = ServerConn::accept(&endpoint).await;
+            let _join = conn.read_frame().await;
+            conn.write_frame(&sent).await;
+            // Proves the connection is still usable after the welcome: a
+            // refusing transport would have closed it here. The echo keeps the
+            // close deterministic — the client waits for it before hanging up.
+            let input = conn.read_frame().await;
+            assert_eq!(input["text"], "still open");
+            conn.write_frame(&json!({"type": "ack"})).await;
+            conn.conn.closed().await;
+        });
 
-    let (_handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    let (_, reason) = expect_status(&mut rx, ConnStatus::Offline).await;
-    assert!(reason.unwrap_or_default().contains("unsupported protocol"));
-    assert!(rx.recv().await.is_none());
-    server.await.expect("server task");
+        let (handle, mut rx) = connect(params(&ticket));
+        expect_status(&mut rx, ConnStatus::Connecting).await;
+        let welcome = expect_frame(&mut rx).await;
+        assert_eq!(
+            welcome, expected,
+            "welcome {announced:?} must arrive verbatim"
+        );
+        expect_status(&mut rx, ConnStatus::Online).await;
+
+        handle
+            .send_frame(json!({"type": "input", "text": "still open"}))
+            .expect("send while online");
+        assert_eq!(expect_frame(&mut rx).await["type"], "ack");
+
+        handle.close();
+        expect_status(&mut rx, ConnStatus::Offline).await;
+        server.await.expect("server task");
+    }
 }
 
 #[tokio::test]

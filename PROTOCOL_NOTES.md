@@ -16,6 +16,18 @@ outside — feedback for upstream, not workarounds we expect to keep forever.
 > published; **2.1.1** carries it, and the studio pins that. The studio REFUSES a
 > different-major `welcome` — the library only warns, and choosing to refuse is the
 > app's call. Nothing about the check is reimplemented here.
+>
+> **One gate, one place (2026-08-15).** The check lives in `src/store/connection.ts`
+> and nowhere else. The Rust transport crate used to run a second, hand-rolled
+> `1.x` check at welcome time and closed the QUIC connection before the frontend
+> ever saw the frame — so once the engine moved to 2.1 the app could not connect to
+> any real server, and the TS refusal became dead code. The lesson generalizes: a
+> version predicate duplicated in a layer that does not depend on
+> `@loreweaver/protocol` cannot be bumped with the package, so it will go stale and
+> fail closed. The transport is transport; it forwards `welcome` verbatim. The ALPN
+> (`loreweaver/tui/1`) is the exception that proves the rule — it names the framing,
+> is frozen independently of the wire version, and the engine says so in
+> `net/iroh_server.py`.
 
 ## Package consumption
 

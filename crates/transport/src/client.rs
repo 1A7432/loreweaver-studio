@@ -351,18 +351,14 @@ async fn session(
                         continue;
                     }
                     match frames::frame_type(&frame) {
+                        // Transport, not policy: the wire version is forwarded
+                        // verbatim and judged in one place only — the frontend's
+                        // `store/connection.ts`, which compares against the
+                        // installed `@loreweaver/protocol` major. A version gate
+                        // here could only ever be a second, staler copy of that
+                        // rule, and a stale copy refuses connections the app
+                        // would accept.
                         Some("welcome") if !settled => {
-                            let protocol = frame
-                                .get("protocol")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_owned();
-                            if !frames::protocol_supported(&protocol) {
-                                conn.close(1u32.into(), b"unsupported protocol");
-                                return SessionOutcome::Fatal(format!(
-                                    "unsupported protocol version {protocol:?}"
-                                ));
-                            }
                             settled = true;
                             backoff.reset();
                             let _ = events.send(TransportEvent::Frame { frame });

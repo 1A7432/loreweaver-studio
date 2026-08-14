@@ -5,7 +5,10 @@
 
 use serde_json::{json, Value};
 
-/// ALPN of the Loreweaver client protocol (protocol major version 1).
+/// ALPN both ends negotiate. It names the FRAMING, not the JSON protocol
+/// version, and is frozen independently of it — mirror of the engine's
+/// `net/iroh_server.py` (`ALPN = b"loreweaver/tui/1"`, "bump if the framing
+/// (not the JSON protocol) changes"). Do not follow the wire version here.
 pub const ALPN: &[u8] = b"loreweaver/tui/1";
 
 pub fn frame_type(frame: &Value) -> Option<&str> {
@@ -24,11 +27,6 @@ pub fn join_frame(key: &str, name: Option<&str>, client_name: &str, client_versi
         frame["name"] = json!(name);
     }
     frame
-}
-
-/// Versioning is additive: accept any `1.x` banner, reject other majors.
-pub fn protocol_supported(protocol: &str) -> bool {
-    protocol.split('.').next() == Some("1")
 }
 
 /// Error codes that terminate the session server-side. They only ever happen
@@ -65,16 +63,6 @@ mod tests {
     fn join_frame_omits_absent_name() {
         let frame = join_frame("secret", None, "studio", "0.1.0");
         assert!(frame.get("name").is_none());
-    }
-
-    #[test]
-    fn accepts_any_minor_of_major_one() {
-        for ok in ["1", "1.0", "1.6", "1.7", "1.99"] {
-            assert!(protocol_supported(ok), "{ok} should be accepted");
-        }
-        for bad in ["2", "2.0", "0.9", "", "x.1"] {
-            assert!(!protocol_supported(bad), "{bad} should be rejected");
-        }
     }
 
     #[test]
