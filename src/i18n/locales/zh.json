@@ -40,7 +40,11 @@
     "role": {
       "player": "玩家",
       "keeper": "守秘人"
-    }
+    },
+    "versions": "服务器 {{server}} · 工作室 {{client}}",
+    "versionUnknown": "（未提供）",
+    "protocolMatch": "两端都使用协议 {{protocol}}。",
+    "protocolDrift": "这台服务器使用协议 {{server}}，而本工作室基于 {{client}} 构建。连接本身没有问题——主版本相同——但一方认识另一方不认识的帧。"
   },
   "session": {
     "empty": "编年史还是空白。说点什么，让故事开始。",
@@ -57,7 +61,11 @@
     "presence": "在座",
     "online": "{{n}} 人在线",
     "context": "上下文",
-    "hiddenVar": "尚未对玩家公开（守秘人视图）——`.var expose <前缀>` 可将其放上队伍面板。"
+    "hiddenVar": "尚未对玩家公开（守秘人视图）——`.var expose <前缀>` 可将其放上队伍面板。",
+    "pregens": "预设角色",
+    "pregenClaim": "认领",
+    "pregenClaimed": "已被 {{name}} 认领",
+    "pregenYours": "你的"
   },
   "panels": {
     "menu": "面板({{n}})",
@@ -215,6 +223,30 @@
       "selfUpdateRun": "更新并重启",
       "updateRestarting": "服务器正在重启进入更新后的代码。连接会断开并自动恢复。",
       "updateFailed": "更新命令失败：{{output}}"
+    },
+    "dice": {
+      "versus": "对抗",
+      "tie": "平手",
+      "winner": "{{name}} 胜",
+      "detail": {
+        "bonus": "奖励骰",
+        "penalty": "惩罚骰",
+        "modifier": "修正",
+        "proficient": "熟练",
+        "advantage": "优势",
+        "disadvantage": "劣势",
+        "loss": "损失",
+        "loss_expr": "损失掷骰",
+        "loss_ceiling": "损失上限",
+        "remaining": "剩余",
+        "resource_max": "上限",
+        "points": "消耗",
+        "raw_roll": "原始掷骰",
+        "critical_success": "大成功",
+        "critical_failure": "大失败",
+        "mark": "已标记",
+        "stat_delta": "变动"
+      }
     }
   },
   "studio": {

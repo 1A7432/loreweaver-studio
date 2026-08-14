@@ -1,6 +1,18 @@
 import { render, screen } from "@testing-library/react"
-import { beforeEach, describe, expect, it } from "vitest"
+import userEvent from "@testing-library/user-event"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+const sent: unknown[] = []
+vi.mock("../../lib/transport", () => ({
+  TRANSPORT_EVENT: "loreweaver://transport",
+  isTauri: () => true,
+  transportSend: async (frame: unknown) => {
+    sent.push(frame)
+  },
+}))
+
 import "../../i18n"
+import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
 import StatePanel from "./StatePanel"
 
@@ -120,5 +132,62 @@ describe("StatePanel — module variables (v1.6)", () => {
     })
     render(<StatePanel />)
     expect(screen.getByText("omen")).toHaveClass("badge-warn")
+  })
+})
+
+describe("PregenCard", () => {
+  beforeEach(() => {
+    sent.length = 0
+    useSessionStore.getState().clear()
+  })
+
+  const BASE = {
+    type: "state" as const,
+    party: [],
+    initiative: [],
+    online: 1,
+  }
+
+  beforeEach(() => {
+    useConnectionStore.setState({
+      status: "online",
+      welcome: {
+        type: "welcome",
+        protocol: "2.1",
+        room: "table",
+        you: { id: "u1", name: "Nyx", role: "player" },
+        locale: "en",
+        server: "loreweaver/1",
+      },
+    })
+  })
+
+  it("renders the module's cast and offers an unclaimed one", async () => {
+    useSessionStore.setState({
+      game: {
+        ...BASE,
+        pregens: [
+          { name: "林晚", claimed_by: "" },
+          { name: "陈九鲤", claimed_by: "Ash" },
+          { name: "白榆生", claimed_by: "Nyx" },
+        ],
+      },
+    })
+    render(<StatePanel />)
+
+    expect(screen.getByText("林晚")).toBeInTheDocument()
+    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
+    // Your own claim reads as yours, not as somebody else's name.
+    expect(screen.getByText("yours")).toBeInTheDocument()
+
+    // Claiming is a PLAYER action and goes down the ordinary command path.
+    await userEvent.click(screen.getByRole("button", { name: "Claim" }))
+    expect(sent).toContainEqual({ type: "input", text: ".pc claim 林晚" })
+  })
+
+  it("shows nothing when the module ships no cast", () => {
+    useSessionStore.setState({ game: { ...BASE, pregens: [] } })
+    render(<StatePanel />)
+    expect(screen.queryByText("Pre-generated cast")).not.toBeInTheDocument()
   })
 })

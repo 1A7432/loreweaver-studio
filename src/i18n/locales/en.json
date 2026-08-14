@@ -40,7 +40,11 @@
     "role": {
       "player": "Player",
       "keeper": "Keeper"
-    }
+    },
+    "versions": "server {{server}} · studio {{client}}",
+    "versionUnknown": "(unreported)",
+    "protocolMatch": "Both ends speak protocol {{protocol}}.",
+    "protocolDrift": "This server speaks protocol {{server}}; the studio was built against {{client}}. The connection is sound — same major — but one side knows frames the other does not."
   },
   "session": {
     "empty": "The chronicle is empty. Say something to begin.",
@@ -57,7 +61,11 @@
     "presence": "At the table",
     "online": "{{n}} online",
     "context": "Context",
-    "hiddenVar": "Not exposed to players yet (Keeper view) — `.var expose <prefix>` puts it on the party panel."
+    "hiddenVar": "Not exposed to players yet (Keeper view) — `.var expose <prefix>` puts it on the party panel.",
+    "pregens": "Pre-generated cast",
+    "pregenClaim": "Claim",
+    "pregenClaimed": "claimed by {{name}}",
+    "pregenYours": "yours"
   },
   "panels": {
     "menu": "Panels ({{n}})",
@@ -215,6 +223,30 @@
       "selfUpdateRun": "Update and restart",
       "updateRestarting": "The server is restarting into the updated code. The connection will drop and come back.",
       "updateFailed": "The update command failed: {{output}}"
+    },
+    "dice": {
+      "versus": "vs",
+      "tie": "tie",
+      "winner": "{{name}} wins",
+      "detail": {
+        "bonus": "bonus dice",
+        "penalty": "penalty dice",
+        "modifier": "modifier",
+        "proficient": "proficient",
+        "advantage": "advantage",
+        "disadvantage": "disadvantage",
+        "loss": "loss",
+        "loss_expr": "loss roll",
+        "loss_ceiling": "loss capped at",
+        "remaining": "remaining",
+        "resource_max": "max",
+        "points": "spent",
+        "raw_roll": "raw roll",
+        "critical_success": "critical",
+        "critical_failure": "fumble",
+        "mark": "marked",
+        "stat_delta": "changed"
+      }
     }
   },
   "studio": {

@@ -3110,3 +3110,77 @@ body {
 .room-danger {
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border) 55%);
 }
+
+/* --- dice detail --------------------------------------------------------- */
+
+.dice-subsystem {
+  margin-right: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+}
+
+.dice-opposed,
+.dice-detail {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-left: 8px;
+}
+
+.dice-side {
+  display: inline-flex;
+  gap: 3px;
+  align-items: baseline;
+  color: var(--ink-dim);
+}
+
+/* The winner is the one thing a reader looks for; nothing else is emphasized. */
+.dice-side.won {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.dice-side-target {
+  color: var(--ink-faint);
+}
+
+.dice-versus,
+.dice-winner {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.dice-chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.dice-chip-label::after {
+  content: ":";
+}
+
+.dice-chip-value {
+  color: var(--ink);
+}
+
+/* --- version badge ------------------------------------------------------- */
+
+.version-badge {
+  font: 10px/1.4 var(--font-mono);
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+/* Soft on purpose: a protocol MINOR drift still plays. */
+.version-badge.has-drift {
+  color: var(--warn);
+}

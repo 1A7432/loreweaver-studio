@@ -6,6 +6,8 @@ import {
   type ResourceState,
   type StateFrame,
 } from "@loreweaver/protocol"
+import { transportSend } from "../../lib/transport"
+import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
 import Meter, { type MeterTone } from "./Meter"
 import UiBlocks from "./UiBlocks"
@@ -176,6 +178,57 @@ function PartyCard({ game }: { game: StateFrame }) {
   )
 }
 
+/** The module's claimable cast (`state.pregens`, protocol 2.0). The roster was
+ * already reaching the tier-2 panel bridge; nothing native rendered it, so a
+ * player on the studio could not see — let alone claim — the characters the
+ * module ships. Claiming goes through the ordinary command path (`.pc claim
+ * <name>`, `gateway/commands.py::cmd_pc`), which is a PLAYER action: claiming
+ * is the whole point of a pregen roster. */
+function PregenCard({ game }: { game: StateFrame }) {
+  const { t } = useTranslation()
+  const you = useConnectionStore((s) => s.welcome?.you.name ?? "")
+  const online = useConnectionStore((s) => s.status === "online")
+  const pregens = game.pregens ?? []
+  if (pregens.length === 0) return null
+
+  return (
+    <section className="desk-card">
+      <header className="desk-title">{t("session.pregens")}</header>
+      <ul className="party-list">
+        {pregens.map((pregen) => {
+          const claimedBy = pregen.claimed_by.trim()
+          const mine = claimedBy !== "" && claimedBy === you
+          return (
+            <li key={pregen.name} className={`party-row${claimedBy ? " is-offline" : ""}`}>
+              <span className="party-name">{stripControlChars(pregen.name)}</span>
+              {claimedBy ? (
+                <span className="chip">
+                  {mine
+                    ? t("session.pregenYours")
+                    : t("session.pregenClaimed", { name: stripControlChars(claimedBy) })}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={!online}
+                  onClick={() => {
+                    void transportSend({ type: "input", text: `.pc claim ${pregen.name}` }).catch(() => {
+                      // The transport surfaces failures through status events.
+                    })
+                  }}
+                >
+                  {t("session.pregenClaim")}
+                </button>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 function SceneCard({ game }: { game: StateFrame }) {
   const { t } = useTranslation()
   if (!game.scene && !game.clock) return null
@@ -264,6 +317,7 @@ export default function StatePanel() {
       {game?.character ? <CharacterCard character={game.character} /> : null}
       {game ? <VariablesCard game={game} /> : null}
       {game ? <PartyCard game={game} /> : null}
+      {game ? <PregenCard game={game} /> : null}
       {game ? <SceneCard game={game} /> : null}
       {game ? <InitiativeCard game={game} /> : null}
       <PresenceCard />

@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
+import pkg from "./package.json" with { type: "json" }
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -17,6 +18,10 @@ export default defineConfig({
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/target/**"] },
   },
+  // The studio's own version, for the client/server drift readout next to the
+  // server's `welcome.version`. A define rather than an import so package.json
+  // never lands in the bundle.
+  define: { __STUDIO_VERSION__: JSON.stringify(pkg.version) },
   envPrefix: ["VITE_", "TAURI_ENV_"],
   build: {
     // Windows uses WebView2 (Chromium); macOS/Linux/iOS use WebKit.
