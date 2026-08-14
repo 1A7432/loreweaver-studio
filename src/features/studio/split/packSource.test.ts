@@ -469,9 +469,11 @@ describe("presentation kit (M19)", () => {
   function presentationDraft(overrides: Partial<PackPresentationDraft> = {}): PackPresentationDraft {
     return {
       generation: "allow",
+      templates: [],
       keywordsEn: "ink wash, muted indigo",
       keywordsZh: "水墨, 靛青",
       bannedText: "text overlays\nmodern clothing",
+      paletteText: "",
       subjects: [
         {
           uid: "s1",
@@ -511,7 +513,7 @@ describe("presentation kit (M19)", () => {
   it("emits the exact kit shape `core/presentation.py` parses, wired into manifest + plan", () => {
     const kit = presentationDraft()
     expect(parse(buildPresentationYaml(kit))).toEqual({
-      version: 1,
+      version: 2,
       generation: "allow",
       style: {
         keywords: { en: "ink wash, muted indigo", zh: "水墨, 靛青" },
@@ -551,7 +553,7 @@ describe("presentation kit (M19)", () => {
     // VENDORED from the engine repo's flagship module (tests never read
     // outside this repo) — the full-surface reference: subjects with and
     // without refs, bilingual style, banned list, three audio layers.
-    const FLAGSHIP_YAML = `version: 1
+    const FLAGSHIP_YAML = `version: 2
 generation: allow
 style:
   keywords:
@@ -690,13 +692,58 @@ audio:
       audio: [],
       generation: "pack_only",
     })
-    expect(parse(buildPresentationYaml(bare))).toEqual({ version: 1, generation: "pack_only" })
+    expect(parse(buildPresentationYaml(bare))).toEqual({ version: 2, generation: "pack_only" })
     const zhOnly = presentationDraft({ keywordsEn: "", subjects: [], audio: [] })
     expect(parse(buildPresentationYaml(zhOnly))).toEqual({
-      version: 1,
+      version: 2,
       generation: "allow",
       style: { keywords: { zh: "水墨, 靛青" }, banned: ["text overlays", "modern clothing"] },
     })
+  })
+
+  it("emits the v2 additions: the templates allowlist and style.palette", () => {
+    const kit = presentationDraft({
+      templates: ["title_card", "letter"],
+      paletteText: "#16232e\n  wet slate blue  \n\nlantern amber\n",
+      subjects: [],
+      audio: [],
+    })
+    const emitted = parse(buildPresentationYaml(kit)) as {
+      version: number
+      templates: string[]
+      style: { palette: string[] }
+    }
+    expect(emitted.version).toBe(2)
+    expect(emitted.templates).toEqual(["title_card", "letter"])
+    expect(emitted.style.palette).toEqual(["#16232e", "wet slate blue", "lantern amber"])
+    expect(validatePackDraft(draft({ presentation: kit }))).toEqual([])
+  })
+
+  it("omits an empty templates list rather than listing every shape", () => {
+    // `core/presentation.py::allows_template`: empty = all allowed. Writing
+    // all five would be an allowlist the author never chose — and would then
+    // silently exclude any shape a later engine version adds.
+    const emitted = parse(buildPresentationYaml(presentationDraft({ templates: [] }))) as Record<
+      string,
+      unknown
+    >
+    expect(emitted).not.toHaveProperty("templates")
+  })
+
+  it("mirrors the engine's v2 template and palette rules", () => {
+    const issues = validatePackDraft(
+      draft({
+        presentation: presentationDraft({
+          templates: ["title_card", "hologram", "title_card"],
+          paletteText: `${"x".repeat(81)}\n${Array.from({ length: 8 }, (_, i) => `c${i}`).join("\n")}`,
+        }),
+      }),
+    )
+    const keys = issues.map((issue) => issue.key)
+    expect(keys).toContain("packPresentationTemplateKind")
+    expect(keys).toContain("packPresentationTemplateDuplicate")
+    expect(keys).toContain("packPresentationPaletteCount")
+    expect(keys).toContain("packPresentationPaletteTooLong")
   })
 
   it("mirrors the engine's subject rules (slug, kind enum, name, caps, ref pairing)", () => {

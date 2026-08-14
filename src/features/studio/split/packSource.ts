@@ -29,15 +29,28 @@ const PANEL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 // build (`core/pack.py::_validate_pack_presentation`), so these enums/caps
 // are copied from it, not invented.
 export const PRESENTATION_FILE_NAME = "ui/presentation.yaml"
+/** `core/presentation.py::KIT_VERSION`. v2 (M19 completion, 2026-08-15) added
+ * the `templates` allowlist and `style.palette` the M19 spec had promised, and
+ * the engine REJECTS a v1 file outright — one clean break, no dual-schema
+ * reader, per the standing no-backcompat sanction. The studio emits v2 only.
+ * (This closed `UPSTREAM_TODO` item 12.) */
+export const PRESENTATION_KIT_VERSION = 2
 const MAX_PRESENTATION_FILE_BYTES = 128 * 1024
 const MAX_PRESENTATION_SUBJECTS = 64
 const MAX_PRESENTATION_AUDIO = 32
 const MAX_PRESENTATION_BANNED = 24
 const MAX_PRESENTATION_TEXT_CHARS = 400
 const MAX_PRESENTATION_PROMPT_CHARS = 1_000
+const MAX_PRESENTATION_PALETTE = 8
+const MAX_PRESENTATION_PALETTE_CHARS = 80
 export const PRESENTATION_GENERATION_MODES = ["allow", "pack_only"] as const
 export const PRESENTATION_SUBJECT_KINDS = ["npc", "location", "item"] as const
 export const PRESENTATION_AUDIO_LAYERS = ["bgm", "ambience", "sfx"] as const
+/** `core/presentation.py::TEMPLATE_KINDS` — the performance shapes the Stage
+ * Director may stage. An EMPTY list means all of them; the engine's
+ * `allows_template()` reads it that way, so the wizard must not "helpfully"
+ * pre-tick every box (that would emit an allowlist the author never chose). */
+export const PRESENTATION_TEMPLATE_KINDS = ["image", "title_card", "letter", "clipping", "text"] as const
 /** Soft editor hints only — the engine takes each asset's MIME from the file
  * EXTENSION (`core/pack.py::_ASSET_MIME_BY_SUFFIX`, a table it owns rather than
  * the build machine's mimetypes db) and checks it against
@@ -143,10 +156,16 @@ export interface PackPresentationAudioDraft {
 /** The pack's Stage Director brief: `ui/presentation.yaml` + its media files. */
 export interface PackPresentationDraft {
   generation: string
+  /** Kit v2 `templates`: the performance shapes the Director may stage. EMPTY
+   * means every shape is allowed — it is not the same as listing them all,
+   * because the engine reads an empty list as "no allowlist". */
+  templates: string[]
   keywordsEn: string
   keywordsZh: string
   /** Banned elements, one per line. */
   bannedText: string
+  /** Kit v2 `style.palette`: hex codes or colour words, one per line. */
+  paletteText: string
   subjects: PackPresentationSubjectDraft[]
   audio: PackPresentationAudioDraft[]
 }
@@ -601,6 +620,37 @@ function validatePresentationDraft(kit: PackPresentationDraft, seenFiles: Set<st
   if (!PRESENTATION_GENERATION_MODES.includes(kit.generation as GenerationMode)) {
     issues.push({ key: "packPresentationGeneration", params: { value: kit.generation } })
   }
+  type TemplateKind = (typeof PRESENTATION_TEMPLATE_KINDS)[number]
+  const seenTemplates = new Set<string>()
+  for (const template of kit.templates) {
+    if (!PRESENTATION_TEMPLATE_KINDS.includes(template as TemplateKind)) {
+      issues.push({
+        key: "packPresentationTemplateKind",
+        params: { value: template, field: "templates" },
+      })
+    } else if (seenTemplates.has(template)) {
+      issues.push({
+        key: "packPresentationTemplateDuplicate",
+        params: { value: template, field: "templates" },
+      })
+    }
+    seenTemplates.add(template)
+  }
+  const paletteLines = kit.paletteText.split("\n").filter((line) => line.trim().length > 0)
+  if (paletteLines.length > MAX_PRESENTATION_PALETTE) {
+    issues.push({
+      key: "packPresentationPaletteCount",
+      params: { max: MAX_PRESENTATION_PALETTE, field: "palette" },
+    })
+  }
+  paletteLines.forEach((entry, index) => {
+    if (entry.trim().length > MAX_PRESENTATION_PALETTE_CHARS) {
+      issues.push({
+        key: "packPresentationPaletteTooLong",
+        params: { index: index + 1, max: MAX_PRESENTATION_PALETTE_CHARS, field: "palette" },
+      })
+    }
+  })
   for (const [locale, text] of [
     ["en", kit.keywordsEn],
     ["zh", kit.keywordsZh],
@@ -712,18 +762,22 @@ function validatePresentationDraft(kit: PackPresentationDraft, seenFiles: Set<st
 }
 
 /** `ui/presentation.yaml`, emitted exactly in the shape
- * `core/presentation.py::parse_presentation_text` accepts: `version: 1` and an
+ * `core/presentation.py::parse_presentation_text` accepts: `version: 2` and an
  * explicit `generation` always; optional sections omitted when empty;
  * localized fields ride as `{en, zh}` maps with the filled locales only;
  * media references point at `assets/<fileName>` (the flagship's layout). */
 export function buildPresentationYaml(kit: PackPresentationDraft): string {
   type GenerationMode = (typeof PRESENTATION_GENERATION_MODES)[number]
   const doc: Record<string, unknown> = {
-    version: 1,
+    version: PRESENTATION_KIT_VERSION,
     generation: PRESENTATION_GENERATION_MODES.includes(kit.generation as GenerationMode)
       ? kit.generation
       : "allow",
   }
+  // Omitted when empty, never written as "all five": the engine reads an empty
+  // allowlist as no restriction, and an author who ticked nothing chose that.
+  const templates = kit.templates.filter((template, index) => kit.templates.indexOf(template) === index)
+  if (templates.length > 0) doc.templates = templates
   const style: Record<string, unknown> = {}
   const keywords = localized(kit.keywordsEn, kit.keywordsZh)
   if (Object.keys(keywords).length > 0) style.keywords = keywords
@@ -732,6 +786,11 @@ export function buildPresentationYaml(kit: PackPresentationDraft): string {
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
   if (banned.length > 0) style.banned = banned
+  const palette = kit.paletteText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (palette.length > 0) style.palette = palette
   if (Object.keys(style).length > 0) doc.style = style
   if (kit.subjects.length > 0) {
     doc.subjects = kit.subjects.map((subject) => {

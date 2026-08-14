@@ -148,9 +148,11 @@ describe("lintSourceFromPackBench", () => {
       manualSkills: [],
       presentation: {
         generation: "allow",
+        templates: [],
         keywordsEn: "",
         keywordsZh: "",
         bannedText: "",
+        paletteText: "",
         subjects: [
           {
             uid: "s",

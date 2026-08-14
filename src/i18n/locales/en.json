@@ -790,7 +790,11 @@
         "packPresentationSubjectInvalid": "Subject {{subject}}: {{detail}}",
         "packPresentationAudioCount": "audio: at most {{max}} cues.",
         "packPresentationDuplicateCue": "audio: duplicate cue id \"{{id}}\".",
-        "packPresentationCueInvalid": "Cue {{cue}}: {{detail}}"
+        "packPresentationCueInvalid": "Cue {{cue}}: {{detail}}",
+        "packPresentationTemplateKind": "Presentation kit: “{{value}}” is not a performance shape the Director can stage.",
+        "packPresentationTemplateDuplicate": "Presentation kit: “{{value}}” is listed twice in the shape allowlist.",
+        "packPresentationPaletteCount": "Presentation kit: at most {{max}} palette entries.",
+        "packPresentationPaletteTooLong": "Presentation kit: palette entry {{index}} is longer than {{max}} characters."
       },
       "panels": {
         "title": "Module UI panels (M15)",
@@ -847,7 +851,10 @@
           "keywordsHint": "Palette, medium, era, texture — the shared look. Up to 400 characters each.",
           "banned": "Banned elements (one per line)",
           "bannedPlaceholder": "text overlays\nmodern clothing",
-          "bannedHint": "What must never appear. Up to 24 entries."
+          "bannedHint": "What must never appear. Up to 24 entries.",
+          "palette": "Palette",
+          "palettePlaceholder": "#16232e\nwet slate blue\nlantern amber",
+          "paletteHint": "One entry per line, at most 8: hex codes or colour words. They ride every image request alongside the keywords."
         },
         "subjects": {
           "title": "Subjects — who may be pictured (定妆)",
@@ -898,6 +905,18 @@
           "bgm": "bgm (music)",
           "ambience": "ambience",
           "sfx": "sfx (sting)"
+        },
+        "templates": {
+          "title": "Performance shapes",
+          "allHint": "Nothing ticked: the Stage Director may use every shape. Tick some to restrict it to those.",
+          "someHint": "{{n}} shape(s) allowed — the Director may stage nothing else.",
+          "kinds": {
+            "image": "Image",
+            "title_card": "Title card",
+            "letter": "Letter",
+            "clipping": "Clipping",
+            "text": "Text"
+          }
         }
       },
       "trust": {

@@ -310,7 +310,12 @@ interface PackState {
   addPresentation: () => void
   clearPresentation: () => void
   updatePresentation: (
-    patch: Partial<Pick<PackPresentationDraft, "generation" | "keywordsEn" | "keywordsZh" | "bannedText">>,
+    patch: Partial<
+      Pick<
+        PackPresentationDraft,
+        "generation" | "templates" | "keywordsEn" | "keywordsZh" | "bannedText" | "paletteText"
+      >
+    >,
   ) => void
   addPresentationSubject: () => void
   updatePresentationSubject: (uid: string, patch: Partial<PackPresentationSubjectDraft>) => void
@@ -365,7 +370,19 @@ function kitMediaFileName(name: string, fallback: string): string {
 }
 
 function newPresentationDraft(): PackPresentationDraft {
-  return { generation: "allow", keywordsEn: "", keywordsZh: "", bannedText: "", subjects: [], audio: [] }
+  return {
+    generation: "allow",
+    // Empty = every performance shape allowed (`core/presentation.py`:
+    // `allows_template`). Pre-ticking the boxes would emit an allowlist the
+    // author never chose.
+    templates: [],
+    keywordsEn: "",
+    keywordsZh: "",
+    bannedText: "",
+    paletteText: "",
+    subjects: [],
+    audio: [],
+  }
 }
 
 function newPresentationSubject(): PackPresentationSubjectDraft {

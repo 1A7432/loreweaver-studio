@@ -216,9 +216,13 @@ describe("presentation kit (M19) store actions", () => {
     const kit = usePackStore.getState().presentation
     expect(kit).toEqual({
       generation: "allow",
+      // Kit v2: an EMPTY allowlist means every performance shape is allowed,
+      // so a fresh kit must not arrive with the boxes pre-ticked.
+      templates: [],
       keywordsEn: "",
       keywordsZh: "",
       bannedText: "",
+      paletteText: "",
       subjects: [],
       audio: [],
     })

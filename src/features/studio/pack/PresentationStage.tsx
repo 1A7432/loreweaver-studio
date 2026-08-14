@@ -14,6 +14,7 @@ import {
   PRESENTATION_GENERATION_MODES,
   PRESENTATION_IMAGE_EXTENSIONS,
   PRESENTATION_SUBJECT_KINDS,
+  PRESENTATION_TEMPLATE_KINDS,
   presentationSummary,
   type PackPresentationAudioDraft,
   type PackPresentationSubjectDraft,
@@ -366,6 +367,34 @@ export default function PresentationStage({ issues }: { issues: Issue[] }) {
       </section>
 
       <section className="pack-extra-section">
+        <h3>{t("studio.pack.presentation.templates.title")}</h3>
+        <p className="studio-hint">
+          {kit.templates.length === 0
+            ? t("studio.pack.presentation.templates.allHint")
+            : t("studio.pack.presentation.templates.someHint", { n: kit.templates.length })}
+        </p>
+        <div className="dialog-row">
+          {PRESENTATION_TEMPLATE_KINDS.map((template) => (
+            <label key={template} className="pack-checkbox">
+              <input
+                type="checkbox"
+                checked={kit.templates.includes(template)}
+                onChange={(e) =>
+                  store.updatePresentation({
+                    templates: e.target.checked
+                      ? [...kit.templates, template]
+                      : kit.templates.filter((entry) => entry !== template),
+                  })
+                }
+              />
+              {t(`studio.pack.presentation.templates.kinds.${template}`)}
+            </label>
+          ))}
+        </div>
+        <FieldIssues issues={issues} uid={null} field="templates" />
+      </section>
+
+      <section className="pack-extra-section">
         <h3>{t("studio.pack.presentation.style.title")}</h3>
         <p className="studio-hint">{t("studio.pack.presentation.style.keywordsHint")}</p>
         <div className="dialog-row">
@@ -400,6 +429,18 @@ export default function PresentationStage({ issues }: { issues: Issue[] }) {
         </label>
         <p className="studio-hint">{t("studio.pack.presentation.style.bannedHint")}</p>
         <FieldIssues issues={issues} uid={null} field="banned" />
+        <label className="field field-wide">
+          {t("studio.pack.presentation.style.palette")}
+          <textarea
+            rows={3}
+            value={kit.paletteText}
+            onChange={(e) => store.updatePresentation({ paletteText: e.target.value })}
+            placeholder={t("studio.pack.presentation.style.palettePlaceholder")}
+            spellCheck={false}
+          />
+        </label>
+        <p className="studio-hint">{t("studio.pack.presentation.style.paletteHint")}</p>
+        <FieldIssues issues={issues} uid={null} field="palette" />
       </section>
 
       <section className="pack-extra-section">

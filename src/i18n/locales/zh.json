@@ -790,7 +790,11 @@
         "packPresentationSubjectInvalid": "主体 {{subject}}：{{detail}}",
         "packPresentationAudioCount": "audio：至多 {{max}} 条。",
         "packPresentationDuplicateCue": "audio：cue id「{{id}}」重复。",
-        "packPresentationCueInvalid": "音频 cue {{cue}}：{{detail}}"
+        "packPresentationCueInvalid": "音频 cue {{cue}}：{{detail}}",
+        "packPresentationTemplateKind": "演出资料包：“{{value}}”不是导演可以演出的形态。",
+        "packPresentationTemplateDuplicate": "演出资料包：形态白名单里“{{value}}”出现了两次。",
+        "packPresentationPaletteCount": "演出资料包：配色最多 {{max}} 条。",
+        "packPresentationPaletteTooLong": "演出资料包：第 {{index}} 条配色超过 {{max}} 个字符。"
       },
       "panels": {
         "title": "模组 UI 面板（M15）",
@@ -847,7 +851,10 @@
           "keywordsHint": "色板、媒介、年代、质感——统一的模样。每条至多 400 字符。",
           "banned": "禁区元素（每行一条）",
           "bannedPlaceholder": "文字叠加\n现代服饰",
-          "bannedHint": "绝不允许出现的东西。至多 24 条。"
+          "bannedHint": "绝不允许出现的东西。至多 24 条。",
+          "palette": "配色",
+          "palettePlaceholder": "#16232e\n湿板岩蓝\n灯笼琥珀",
+          "paletteHint": "每行一条，最多 8 条：十六进制色值或颜色词。它们会与风格关键词一起附在每次出图请求上。"
         },
         "subjects": {
           "title": "定妆主体——谁可以出图",
@@ -898,6 +905,18 @@
           "bgm": "bgm（背景音乐）",
           "ambience": "ambience（环境声）",
           "sfx": "sfx（音效）"
+        },
+        "templates": {
+          "title": "演出形态",
+          "allHint": "一个都不勾：舞台导演可以使用全部形态。勾选后则只限于所勾的那些。",
+          "someHint": "允许 {{n}} 种形态——导演不能再用别的。",
+          "kinds": {
+            "image": "图像",
+            "title_card": "标题卡",
+            "letter": "信件",
+            "clipping": "剪报",
+            "text": "文本"
+          }
         }
       },
       "trust": {

@@ -39,9 +39,21 @@ catch-up itself.
    (`core/pack.py:644-652`, `docs/plugins.md:580`, commit `7036df6`); the studio
    mirrors it (`countVariableSpecs` folds spec counts into pack-bench detection).
 
+> **2026-08-15 — items 9–12 all landed upstream, mid-overhaul.** The engine lane
+> shipped `96c7228` (`.var set/add`), `fbcd08c` (`contents.presets`), `fd6613a`
+> (presentation kit **v2**) and `884fe51` (world-card prose → keeper module brief)
+> while the studio overhaul (`docs/OVERHAUL-2026-08.md`) was in flight. Item 12 is
+> **consumed** here already — kit v2 is a hard break (`KIT_VERSION = 2`, v1 files
+> rejected outright), so the studio emits v2 and gained the promised template/palette
+> UI in the same commit; the round-trip gate exercises both. Items 9–11 are landed but
+> not yet consumed studio-side; each notes what remains here.
+
 ## Still open
 
-9. **Keeper-style prompt presets as pack assets** — HALF landed and unchanged by the
+9. **Keeper-style prompt presets as pack assets** — **LANDED upstream `fbcd08c`**
+   (`contents.presets`, install → `data_dir/presets/`, disclosed on the trust card).
+   Studio-side consumption is outstanding: the preset manager can export a preset into
+   a pack's source tree. Original ask, kept for context — HALF landed and unchanged by the
    consolidation: `core/preset.py` parser + `core/preset_store.py` + the keeper
    `.preset` surface + the bounded v0 style-fold in `agent/prompt_builder.py:360-383`
    all exist. Still missing: a `contents.presets` pack-asset convention (install →
@@ -50,7 +62,10 @@ catch-up itself.
    `gateway/commands.py:984`), and the finer marker→section mapping contract
    (prompt_builder's own comment still calls the single-fold policy v0).
 
-10. **A world card's PROSE has nowhere to go.** Still true post-M17/M18:
+10. **A world card's PROSE has nowhere to go.** **LANDED upstream `884fe51`** — the
+    prose now seeds a keeper-only module brief at import. Studio-side: nothing is
+    required, but the forge could stop warning authors that world-card prose is inert.
+    Original ask below. Still true post-M17/M18:
     `import_world_card` (`agent/kp_tools_charcard.py:288-418`) uses prose only for
     the persona check and the pregen-sheet build; `description` / `personality` /
     `scenario` / openings seed no document. Lorecard v1 made it no better —
@@ -59,7 +74,10 @@ catch-up itself.
     seed a module brief from the world card's prose at import (or document the
     constant-entry rule loudly in `docs/cards.md` + the card-forge templates).
 
-11. **`.var` has no keeper-side write.** Still `list|expose|hide` only
+11. **`.var` has no keeper-side write.** **LANDED upstream `96c7228`** — keeper-gated
+    `.var set` / `.var add`, over `core.modvars` validation.
+    Studio-side consumption (a keeper write control on the state panel) is outstanding.
+    Original ask below. Still `list|expose|hide` only
     (`gateway/commands.py:1801-1859`); the validated primitives
     (`core/modvars.set_modvar`/`adjust_modvar`) exist and are called from agent-side
     code, only the command surface is missing. Narrowed by M15: `panel_intent`
@@ -69,7 +87,14 @@ catch-up itself.
 
 ## New asks from the 2.x catch-up
 
-12. **The M19 presentation schema never shipped the spec's template list + palette.**
+12. ~~**The M19 presentation schema never shipped the spec's template list + palette.**~~
+    **RESOLVED upstream `fd6613a`, consumed here the same day.** The engine extended the
+    kit schema rather than striking the promise, and took the clean break: kit version
+    2, a `templates` allowlist (empty = every shape), `style.palette` (≤8 entries, ≤80
+    chars), and v1 files are rejected — no dual-schema reader. The studio emits v2 only,
+    the kit wizard gained the 模板/配色 UI, `validatePackDraft` mirrors the new caps, and
+    `gen_roundtrip_pack.ts` exercises both fields through the engine's real parser. The
+    original ask, for the record:
     `docs/specs/M19-stage-director.md` promises the kit carries "allowed template
     list + palette", but `core/presentation.py` is strict — unknown keys are build
     errors — and defines only `version` / `generation` / `style.{keywords,banned}` /

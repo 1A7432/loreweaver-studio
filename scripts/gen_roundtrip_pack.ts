@@ -310,9 +310,14 @@ const draft: WorldPackDraft = {
   },
   presentation: {
     generation: "allow",
+    // Kit v2 (`core/presentation.py::KIT_VERSION`): the templates allowlist
+    // and style.palette. Both are exercised here so the gate would catch the
+    // studio emitting a shape the engine's strict parser rejects.
+    templates: ["image", "title_card"],
     keywordsEn: "rainy night, indigo hallway, film grain",
     keywordsZh: "雨夜, 靛青走廊, 胶片颗粒",
     bannedText: "text overlays\nmodern clothing",
+    paletteText: "#16232e\nrain-slick indigo\nstairwell amber",
     subjects: [
       {
         uid: "subj-administrator",
