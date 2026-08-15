@@ -454,4 +454,27 @@ describe("pack session persistence", () => {
     // The build RESULT does survive — "Test now" is one click away after a reload.
     expect(written).toHaveProperty("packResult")
   })
+
+  it("fills a metadata form saved before a field existed", () => {
+    // The form is ONE persisted object, so zustand's shallow merge replaces it
+    // wholesale — a blob written by an older build comes back missing whatever
+    // was added since, and the first `.trim()` on that field throws inside a
+    // render. Every field added to the form since is exercised by the read
+    // below; the merge is what makes adding one safe.
+    const merge = usePackStore.persist.getOptions().merge!
+    const stale = { metadata: { id: "old-pack", version: "0.1.0" }, step: "metadata" }
+    const merged = merge(stale, usePackStore.getState()) as ReturnType<typeof usePackStore.getState>
+
+    expect(merged.metadata.id).toBe("old-pack")
+    expect(merged.metadata.rulepackScriptSource).toBe("")
+    expect(merged.metadata.rulepackMode).toBe("patch")
+    // The store's own actions survive the merge — it is state, not a snapshot.
+    expect(typeof merged.addFiles).toBe("function")
+  })
+
+  it("merges an empty persisted blob into the untouched defaults", () => {
+    const merge = usePackStore.persist.getOptions().merge!
+    const merged = merge({}, usePackStore.getState()) as ReturnType<typeof usePackStore.getState>
+    expect(merged.metadata).toEqual(usePackStore.getState().metadata)
+  })
 })

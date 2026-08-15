@@ -16,7 +16,8 @@
 // checked against what was originally opened.
 
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../lib/persistStorage"
 import { bytesToBase64, base64ToBytes, type PickedFile } from "../lib/native"
 import type { SplitCardResult } from "../features/studio/split/cardSplit"
 import type { StCharacterCard } from "../features/studio/split/charcard"
@@ -138,7 +139,10 @@ export const useSplitStore = create<SplitState>()(
     }),
     {
       name: "loreweaver-studio-split",
-      storage: createJSONStorage(() => localStorage),
+      // Guarded: a quota error thrown inside `set` would take the edit down
+      // with it. See `lib/persistStorage.ts`.
+      storage: guardedLocalStorage,
+      version: 1,
       partialize: (state) => ({
         session:
           state.session === null

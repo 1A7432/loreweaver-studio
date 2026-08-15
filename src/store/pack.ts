@@ -14,7 +14,8 @@
 // file under the right name.
 
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../lib/persistStorage"
 import { parseCardBytes, type StCharacterCard } from "../features/studio/split/charcard"
 import {
   payloadsAny,
@@ -1034,7 +1035,23 @@ export const usePackStore = create<PackState>()(
     }),
     {
       name: "loreweaver-studio-pack",
-      storage: createJSONStorage(() => localStorage),
+      // Guarded: `persist` writes synchronously inside `set`, on every
+      // keystroke, so a quota error here would abort the edit that caused it.
+      // See `lib/persistStorage.ts`.
+      storage: guardedLocalStorage,
+      version: 1,
+      // The metadata form is ONE persisted object, so zustand's shallow merge
+      // replaces it wholesale — a blob written before a field existed comes
+      // back missing that field, and the first `.trim()` on it throws. Filling
+      // from the defaults is what makes adding a field to the form safe.
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<PackState>
+        return {
+          ...current,
+          ...saved,
+          metadata: { ...EMPTY_METADATA, ...(saved.metadata ?? {}) },
+        }
+      },
       // What survives: every classification, promotion decision, metadata
       // field, panel, kit entry and the paths the build already used. What does
       // not: raw bytes (dropped, flagged for re-attach), the engine probe and
