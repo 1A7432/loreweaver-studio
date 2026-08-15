@@ -123,7 +123,13 @@ catch-up itself.
     by `tests/core/test_pack_asset_mime.py`. The wizard's audio hint is back to the
     full documented list.
 
-14. **A player can never learn the room's upload policy.** `media_enabled` is
+14. ~~**A player can never learn the room's upload policy.**~~ **LANDED upstream
+    `c925164` (2026-08-15), consumed automatically.** The toggle now BROADCASTS
+    `media_enabled` to the room, and a joining member is greeted with the policy
+    during replay when uploads are OFF (the non-default state; no frame on join
+    means the default: enabled). Same frame, same shape — the studio's existing
+    `media_enabled` ingestion picks both up with zero changes; the refusal-latch
+    stays as a harmless fallback. Original ask below. `media_enabled` is
     UNICAST to the keeper who toggled it (`net/session.py:661`,
     `_handle_media_set_enabled` → `member.send_frame`), and `welcome_frame` does not
     carry the flag. So every other member's client holds `uploadsEnabled: null` for
