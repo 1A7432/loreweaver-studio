@@ -1039,12 +1039,15 @@ export const usePackStore = create<PackState>()(
       // keystroke, so a quota error here would abort the edit that caused it.
       // See `lib/persistStorage.ts`.
       storage: guardedLocalStorage,
-      // The session's shape is this file's. Bump this when it changes and the
-      // stored one is dropped for a fresh session — there is no migration and
-      // no reader for an older shape, so a stale blob can never reach the UI
-      // half-filled (the metadata form is one persisted object, and a missing
-      // field would throw on the first `.trim()` inside a render).
-      version: 1,
+      // The session's shape is this file's. Bump this WHENEVER it changes: a
+      // stored session whose version differs is dropped for a fresh one, and
+      // that discard is the only thing standing between a differently-shaped
+      // blob and a render that calls `.trim()` on a field it does not have
+      // (`metadata` is one persisted object, so a partial one arrives whole).
+      // Equal versions are rehydrated AS-IS — leaving this at 1 while the form
+      // grew a field would be the same bug with extra steps.
+      // 2: the rulepack script fields joined `metadata`.
+      version: 2,
       // What survives: every classification, promotion decision, metadata
       // field, panel, kit entry and the paths the build already used. What does
       // not: raw bytes (dropped, flagged for re-attach), the engine probe and

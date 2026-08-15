@@ -51,12 +51,18 @@ describe("guardedLocalStorage", () => {
     // the store that filled it — one unguarded `persist` is enough to take an
     // unrelated edit down with it. This is the rule that keeps the next store
     // from being added without the guard; there is no per-store exception.
-    const sources: Record<string, string> = import.meta.glob("../{store,features}/**/*.ts", {
+    // Every source file, not just the two directories that happen to hold
+    // stores today — the next persisted store will be wherever its feature is.
+    const sources: Record<string, string> = import.meta.glob("../**/*.{ts,tsx}", {
       query: "?raw",
       import: "default",
       eager: true,
     })
-    const scanned = Object.entries(sources).filter(([path]) => !/\.test\.ts$/.test(path))
+    const scanned = Object.entries(sources).filter(
+      // This module is the one place that may wrap the raw storage; it is what
+      // everything else imports instead.
+      ([path]) => !/\.test\.tsx?$/.test(path) && !path.endsWith("/persistStorage.ts"),
+    )
     // A glob that matched nothing would make this pass by seeing nothing —
     // the same vacuous green a zero-match test filter gives. Assert it looked.
     expect(scanned.filter(([, text]) => text.includes("persist(")).length).toBeGreaterThan(5)

@@ -455,13 +455,40 @@ describe("pack session persistence", () => {
     expect(written).toHaveProperty("packResult")
   })
 
-  it("declares a session version, so a differently-shaped one is dropped", () => {
-    // The metadata form is one persisted object: a stored blob whose shape does
-    // not match this file would land in the UI half-filled and throw on the
-    // first `.trim()` inside a render. No migration exists and none is wanted —
-    // the version is what makes a shape change discard instead of half-load.
-    const options = usePackStore.persist.getOptions()
-    expect(options.version).toBe(1)
-    expect(options.migrate).toBeUndefined()
+  it("drops a stored session of another shape instead of half-loading it", async () => {
+    // Not `expect(version).toBe(2)` — that asserts a constant, and the constant
+    // was never the point. This stores a session shaped like an older one and
+    // rehydrates for real: the metadata form is ONE persisted object, so a
+    // partial one arrives whole and the first `.trim()` on a missing field
+    // throws inside a render. The version mismatch is what prevents that.
+    const stale = {
+      state: { step: "metadata", metadata: { id: "old-pack", version: "0.1.0" } },
+      version: 1,
+    }
+    localStorage.setItem("loreweaver-studio-pack", JSON.stringify(stale))
+    await usePackStore.persist.rehydrate()
+
+    const metadata = usePackStore.getState().metadata
+    expect(metadata.id).toBe("")
+    // Every field the form declares is present and a string, so no render can
+    // trip over one — which is the whole promise being kept here.
+    expect(() => metadata.rulepackScriptSource.trim()).not.toThrow()
+    expect(metadata.rulepackScriptSource).toBe("")
+    expect(metadata.rulepackMode).toBe("patch")
+    localStorage.clear()
+  })
+
+  it("rehydrates a session of the CURRENT shape rather than discarding everything", async () => {
+    // The other half: the discard must be driven by the version, not by being
+    // indiscriminate. A session this build wrote comes back whole.
+    const current = {
+      state: { step: "metadata", metadata: { ...usePackStore.getState().metadata, id: "kept-pack" } },
+      version: usePackStore.persist.getOptions().version,
+    }
+    localStorage.setItem("loreweaver-studio-pack", JSON.stringify(current))
+    await usePackStore.persist.rehydrate()
+
+    expect(usePackStore.getState().metadata.id).toBe("kept-pack")
+    localStorage.clear()
   })
 })
