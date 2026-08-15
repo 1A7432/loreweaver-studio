@@ -1242,6 +1242,7 @@
         "codeUnknownVariable": "{{origin}} reads or writes “{{id}}”, which this pack never declares.",
         "loreUnknownVariable": "Lore entry “{{title}}” names “{{id}}”, which this pack never declares.",
         "stubMarker": "{{origin}} still carries the wizard's draft stub, so the update rules never run.",
+        "hookUnknownEventField": "{{origin}} reads `{{field}}` off a `{{event}}` event, which carries only {{known}}. The read is undefined at run time, so everything guarded by it silently never runs.",
         "packDescriptionMissing": "The pack has no description in either language — it is what a reader sees before installing.",
         "packLicenseMissing": "The pack declares no license.",
         "assetMissing": "{{from}} points at “{{path}}”, which this pack does not ship.",

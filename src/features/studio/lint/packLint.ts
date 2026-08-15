@@ -1,4 +1,4 @@
-// The advisory pack lint: seven rules over a pack's authored content.
+// The advisory pack lint: rules over a pack's authored content.
 //
 // Why it exists: the engine CLI already refuses packs that cannot BUILD. What
 // nothing catches is the pack that builds perfectly and then does nothing —
@@ -245,6 +245,69 @@ function lintPanelBindings(source: PackLintSource, panels: LintPanel[], findings
   }
 }
 
+/** What each hook event's payload actually carries.
+ *
+ * `core/hooks.py:9-13` declares them and the `fire()` calls in `agent/loop.py`
+ * pass exactly these dicts — both were read, not inferred. An event NOT listed
+ * here is never checked, so an engine that grows one cannot produce a false
+ * finding here; it just gets no coverage until this table catches up. */
+const EVENT_PAYLOAD_KEYS: Record<string, readonly string[]> = {
+  turn_start: ["user_message", "actor"],
+  reply_ready: ["reply"],
+  dice_rolled: ["rolls"],
+  variables_changed: ["writes"],
+  clock_advanced: ["from", "to", "delta"],
+}
+
+/** `on('<event>', <handler>)` with the handler's own parameter name. Covers the
+ * three shapes hooks are written in: `(e) => …`, `e => …`, `function (e) {…}`.
+ * A handler that takes no parameter reads nothing off the event and is skipped. */
+const ON_HANDLER_RE =
+  /\bon\s*\(\s*(['"`])([a-z_]+)\1\s*,\s*(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*(?:=>|\{)/g
+
+/** Reads of `<param>.<key>` — the only way a handler can touch its payload. */
+function eventFieldReads(segment: string, param: string): string[] {
+  const re = new RegExp(`\\b${param}\\s*\\.\\s*([A-Za-z_$][\\w$]*)`, "g")
+  return [...segment.matchAll(re)].map((match) => match[1])
+}
+
+/** Hook handlers reading a field their event does not deliver.
+ *
+ * The failure this catches is silence, not an error: JavaScript answers
+ * `undefined`, the guard is false forever, and the handler does nothing while
+ * looking correct. Nothing else in the toolchain says a word about it — the
+ * pack builds, the hook loads, the sandbox runs it, and no variable moves. */
+function lintHookEventFields(source: PackLintSource, findings: PackLintFinding[]): void {
+  for (const block of source.code) {
+    for (const match of [...block.source.matchAll(ON_HANDLER_RE)]) {
+      const known = EVENT_PAYLOAD_KEYS[match[2]]
+      if (known === undefined) continue
+      const param = match[3]
+      // Scope to this handler: everything up to the next `on(` registration, or
+      // the end. Coarse, but a hook file is small and a later handler's reads
+      // would only be attributed to the wrong (still-real) finding.
+      const start = match.index + match[0].length
+      const nextOn = block.source.slice(start).search(/\bon\s*\(\s*['"`]/)
+      const segment = nextOn < 0 ? block.source.slice(start) : block.source.slice(start, start + nextOn)
+
+      const seen = new Set<string>()
+      for (const field of eventFieldReads(segment, param)) {
+        if (known.includes(field) || seen.has(field)) continue
+        seen.add(field)
+        findings.push(
+          finding(
+            "hookUnknownEventField",
+            "warn",
+            "hookUnknownEventField",
+            { origin: block.origin, event: match[2], field, known: known.join(", ") },
+            { kind: "code", id: block.origin },
+          ),
+        )
+      }
+    }
+  }
+}
+
 function lintCode(source: PackLintSource, findings: PackLintFinding[]): void {
   const declared = new Set(source.variables.map((variable) => variable.id))
   for (const block of source.code) {
@@ -441,6 +504,7 @@ export function lintPack(source: PackLintSource): PackLintFinding[] {
   lintBilingual(source, panels, findings)
   lintPanelBindings(source, panels, findings)
   lintCode(source, findings)
+  lintHookEventFields(source, findings)
   lintLoreMacros(source, findings)
   lintPackMetadata(source, findings)
   lintAssets(source, panels, findings)

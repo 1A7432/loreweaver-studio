@@ -1242,6 +1242,7 @@
         "codeUnknownVariable": "{{origin}} 读写了“{{id}}”，但本包从未声明它。",
         "loreUnknownVariable": "世界书条目“{{title}}”提到了“{{id}}”，但本包从未声明它。",
         "stubMarker": "{{origin}} 里还留着向导生成的草稿占位，更新规则实际不会执行。",
+        "hookUnknownEventField": "{{origin}} 从 `{{event}}` 事件上读取 `{{field}}`，但该事件只带 {{known}}。运行时读到的是 undefined，被它守卫的一切都会静默地永不执行。",
         "packDescriptionMissing": "模组包没有任何语言的描述——那是安装前读者唯一能看到的东西。",
         "packLicenseMissing": "模组包未声明许可协议。",
         "assetMissing": "{{from}} 指向“{{path}}”，但本包并未携带该文件。",

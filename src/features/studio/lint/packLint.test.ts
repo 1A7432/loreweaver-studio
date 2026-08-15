@@ -250,6 +250,63 @@ describe("code rules", () => {
     const ids = findings.filter((f) => f.ruleId === "codeUnknownVariable").map((f) => f.params.id)
     expect(ids).toEqual(["dread", "panic"])
   })
+
+  describe("hook event fields", () => {
+    const hook = (src: string) => lintPack(source({ code: [{ origin: "hooks", source: src }] }))
+    const fields = (findings: ReturnType<typeof lintPack>) =>
+      findings.filter((f) => f.ruleId === "hookUnknownEventField").map((f) => f.params.field)
+
+    it("catches a dead `event.text` guard", () => {
+      // `reply_ready` fires `{reply}`, so this guard is undefined on every real
+      // table and the whole handler quietly does nothing — the shape the
+      // wizard itself once emitted, and the reason this rule exists.
+      const findings = hook(
+        "on('reply_ready', (event) => {\n" +
+          "  const said = (p) => String(event && event.text ? event.text : '').includes(p)\n" +
+          "  if (said('玩家帮忙')) incvar('好感度', 5)\n" +
+          "})",
+      )
+      expect(fields(findings)).toEqual(["text"])
+      expect(findings.find((f) => f.ruleId === "hookUnknownEventField")?.target).toEqual({
+        kind: "code",
+        id: "hooks",
+      })
+    })
+
+    it("says nothing about a handler reading the real field", () => {
+      expect(fields(hook("on('reply_ready', (e) => { narrate(e.reply.toUpperCase()) })"))).toEqual([])
+      expect(
+        fields(hook("on('turn_start', function (event) { inject(event.user_message + event.actor) })")),
+      ).toEqual([])
+      expect(fields(hook("on('dice_rolled', e => { log(e.rolls.length) })"))).toEqual([])
+      expect(fields(hook("on('variables_changed', (e) => e.writes.forEach(w => log(w.path))))"))).toEqual([])
+    })
+
+    it("attributes a bad read to the handler it is in, not the file", () => {
+      const findings = hook(
+        "on('reply_ready', (e) => { log(e.reply) })\n" + "on('turn_start', (e) => { log(e.reply) })",
+      )
+      // Only the second is wrong: `turn_start` carries no `reply`.
+      expect(fields(findings)).toEqual(["reply"])
+      expect(findings.find((f) => f.ruleId === "hookUnknownEventField")?.params.event).toBe("turn_start")
+    })
+
+    it("reports each bad field once, however often it is read", () => {
+      expect(fields(hook("on('reply_ready', (e) => { log(e.text); log(e.text); log(e.text) })"))).toEqual([
+        "text",
+      ])
+    })
+
+    it("stays quiet on an event whose payload it has not verified", () => {
+      // The table is read off `core/hooks.py` and the `fire()` sites. An event
+      // missing from it gets no coverage rather than a guessed finding.
+      expect(fields(hook("on('tool_use', (e) => { log(e.whatever) })"))).toEqual([])
+    })
+
+    it("ignores a handler that never names its event", () => {
+      expect(fields(hook("on('reply_ready', () => { incvar('好感度', 1) })"))).toEqual([])
+    })
+  })
 })
 
 describe("pack metadata and assets", () => {

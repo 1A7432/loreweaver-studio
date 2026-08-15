@@ -33,6 +33,9 @@ export type PackLintRuleId =
   | "episodeNoNotes"
   /** An earlier episode's content naming something a later one introduces. */
   | "episodeForwardReference"
+  /** A hook handler reading a key its event's payload does not carry — always
+   * undefined at run time, and silent about it. */
+  | "hookUnknownEventField"
 
 export type PackLintTargetKind = "variable" | "lore" | "panel" | "code" | "pack" | "asset" | "episode"
 
