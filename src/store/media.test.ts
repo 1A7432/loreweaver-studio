@@ -116,11 +116,10 @@ describe("media store", () => {
   })
 
   describe("a refused offer", () => {
-    it("learns the room's policy from the refusal, since nothing else tells a player", async () => {
-      // The engine unicasts `media_enabled` to the keeper who toggled it and
-      // the welcome does not carry it, so a player's store stays null forever
-      // (UPSTREAM_TODO item 14). The `media_disabled` refusal is the only time
-      // the server states the policy to them.
+    it("records the room's policy when a refusal states it", async () => {
+      // `media_enabled` is the primary channel and arrives on its own; this
+      // agrees with it rather than competing, since a refusal cannot come from
+      // a room where uploads are on.
       await useMediaStore.getState().upload("/tmp/handout.png")
       expect(useMediaStore.getState().uploads.abc123.phase).toBe("offering")
 

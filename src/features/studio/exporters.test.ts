@@ -296,7 +296,6 @@ describe("the serialized-module invariant holds on every deliverable path", () =
     expect(built).not.toContain("他早已不是人类")
     expect(built).toContain("雨夜才有第五层")
     // …and the studio's own tag never reaches the circulating file.
-    expect(JSON.parse(built)).not.toContain(EPISODE_FIELD)
     expect(built).not.toContain(`"${EPISODE_FIELD}"`)
   })
 

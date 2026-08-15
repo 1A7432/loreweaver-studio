@@ -98,12 +98,12 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
         // without this the offer would sit at "offering" forever and the deck
         // would keep inviting a player to try again.
         //
-        // `media_disabled` also teaches this client something it has no other
-        // way to learn: the engine unicasts `media_enabled` only to the keeper
-        // who flipped it, and the welcome does not carry the flag, so a player
-        // who joined afterwards has `uploadsEnabled: null` for the whole
-        // session (UPSTREAM_TODO item 14). The refusal is the one moment the
-        // server states the room's policy to them, so it is recorded.
+        // `media_disabled` states the room's policy, so it is recorded like any
+        // other statement of it. `media_enabled` is the primary channel —
+        // broadcast on every toggle, and replayed to a joining member when
+        // uploads are off (`net/session.py:378, :672`) — and this agrees with
+        // it rather than competing: a refusal cannot arrive from a room where
+        // uploads are on.
         if (frame.code === "media_disabled") set({ uploadsEnabled: false })
         if (frame.code === "media_disabled" || frame.code === "media_rate_limited") {
           failOfferingUploads(set, get, `play.media.err.${frame.code}`)

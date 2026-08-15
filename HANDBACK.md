@@ -87,15 +87,13 @@ round-trip gate, checked by name up front: a missing extra fails with the exact
 command and the exact repo rather than surfacing later as a PackError about a
 rulepack. One path, and the same coverage on every machine.
 
-## The review pass — one new upstream ask
+## The review pass
 
-### 5. A player can never learn the room's upload policy — FILED (item 14)
+### 5. The upload policy never reached the players it governs — CLOSED upstream
 
-`media_enabled` is unicast to the keeper who toggled it and the welcome does
-not carry the flag, so every other member's client cannot know whether uploads
-are allowed until a `media_disabled` refusal — after they have picked a file,
-hashed it and offered it. The studio now latches that refusal and disables the
-button from it, which is a client inferring room state from an error and is
-still wrong for the first upload of every session. The real fix is one line
-upstream (broadcast it, or put it in the welcome); it is `UPSTREAM_TODO.md`
-item 14. Nothing here is blocked on it.
+Filed as `UPSTREAM_TODO.md` item 14 and answered the same day (`c925164`): the
+toggle broadcasts `media_enabled` to the room, and a joining member is told when
+uploads are off. The studio's existing ingestion consumes both unchanged, so the
+Share button is now correct before the first attempt rather than after it. The
+refusal path added here stays as the other half — it is what ends a stalled
+offer and shows the server's reason.
