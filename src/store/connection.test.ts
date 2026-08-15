@@ -12,7 +12,13 @@ const WELCOME = {
 }
 
 function reset() {
-  useConnectionStore.setState({ status: "offline", attempt: 0, lastError: null, welcome: null })
+  useConnectionStore.setState({
+    status: "offline",
+    attempt: 0,
+    lastError: null,
+    welcome: null,
+    refused: false,
+  })
 }
 
 describe("sanitizeTicket", () => {
@@ -71,6 +77,13 @@ describe("connection store", () => {
     const handle = useConnectionStore.getState().handleEvent
     handle({ kind: "status", status: "connecting", attempt: 0 })
     handle({ kind: "frame", frame: { ...WELCOME, protocol: "4.0" } })
+    // The REAL sequence, not a truncated one. `client.rs` emits the welcome
+    // frame and `online` back-to-back, and the disconnect this store asks for
+    // arrives later still as `offline`. A refusal that only survives until the
+    // next event is not a refusal: the app would flash a room-less play screen
+    // and then drop back to the form with nothing to explain it.
+    handle({ kind: "status", status: "online", attempt: 0 })
+    handle({ kind: "status", status: "offline", attempt: 0 })
 
     const state = useConnectionStore.getState()
     // Refused: never online, no welcome to render a room from, and the reason names
@@ -79,6 +92,32 @@ describe("connection store", () => {
     expect(state.welcome).toBeNull()
     expect(state.lastError).toContain("4.0")
     expect(state.lastError).toContain(PROTOCOL_VERSION)
+  })
+
+  it("refuses a welcome it cannot read at all", () => {
+    // The bridge marks the session settled on ANY welcome-typed frame, which
+    // disarms its join deadline and announces online. Dropping an unreadable
+    // one silently would leave the app online, room-less and errorless forever.
+    const handle = useConnectionStore.getState().handleEvent
+    handle({ kind: "status", status: "connecting", attempt: 0 })
+    handle({ kind: "frame", frame: { type: "welcome", protocol: PROTOCOL_VERSION } })
+    handle({ kind: "status", status: "online", attempt: 0 })
+
+    const state = useConnectionStore.getState()
+    expect(state.status).toBe("offline")
+    expect(state.welcome).toBeNull()
+    expect(state.lastError).not.toBeNull()
+  })
+
+  it("lifts the refusal on the next explicit connect, not before", async () => {
+    const handle = useConnectionStore.getState().handleEvent
+    handle({ kind: "frame", frame: { ...WELCOME, protocol: "4.0" } })
+    expect(useConnectionStore.getState().refused).toBe(true)
+
+    // Outside the shell `connect` bails early — but it has already cleared the
+    // latch, which is the half this asserts: a new dial gets a clean verdict.
+    await useConnectionStore.getState().connect({ ticket: "endpoint-x", key: "k" })
+    expect(useConnectionStore.getState().refused).toBe(false)
   })
 
   it("accepts the live engine's welcome verbatim", () => {

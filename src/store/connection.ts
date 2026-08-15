@@ -26,15 +26,36 @@ export function sanitizeTicket(raw: string): string {
   return at > 0 ? flat.slice(at) : flat
 }
 
+/** Does this frame claim to be the handshake, whatever else is wrong with it?
+ * Only the `type` is trusted here — that is the whole point: everything else
+ * failed validation. */
+function looksLikeWelcome(frame: unknown): boolean {
+  return typeof frame === "object" && frame !== null && (frame as { type?: unknown }).type === "welcome"
+}
+
 interface ConnectionState {
   status: TransportStatus
   attempt: number
   lastError: string | null
   welcome: WelcomeFrame | null
+  /** A handshake this store refused. While set, transport statuses are ignored
+   * — see `handleEvent`. Cleared only by an explicit new connect. */
+  refused: boolean
   connect: (params: TransportConnectParams) => Promise<void>
   disconnect: () => Promise<void>
   /** Single entry point for everything the Rust bridge emits. */
   handleEvent: (event: TransportEvent) => void
+}
+
+type Setter = (partial: Partial<ConnectionState>) => void
+type Getter = () => ConnectionState
+
+/** Refuse the handshake: go offline with a reason, latch it so the statuses
+ * already in flight cannot undo it, and drop the connection rather than letting
+ * the bridge redial into the same wall. */
+function refuse(set: Setter, get: Getter, reason: string): void {
+  set({ status: "offline", attempt: 0, welcome: null, lastError: reason, refused: true })
+  void get().disconnect()
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -42,8 +63,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   attempt: 0,
   lastError: null,
   welcome: null,
+  refused: false,
 
   connect: async (params) => {
+    // An explicit dial is the one thing that lifts a refusal — do it before any
+    // early return, so a refused handshake cannot leave the store deaf to every
+    // status that follows for the rest of the process's life.
+    set({ refused: false })
     if (!isTauri()) {
       set({ status: "offline", lastError: "transport is only available inside the app shell" })
       return
@@ -70,6 +96,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   handleEvent: (event) => {
     if (event.kind === "status") {
+      // A refusal outranks every status that follows it. The bridge emits the
+      // welcome frame and `online` back-to-back (`client.rs`: `settled = true`
+      // then `status(Online)`), so a refusal decided on the frame would be
+      // undone one event later by a status already in flight — the app would
+      // flicker into a room-less play screen and then bounce back to the form
+      // with no reason showing. The latch holds until the operator dials again.
+      if (get().refused) return
       set((state) => ({
         status: event.status,
         attempt: event.attempt,
@@ -80,8 +113,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
     const frame = event.frame
     // Belt and braces: the shared validator drops malformed frames so no
-    // downstream consumer can crash on a missing field.
-    if (!isServerFrame(frame)) return
+    // downstream consumer can crash on a missing field. A malformed WELCOME is
+    // not droppable, though: the bridge has already marked the session settled
+    // (which disarms its join deadline) and announced `online`, so staying
+    // quiet would leave the app online with no room and nothing to show for it.
+    if (!isServerFrame(frame)) {
+      if (looksLikeWelcome(frame)) refuse(set, get, i18n.t("connect.welcomeUnreadable"))
+      return
+    }
     if (frame.type === "welcome") {
       // The MAJOR version is the compatibility contract, and the shared package ships
       // the predicate so no client has to write it. A client that keeps talking to a
@@ -93,12 +132,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       // call, and this is the app.)
       const mismatch = protocolMismatch(frame.protocol)
       if (mismatch) {
-        set({
-          status: "offline",
-          welcome: null,
-          lastError: i18n.t("connect.protocolMismatch", { ...mismatch }),
-        })
-        void get().disconnect()
+        refuse(set, get, i18n.t("connect.protocolMismatch", { ...mismatch }))
         return
       }
       set({ welcome: frame })

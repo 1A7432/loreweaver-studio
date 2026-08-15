@@ -21,6 +21,7 @@
     "submit": "Connect",
     "disconnect": "Disconnect",
     "protocolMismatch": "Protocol {{server}} ≠ {{client}}: the major version is the compatibility contract, so the connection was refused. Update whichever side is behind.",
+    "welcomeUnreadable": "The server's welcome could not be read, so the connection was refused. This usually means the two ends disagree about the frame format — check that both are on a build you recognise.",
     "hostLocal": {
       "button": "Host locally & play",
       "starting": "Bringing the server up…",
@@ -954,6 +955,11 @@
         "rulepackTurnCheckMapping": "Rulepack: turn_checks[{{index}}] must be a mapping.",
         "rulepackTurnCheckKey": "Rulepack: turn_checks[{{index}}] has an unknown key “{{field}}”.",
         "rulepackTurnCheckWhen": "Rulepack: turn_checks[{{index}}] needs a `when:` condition name.",
+        "rulepackInitiativeRoll": "Rulepack: `initiative:` must be a mapping with a non-empty `roll:` expression — a bare string is refused. Write `initiative:` then an indented `roll: 1d20+DEX`.",
+        "rulepackScriptBareName": "Rulepack: the script name “{{file}}” has a path in it. A rules script sits next to its YAML, so the name must be a bare file name.",
+        "rulepackScriptMissing": "Rulepack: this YAML declares the rules script “{{file}}”, but the pack ships no source for it — the build will fail on the missing file.",
+        "rulepackScriptOrphan": "Rulepack: a rules script is attached, but the YAML names none. Declare it as `resolution.script` or `subsystems.<id>.script`, or the file will not be shipped.",
+        "rulepackScriptTooLong": "Rulepack: the rules script exceeds the sandbox's {{max}}-character cap.",
         "rulepackThin": "Rulepack: this file neither extends a system nor defines one — nothing in it will change how the table plays.",
         "packPrepNotJs": "Prep script “{{file}}” must be a .js file — the engine's build rejects any other extension.",
         "packPrepPath": "Prep script “{{file}}”: use a plain file name; scripts land directly under prep/.",
@@ -1155,6 +1161,10 @@
         "yamlFull": "Rulepack YAML",
         "summary": "Base: {{base}} · {{stats}} stat(s) · {{derived}} derived · {{subsystems}} subsystem(s) · {{commands}} command(s)",
         "noBase": "none (a standalone system)",
+        "scriptTitle": "Rules script — {{file}}",
+        "scriptHint": "This YAML declares a rules script, so the pack must ship it beside the YAML under exactly that name. The sandbox calls one function — `resolve` for a resolution script, `flow` for a subsystem — and takes its return value; nothing else in the file runs on its own.",
+        "scriptLoad": "Load a .js…",
+        "scriptSource": "Script source",
         "advisory": "Advisory only — the engine parses this file again at build time and its verdict is the one that counts."
       },
       "prep": {

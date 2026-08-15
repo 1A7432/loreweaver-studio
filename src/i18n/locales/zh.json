@@ -21,6 +21,7 @@
     "submit": "连接",
     "disconnect": "断开",
     "protocolMismatch": "协议 {{server}} ≠ {{client}}：主版本号即兼容契约，已拒绝连接。请升级落后的一方。",
+    "welcomeUnreadable": "读不懂服务器的欢迎帧，已拒绝连接。这通常意味着两端对帧格式的理解不一致——请确认双方都跑在你认得的版本上。",
     "hostLocal": {
       "button": "本地托管并游玩",
       "starting": "正在启动服务器…",
@@ -954,6 +955,11 @@
         "rulepackTurnCheckMapping": "规则包：turn_checks[{{index}}] 必须是映射。",
         "rulepackTurnCheckKey": "规则包：turn_checks[{{index}}] 含有未知键“{{field}}”。",
         "rulepackTurnCheckWhen": "规则包：turn_checks[{{index}}] 需要一个 `when:` 条件名。",
+        "rulepackInitiativeRoll": "规则包：`initiative:` 必须是带有非空 `roll:` 表达式的映射——直接写字符串会被拒绝。请写 `initiative:`，再缩进一行 `roll: 1d20+DEX`。",
+        "rulepackScriptBareName": "规则包：脚本名“{{file}}”里带有路径。规则脚本就放在 YAML 旁边，因此必须是纯文件名。",
+        "rulepackScriptMissing": "规则包：这份 YAML 声明了规则脚本“{{file}}”，但模组包里没有它的源码——构建会因文件缺失而失败。",
+        "rulepackScriptOrphan": "规则包：已附上一个规则脚本，但 YAML 里没有声明它。请用 `resolution.script` 或 `subsystems.<id>.script` 声明，否则这个文件不会被打包。",
+        "rulepackScriptTooLong": "规则包：规则脚本超过了沙箱的 {{max}} 字符上限。",
         "rulepackThin": "规则包：这个文件既没有扩展某个系统，也没有定义一个——其中的内容不会改变牌桌的玩法。",
         "packPrepNotJs": "准备脚本“{{file}}”必须是 .js 文件——引擎构建会拒绝其他扩展名。",
         "packPrepPath": "准备脚本“{{file}}”：请使用普通文件名；脚本直接放在 prep/ 下。",
@@ -1155,6 +1161,10 @@
         "yamlFull": "规则包 YAML",
         "summary": "基底：{{base}} · {{stats}} 项属性 · {{derived}} 项派生 · {{subsystems}} 个子系统 · {{commands}} 条命令",
         "noBase": "无（独立系统）",
+        "scriptTitle": "规则脚本 —— {{file}}",
+        "scriptHint": "这份 YAML 声明了一个规则脚本，模组包必须以完全相同的文件名把它和 YAML 放在一起发货。沙箱只调用一个函数——判定脚本是 `resolve`，子系统是 `flow`——并取其返回值；文件里的其他内容不会自行运行。",
+        "scriptLoad": "载入 .js…",
+        "scriptSource": "脚本源码",
         "advisory": "仅供参考——引擎会在构建时重新解析这个文件，以它的判定为准。"
       },
       "prep": {
