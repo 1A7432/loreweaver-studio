@@ -20,7 +20,8 @@ Field rules (validated by code, retried on failure):
   narrate(text), rewriteReply(text), emitUI(blocks), getvar/setvar/incvar, variables, _.
   Event payloads, exactly (a wrong key is undefined at run time and silent):
   turn_start {user_message, actor} · reply_ready {reply} · dice_rolled {rolls:[{tool,result}]}
-  · variables_changed {writes:[{path,value}]}.
+  · variables_changed {writes:[{path, op}]}, op one of set|insert|delete|add|move — a write
+  carries WHAT changed and HOW, never the new value; read it with getvar(path).
 - Top-level prose fields: name, description, personality, scenario, first_mes, mes_example,
   creator_notes, tags (array).
 Write prose in the language the user used; labels always bilingual.`
