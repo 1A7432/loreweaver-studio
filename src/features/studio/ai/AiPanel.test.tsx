@@ -24,7 +24,7 @@ const noop = () => {}
 describe("AiPanel preset switching", () => {
   beforeEach(() => {
     usePresetStore.setState({ presets: [], activeId: null })
-    useAiStore.setState({ kind: "openai", baseUrl: "", model: "", maxTokens: 4096, keyStored: false })
+    useAiStore.setState({ kind: "openai", baseUrl: "", model: "", maxTokens: 16384, apiKey: "" })
   })
 
   it("offers built-in prompts plus every imported preset and switches the session", async () => {

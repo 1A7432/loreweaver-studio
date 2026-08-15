@@ -1,21 +1,29 @@
 //! LLM proxy for the AI forge. Requests go out from Rust (reqwest), never
-//! from the WebView: that keeps the strict CSP intact, sidesteps CORS, and —
-//! most importantly — means the API key is read from the OS credential store
-//! here and never crosses into JavaScript.
+//! from the WebView: that keeps the strict CSP intact and sidesteps CORS.
 //!
 //! Two provider shapes: any OpenAI-compatible `/chat/completions` endpoint
 //! (the configured `base_url` includes its version prefix, e.g. `…/v1`), and
 //! native Anthropic `/v1/messages`.
+//!
+//! The API key arrives in the config, from the frontend's own settings. It used
+//! to come from the OS credential store; that cost a per-platform integration
+//! the app cannot finish (the `keyring` crate has nothing for Android, and its
+//! Linux backend needs a running Secret Service daemon), and on macOS it
+//! re-prompted after every rebuild with a modal that could hang a draft for
+//! eighteen minutes. One storage path that works everywhere the app runs beats
+//! a stronger one that works on two platforms out of five.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use crate::secrets::read_secret;
-
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
-const SECRET_READ_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_ERROR_BODY_CHARS: usize = 600;
+/// Output cap when the caller names none. Big enough for the thing this proxy
+/// actually carries — a whole card as one JSON document. The old 4096 truncated
+/// those mid-object, and a truncated document is not an error the caller can
+/// see: it arrives as unparseable JSON and burns a retry.
+const DEFAULT_MAX_TOKENS: u32 = 16384;
 
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -24,8 +32,8 @@ pub struct LlmProviderConfig {
     pub kind: String,
     pub base_url: String,
     pub model: String,
-    /// Credential-store account name holding the API key.
-    pub secret_account: String,
+    /// The API key itself. Never logged, and never put in an error message.
+    pub api_key: String,
     pub max_tokens: Option<u32>,
     pub sampling: Option<SamplingParams>,
 }
@@ -110,7 +118,7 @@ fn openai_payload(
     let mut body = json!({
         "model": config.model,
         "messages": wire_messages,
-        "max_tokens": config.max_tokens.unwrap_or(4096),
+        "max_tokens": config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
     });
     if let Some(sampling) = &config.sampling {
         if let Some(v) = sampling.temperature {
@@ -143,7 +151,7 @@ fn anthropic_payload(
         .collect();
     let mut body = json!({
         "model": config.model,
-        "max_tokens": config.max_tokens.unwrap_or(4096),
+        "max_tokens": config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
         "messages": wire_messages,
     });
     if let Some(system_text) = system {
@@ -192,23 +200,10 @@ pub async fn llm_chat(
     system: Option<String>,
     messages: Vec<ChatMessage>,
 ) -> Result<String, String> {
-    let account = config.secret_account.clone();
-    // The keyring read can block INDEFINITELY: macOS re-prompts for keychain
-    // authorization whenever the binary changes (every dev rebuild), and that
-    // system dialog is easy to miss — without this timeout the invoke never
-    // resolves and the UI shows a busy state forever (observed live: an
-    // 18-minute "drafting…" that was really an unanswered keychain prompt).
-    let key = tokio::time::timeout(
-        SECRET_READ_TIMEOUT,
-        tauri::async_runtime::spawn_blocking(move || read_secret(&account)),
-    )
-    .await
-    .map_err(|_| {
-        "credential store did not respond — look for an OS keychain \
-         authorization dialog (dev builds re-prompt after every rebuild)"
-            .to_owned()
-    })?
-    .map_err(|err| err.to_string())??;
+    let key = config.api_key.trim().to_owned();
+    if key.is_empty() {
+        return Err("no API key configured".to_owned());
+    }
     let base = trimmed_base(&config.base_url);
 
     match config.kind.as_str() {
@@ -250,7 +245,7 @@ mod tests {
             kind: kind.to_owned(),
             base_url: "https://api.example.com/v1".to_owned(),
             model: "test-model".to_owned(),
-            secret_account: "acct".to_owned(),
+            api_key: "sk-test".to_owned(),
             max_tokens: Some(1024),
             sampling,
         }

@@ -204,21 +204,6 @@ export function formatCliCommand(candidate: EngineCandidate | null, args: string
   return [program, ...prefix, ...args].map(quote).join(" ")
 }
 
-// --- OS credential store (no secret_get on purpose: keys never come back) ---
-
-export async function secretSet(account: string, value: string): Promise<void> {
-  await invoke("secret_set", { account, value })
-}
-
-export async function secretExists(account: string): Promise<boolean> {
-  if (!isTauri()) return false
-  return invoke<boolean>("secret_exists", { account })
-}
-
-export async function secretDelete(account: string): Promise<void> {
-  await invoke("secret_delete", { account })
-}
-
 // --- LLM proxy ---
 
 /** Optional sampling knobs forwarded to the provider. Every field is optional
@@ -238,7 +223,9 @@ export interface LlmProviderConfig {
   kind: "openai" | "anthropic"
   baseUrl: string
   model: string
-  secretAccount: string
+  /** The key itself. It rides the invoke boundary and is never persisted by
+   * the Rust side — the frontend owns where it lives. */
+  apiKey: string
   maxTokens?: number
   sampling?: LlmSamplingParams
 }

@@ -25,8 +25,8 @@ Two modes, one app:
     studio contains no zip writer on purpose; validation has one source of truth.
   - **AI drafting** throughout is gated by deterministic code: every model output goes
     through the same schema validation as hand-typed content or it never lands. Bring
-    your own provider (OpenAI-compatible or Anthropic); the key lives in the OS
-    credential store and requests leave from the Rust side, never the WebView.
+    your own provider (OpenAI-compatible or Anthropic); the key is stored locally with
+    the rest of your settings, and requests leave from the Rust side, never the WebView.
 
 ## Architecture
 

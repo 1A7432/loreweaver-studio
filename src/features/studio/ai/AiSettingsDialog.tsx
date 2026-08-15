@@ -1,7 +1,8 @@
-// Provider settings: endpoint + model persist locally; the API key goes
-// straight to the OS credential store and is never displayed back.
+// Provider settings: endpoint, model and key, all persisted locally with the
+// rest of the session. The key field is an ordinary one — masked while typing,
+// revealable, editable — because there is nowhere else it lives.
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { aiAvailable, pickDirectory } from "../../../lib/native"
 import { useActivePreset } from "./presetStore"
@@ -17,9 +18,7 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const settings = useAiStore()
   const activePreset = useActivePreset()
-  const [keyInput, setKeyInput] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [showKey, setShowKey] = useState(false)
 
   const providerPresetId = matchProviderPreset(settings.baseUrl, settings.kind)
   const modelSuggestions = PROVIDER_PRESETS.find((preset) => preset.id === providerPresetId)?.models ?? []
@@ -34,37 +33,6 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
       // Keep a hand-typed model; only fill the blank.
       ...(settings.model.trim() === "" && preset.models.length > 0 ? { model: preset.models[0] } : {}),
     })
-  }
-
-  useEffect(() => {
-    void settings.probeKey()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- probe once on open
-  }, [])
-
-  const saveKey = async () => {
-    if (!keyInput.trim()) return
-    setSaving(true)
-    setError(null)
-    try {
-      await settings.storeKey(keyInput.trim())
-      setKeyInput("")
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const forgetKey = async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      await settings.forgetKey()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSaving(false)
-    }
   }
 
   const browseRepo = async () => {
@@ -144,41 +112,29 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             min={256}
             max={32000}
             value={settings.maxTokens}
-            onChange={(e) => settings.setConfig({ maxTokens: Number(e.target.value) || 4096 })}
+            onChange={(e) => settings.setConfig({ maxTokens: Number(e.target.value) || 16384 })}
           />
         </label>
 
         <div className="field">
-          <span>
-            {t("studio.ai.apiKey")}{" "}
-            {settings.keyStored ? (
-              <span className="split-badge ok">{t("studio.ai.keyStored")}</span>
-            ) : (
-              <span className="split-badge">{t("studio.ai.keyMissing")}</span>
-            )}
-          </span>
+          <span>{t("studio.ai.apiKey")}</span>
           <div className="dialog-row">
             <input
-              type="password"
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
+              type={showKey ? "text" : "password"}
+              value={settings.apiKey}
+              onChange={(e) => settings.setConfig({ apiKey: e.target.value })}
               placeholder={t("studio.ai.keyPlaceholder")}
               autoComplete="off"
+              spellCheck={false}
             />
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={() => void saveKey()}
-              disabled={saving || !keyInput.trim() || !aiAvailable()}
-            >
-              {t("studio.ai.saveKey")}
+            <button type="button" className="ghost-button" onClick={() => setShowKey(!showKey)}>
+              {t(showKey ? "studio.ai.hideKey" : "studio.ai.showKey")}
             </button>
-            {settings.keyStored ? (
+            {settings.apiKey.trim() ? (
               <button
                 type="button"
                 className="ghost-button"
-                onClick={() => void forgetKey()}
-                disabled={saving}
+                onClick={() => settings.setConfig({ apiKey: "" })}
               >
                 {t("studio.ai.forgetKey")}
               </button>
@@ -208,11 +164,6 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
           <p className="studio-hint">{t("studio.ai.engineRepoHint")}</p>
         </label>
 
-        {error !== null ? (
-          <p className="studio-notice split-error" role="alert">
-            {error}
-          </p>
-        ) : null}
         <div className="dialog-actions">
           <button type="button" className="primary-button" onClick={onClose}>
             {t("studio.ai.done")}

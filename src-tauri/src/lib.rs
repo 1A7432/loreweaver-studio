@@ -5,7 +5,6 @@ mod host_local;
 mod llm;
 mod media;
 mod panel_serve;
-mod secrets;
 mod transport_bridge;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,9 +32,6 @@ pub fn run() {
             host_local::host_local_start,
             host_local::host_local_stop,
             host_local::host_local_status,
-            secrets::secret_set,
-            secrets::secret_exists,
-            secrets::secret_delete,
             llm::llm_chat,
             asset_cache::asset_cache_status,
             asset_cache::asset_fetch,

@@ -1,6 +1,15 @@
-// AI provider settings + the draft/validate/retry loop. Only CONFIG persists
-// here (zustand → localStorage); the API key goes straight to the OS
-// credential store via the Rust side and never touches JS-visible storage.
+// AI provider settings + the draft/validate/retry loop. Everything persists
+// here (zustand → localStorage), the API key included.
+//
+// The key used to live in the OS credential store. That bought a real property
+// — a compromised WebView could USE the key but never read it — at a price the
+// app cannot pay: the `keyring` crate has no Android backend at all, and its
+// Linux one needs a running Secret Service daemon, so the desktop-only path was
+// a dead end for a Tauri app that means to ship on five platforms. On macOS it
+// also re-prompted after every rebuild with a modal that could hang a draft for
+// eighteen minutes. One path that works everywhere beats a stronger one that
+// works in two places. The key is a local secret in a local app; treat this
+// file's storage as no more private than the rest of the session.
 
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
@@ -8,34 +17,26 @@ import { guardedLocalStorage } from "../../../lib/persistStorage"
 import {
   aiAvailable,
   llmChat,
-  secretDelete,
-  secretExists,
-  secretSet,
   type LlmMessage,
   type LlmProviderConfig,
   type LlmSamplingParams,
 } from "../../../lib/native"
 import { extractJsonBlock } from "./schemas"
 
-/** One fixed credential-store slot: the studio configures a single provider. */
-export const SECRET_ACCOUNT = "llm-api-key"
-
 export interface AiSettingsState {
   kind: "openai" | "anthropic"
   baseUrl: string
   model: string
   maxTokens: number
-  /** Cached "a key exists in the credential store" flag (probed, never the key). */
-  keyStored: boolean
+  apiKey: string
   /** Path to a checkout of the main repo — enables the `python -m app` CLI route. */
   engineRepoDir: string
 
   setConfig: (
-    patch: Partial<Pick<AiSettingsState, "kind" | "baseUrl" | "model" | "maxTokens" | "engineRepoDir">>,
+    patch: Partial<
+      Pick<AiSettingsState, "kind" | "baseUrl" | "model" | "maxTokens" | "apiKey" | "engineRepoDir">
+    >,
   ) => void
-  storeKey: (key: string) => Promise<void>
-  forgetKey: () => Promise<void>
-  probeKey: () => Promise<void>
 }
 
 export const useAiStore = create<AiSettingsState>()(
@@ -44,25 +45,14 @@ export const useAiStore = create<AiSettingsState>()(
       kind: "openai",
       baseUrl: "",
       model: "",
-      maxTokens: 4096,
-      keyStored: false,
+      // The output cap for ONE call. A card is drafted as a single JSON
+      // document, and 4096 truncated those mid-object — which does not arrive
+      // as "too long", it arrives as unparseable JSON and burns a retry.
+      maxTokens: 16384,
+      apiKey: "",
       engineRepoDir: "",
 
       setConfig: (patch) => set(patch),
-
-      storeKey: async (key) => {
-        await secretSet(SECRET_ACCOUNT, key)
-        set({ keyStored: true })
-      },
-
-      forgetKey: async () => {
-        await secretDelete(SECRET_ACCOUNT)
-        set({ keyStored: false })
-      },
-
-      probeKey: async () => {
-        set({ keyStored: await secretExists(SECRET_ACCOUNT) })
-      },
     }),
     {
       name: "loreweaver-studio-ai",
@@ -72,15 +62,18 @@ export const useAiStore = create<AiSettingsState>()(
         baseUrl: state.baseUrl,
         model: state.model,
         maxTokens: state.maxTokens,
+        apiKey: state.apiKey,
         engineRepoDir: state.engineRepoDir,
       }),
     },
   ),
 )
 
-/** Whether the AI buttons light up: native shell + endpoint + model + stored key. */
-export function aiReady(state: Pick<AiSettingsState, "baseUrl" | "model" | "keyStored">): boolean {
-  return aiAvailable() && state.baseUrl.trim() !== "" && state.model.trim() !== "" && state.keyStored
+/** Whether the AI buttons light up: native shell + endpoint + model + key. */
+export function aiReady(state: Pick<AiSettingsState, "baseUrl" | "model" | "apiKey">): boolean {
+  return (
+    aiAvailable() && state.baseUrl.trim() !== "" && state.model.trim() !== "" && state.apiKey.trim() !== ""
+  )
 }
 
 function currentConfig(sampling?: LlmSamplingParams): LlmProviderConfig {
@@ -89,15 +82,15 @@ function currentConfig(sampling?: LlmSamplingParams): LlmProviderConfig {
     kind: state.kind,
     baseUrl: state.baseUrl.trim(),
     model: state.model.trim(),
-    secretAccount: SECRET_ACCOUNT,
+    apiKey: state.apiKey.trim(),
     maxTokens: state.maxTokens,
     sampling,
   }
 }
 
 /** Hard ceiling on ONE model call. The Rust side already timeouts the HTTP
- * request (180s) and the keychain read (60s), but a hung invoke must never
- * leave the UI in a busy state forever — this is the belt to those braces. */
+ * request (180s), but a hung invoke must never leave the UI in a busy state
+ * forever — this is the belt to that brace. */
 export const CHAT_CALL_TIMEOUT_MS = 240_000
 
 export async function chatOnce(
@@ -108,11 +101,7 @@ export async function chatOnce(
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(
-        new Error(
-          "LLM call timed out — check for an OS keychain authorization dialog and the provider endpoint",
-        ),
-      )
+      reject(new Error("LLM call timed out — check the provider endpoint and model"))
     }, CHAT_CALL_TIMEOUT_MS)
   })
   try {
