@@ -387,7 +387,13 @@ export function validateProject(project: ForgeProject): ProjectValidation {
 }
 
 export const DEFAULT_HOOKS = `// Loreweaver room hooks — sandboxed, event-driven (see docs/plugins.md).
-// Events: turn_start, reply_ready, dice_rolled, variables_changed
+// Events, with the payload each one carries:
+//   turn_start        {user_message, actor}
+//   reply_ready       {reply}
+//   dice_rolled       {rolls: [{tool, result}]}
+//   variables_changed {writes: [{path, op}]}
+//   clock_advanced    {from, to, delta}
+//   tool_use          {tool, arguments}
 // APIs:   on(event, fn) · inject(text) · narrate(text) · rewriteReply(text)
 //         emitUI(blocks, opts) · log(text) · getvar/setvar/incvar · variables · _
 on('turn_start', (event) => {

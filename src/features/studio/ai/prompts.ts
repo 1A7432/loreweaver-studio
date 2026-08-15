@@ -15,13 +15,19 @@ Field rules (validated by code, retried on failure):
   secret, constant, priority, probability, position}. keys: trigger keyword array.
   selective_logic: and_any|and_all|not_any|not_all. condition: an expression over variable ids
   (e.g. "suspicion >= 5"), or "". secret: keeper-only lore. position: ""|"before"|"after".
-- "hooks": one JavaScript source string or "". Sandboxed room hooks, events:
-  on('turn_start'|'reply_ready'|'dice_rolled'|'variables_changed', fn); APIs: inject(text),
+- "hooks": one JavaScript source string or "". Sandboxed room hooks. APIs: inject(text),
   narrate(text), rewriteReply(text), emitUI(blocks), getvar/setvar/incvar, variables, _.
-  Event payloads, exactly (a wrong key is undefined at run time and silent):
+  All six events, with their payloads exactly (a wrong key reads undefined at run time
+  and fails silently — the handler simply never does anything):
   turn_start {user_message, actor} · reply_ready {reply} · dice_rolled {rolls:[{tool,result}]}
-  · variables_changed {writes:[{path, op}]}, op one of set|insert|delete|add|move — a write
-  carries WHAT changed and HOW, never the new value; read it with getvar(path).
+  · variables_changed {writes:[{path, op}]}, op one of set|insert|delete|add|move
+  · clock_advanced {from, to, delta} · tool_use {tool, arguments}.
+  A write names WHAT changed and HOW, never the new value, and there is no reliable way
+  to read that value from inside the handler: the sandbox snapshot is taken once per turn,
+  so getvar sees the turn-START value plus your own earlier setvar writes (unclamped — the
+  engine validates on the way out, so getvar can differ from what is stored). Engine and
+  MVU writes made mid-turn are not visible, and delete/move have no new value at all.
+  Write hooks that act on the CHANGE, not on a value read back after it.
 - Top-level prose fields: name, description, personality, scenario, first_mes, mes_example,
   creator_notes, tags (array).
 Write prose in the language the user used; labels always bilingual.`
