@@ -8,6 +8,28 @@ import {
 } from "./exporters"
 import { newLoreEntry, newPregen, newProject, validateProject, type ForgeVariable } from "./model"
 import { newVariable } from "./model"
+import { EPISODE_FIELD, filterEpisodeContent, type PackEpisode } from "./split/episodes"
+import { embedCardIntoPng, pngChunk } from "./pngCard"
+import { parseCardBytes } from "./split/charcard"
+
+const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+/** The smallest thing `embedCardIntoPng` will accept, as in pngCard.test.ts. */
+function minimalPng(): Uint8Array {
+  const chunks = [
+    pngChunk("IHDR", new Uint8Array(13)),
+    pngChunk("IDAT", new Uint8Array([1, 2, 3])),
+    pngChunk("IEND", new Uint8Array(0)),
+  ]
+  const out = new Uint8Array(PNG_SIGNATURE.length + chunks.reduce((sum, c) => sum + c.length, 0))
+  out.set(PNG_SIGNATURE, 0)
+  let offset = PNG_SIGNATURE.length
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
+}
 
 function project() {
   const p = newProject("Deep Pier")
@@ -246,6 +268,56 @@ describe("SillyTavern tavern-release options", () => {
     const [initvar, rules] = card.data.character_book.entries
     expect(initvar.comment).toBe("[InitVar]")
     expect(rules).toMatchObject({ comment: "变量更新规则", content: "好感度:实质帮助 +1", constant: true })
+  })
+})
+
+describe("the serialized-module invariant holds on every deliverable path", () => {
+  // Not "the tag is written" — that could be true while the release filter
+  // still passed the entry through. This runs the REAL exporters into the REAL
+  // filter, because the promise is about the file that circulates.
+  const EPISODES: PackEpisode[] = [
+    { id: "ep1", ordinal: 1, title: "第一章", summary: "", releaseNotes: "" },
+    { id: "ep2", ordinal: 2, title: "第二章", summary: "", releaseNotes: "" },
+  ]
+
+  function tagged() {
+    const p = project()
+    p.lorebook = [
+      { ...newLoreEntry(), title: "第一章的规则", content: "雨夜才有第五层。", episode: "ep1" },
+      { ...newLoreEntry(), title: "第五层的住户", content: "他早已不是人类。", episode: "ep2" },
+    ]
+    return p
+  }
+
+  it("keeps chapter-2 lore out of an up-to-chapter-1 ST card", () => {
+    const p = tagged()
+    const { specs } = validateProject(p)
+    const built = filterEpisodeContent(JSON.stringify(exportSillyTavernCard(p, specs)), EPISODES, 1)
+    expect(built).not.toContain("他早已不是人类")
+    expect(built).toContain("雨夜才有第五层")
+    // …and the studio's own tag never reaches the circulating file.
+    expect(JSON.parse(built)).not.toContain(EPISODE_FIELD)
+    expect(built).not.toContain(`"${EPISODE_FIELD}"`)
+  })
+
+  it("keeps chapter-2 lore out of an up-to-chapter-1 native bundle", () => {
+    const p = tagged()
+    const { specs } = validateProject(p)
+    const built = filterEpisodeContent(JSON.stringify(exportNativeBundle(p, specs)), EPISODES, 1)
+    expect(built).not.toContain("他早已不是人类")
+    expect(built).not.toContain(`"${EPISODE_FIELD}"`)
+  })
+
+  it("carries the tag through a PNG round trip, so an embedded card filters too", async () => {
+    // A PNG is the shape a community editor hands around; it is the ST JSON in
+    // a tEXt chunk, so it inherits the tag — but only if the JSON has one.
+    const p = tagged()
+    const { specs } = validateProject(p)
+    const png = embedCardIntoPng(minimalPng(), exportSillyTavernCard(p, specs))
+    const recovered = await parseCardBytes(png, "card.png")
+    const built = filterEpisodeContent(JSON.stringify(recovered.raw), EPISODES, 1)
+    expect(built).not.toContain("他早已不是人类")
+    expect(built).toContain("雨夜才有第五层")
   })
 })
 

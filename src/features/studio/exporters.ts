@@ -169,7 +169,16 @@ function loreToStEntry(entry: ForgeLoreEntry, index: number): Record<string, unk
   const secondary = splitKeys(entry.secondaryKeys)
   const condition = entry.condition.trim()
   const content = condition ? `@@if ${condition}\n${entry.content}` : entry.content
+  const episode = entry.episode?.trim() ?? ""
   return {
+    // The same studio-private tag `loreToNative` writes, in the same place —
+    // `filterEpisodeContent` reads it off the entry root for the ST and PNG
+    // shapes too. Without it every ST card and every PNG the studio produced was
+    // untagged, so the release filter passed it through whole and chapter-2 lore
+    // shipped inside an "up to episode 1" build. The serialized-module promise
+    // ("the circulating file contains no future-episode content, by
+    // construction") only holds if it holds on EVERY deliverable path.
+    ...(episode ? { [EPISODE_FIELD]: episode } : {}),
     id: index,
     keys: splitKeys(entry.keys),
     secondary_keys: secondary,
