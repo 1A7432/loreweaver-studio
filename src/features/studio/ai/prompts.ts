@@ -18,6 +18,9 @@ Field rules (validated by code, retried on failure):
 - "hooks": one JavaScript source string or "". Sandboxed room hooks, events:
   on('turn_start'|'reply_ready'|'dice_rolled'|'variables_changed', fn); APIs: inject(text),
   narrate(text), rewriteReply(text), emitUI(blocks), getvar/setvar/incvar, variables, _.
+  Event payloads, exactly (a wrong key is undefined at run time and silent):
+  turn_start {user_message, actor} · reply_ready {reply} · dice_rolled {rolls:[{tool,result}]}
+  · variables_changed {writes:[{path,value}]}.
 - Top-level prose fields: name, description, personality, scenario, first_mes, mes_example,
   creator_notes, tags (array).
 Write prose in the language the user used; labels always bilingual.`

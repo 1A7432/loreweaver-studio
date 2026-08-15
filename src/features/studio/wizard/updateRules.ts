@@ -16,6 +16,12 @@
 //
 // The hook API is the one `docs/plugins.md` §C.1 documents: `on(event, fn)`,
 // `getvar`/`setvar`/`incvar`. Nothing here invents an engine contract.
+//
+// The event PAYLOAD is a contract too, and a quieter one: `core/hooks.py:10`
+// and `docs/hooks.md` both spell `reply_ready` as `event.reply`, and
+// `agent/loop.py` fires it with exactly `{"reply": ...}`. A guard that read any
+// other key would be undefined at run time and silent about it — every
+// generated `setvar`/`incvar` would simply never fire on a live table.
 
 import { flattenLeaves, parseInitvar } from "../split/mvu"
 
@@ -170,7 +176,7 @@ ${kept}
 on('reply_ready', (event) => {
   // Placeholder trigger: does the Keeper's reply mention the phrase the rule
   // named? Replace with the real condition wherever you have one.
-  const said = (phrase) => String(event && event.text ? event.text : '').includes(phrase)
+  const said = (phrase) => String(event && event.reply ? event.reply : '').includes(phrase)
 
 ${body.join("\n")}
 })

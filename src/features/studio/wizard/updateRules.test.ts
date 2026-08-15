@@ -83,15 +83,44 @@ describe("hooksFromUpdateRules", () => {
       (id, value) => calls.push([id, value]),
       (id, by) => calls.push([id, by]),
     )
-    handlers.reply_ready({ text: "玩家帮忙拉起了缆绳，随后一行人进入雾区。" })
+    // The payload is the ENGINE's, key for key: `core/hooks.py:10` and
+    // `agent/loop.py` fire `reply_ready` with `{reply: "..."}`. A fixture that
+    // invented a friendlier key here would pass while the emitted code read
+    // undefined on every real table — so this shape is part of the assertion.
+    handlers.reply_ready({ reply: "玩家帮忙拉起了缆绳，随后一行人进入雾区。" })
     expect(calls).toEqual([
       ["理.好感度", 5],
       ["理.见过雾", true],
     ])
 
     calls.length = 0
-    handlers.reply_ready({ text: "他背叛了同伴。" })
+    handlers.reply_ready({ reply: "他背叛了同伴。" })
     expect(calls).toEqual([["理.好感度", -3]])
+  })
+
+  it("fires nothing when handed a payload without the engine's key", () => {
+    // The failure this test exists to catch: a guard reading the wrong key is
+    // not an error, it is silence. Pin the direction so a future rename cannot
+    // pass by making every trigger vacuously false.
+    const code = hooksFromUpdateRules("好感度: 玩家帮忙 +5", INITVAR)
+    const calls: [string, unknown][] = []
+    const handlers: Record<string, (event: unknown) => void> = {}
+    const sandbox = new Function("on", "setvar", "incvar", code) as (
+      on: (event: string, fn: (event: unknown) => void) => void,
+      setvar: (id: string, value: unknown) => void,
+      incvar: (id: string, by: unknown) => void,
+    ) => void
+    sandbox(
+      (event, fn) => {
+        handlers[event] = fn
+      },
+      (id, value) => calls.push([id, value]),
+      (id, by) => calls.push([id, by]),
+    )
+    handlers.reply_ready({ text: "玩家帮忙拉起了缆绳。" })
+    expect(calls).toEqual([])
+    handlers.reply_ready({ reply: "玩家帮忙拉起了缆绳。" })
+    expect(calls).toEqual([["理.好感度", 5]])
   })
 
   it("survives a handler call with no event at all", () => {
