@@ -245,30 +245,57 @@ function lintPanelBindings(source: PackLintSource, panels: LintPanel[], findings
   }
 }
 
-/** What each hook event's payload actually carries.
+/** What each hook event's payload actually carries — all six of them.
  *
- * `core/hooks.py:9-13` declares them and the `fire()` calls in `agent/loop.py`
- * pass exactly these dicts — both were read, not inferred. An event NOT listed
- * here is never checked, so an engine that grows one cannot produce a false
- * finding here; it just gets no coverage until this table catches up. */
+ * `core/hooks.py:9-13` declares five and the `fire()` calls in `agent/loop.py`
+ * pass exactly these dicts; `tool_use` fires from `agent/loop.py:974` with
+ * `{tool, arguments}`. All read, none inferred. An event NOT listed here is
+ * never checked, so an engine that grows one cannot produce a false finding
+ * here; it just gets no coverage until this table catches up. */
 const EVENT_PAYLOAD_KEYS: Record<string, readonly string[]> = {
   turn_start: ["user_message", "actor"],
   reply_ready: ["reply"],
   dice_rolled: ["rolls"],
   variables_changed: ["writes"],
   clock_advanced: ["from", "to", "delta"],
+  // The highest-stakes one: this handler's return DENIES a tool call. A guard
+  // reading the wrong key here does not misfire, it never fires — and the
+  // author sees a permission gate that silently permits everything.
+  tool_use: ["tool", "arguments"],
 }
 
 /** `on('<event>', <handler>)` with the handler's own parameter name. Covers the
- * three shapes hooks are written in: `(e) => …`, `e => …`, `function (e) {…}`.
- * A handler that takes no parameter reads nothing off the event and is skipped. */
+ * shapes hooks are written in: `(e) => …`, `e => …`, `async (e) => …`,
+ * `function (e) {…}`. A handler that takes no parameter reads nothing off the
+ * event and is skipped. */
 const ON_HANDLER_RE =
-  /\bon\s*\(\s*(['"`])([a-z_]+)\1\s*,\s*(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*(?:=>|\{)/g
+  /\bon\s*\(\s*(['"`])([a-z_]+)\1\s*,\s*(?:async\s*)?(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*(?:=>|\{)/g
 
-/** Reads of `<param>.<key>` — the only way a handler can touch its payload. */
+/** Blank a span while keeping its length, so every offset downstream still
+ * lines up with the original source. */
+function blank(match: string): string {
+  return match.replace(/[^\n]/g, " ")
+}
+
+/** Comments removed. Applied before anything else is looked for: a comment
+ * naming the wrong key ("// e.text is the wrong one") is the author already
+ * knowing, and a rule that flagged it would be arguing with them. */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, blank)
+}
+
+/** String literals removed too. Only for the field-read scan — the handler
+ * scan needs the event name, which IS a string literal. */
+function withoutStrings(source: string): string {
+  return source.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, blank)
+}
+
+/** Reads of `<param>.<key>` — the only way a handler can touch its payload.
+ * A member CALL is not a payload read: `event.toString()` is a method on every
+ * object, not a field the engine was supposed to deliver. */
 function eventFieldReads(segment: string, param: string): string[] {
-  const re = new RegExp(`\\b${param}\\s*\\.\\s*([A-Za-z_$][\\w$]*)`, "g")
-  return [...segment.matchAll(re)].map((match) => match[1])
+  const re = new RegExp(`\\b${param}\\s*\\.\\s*([A-Za-z_$][\\w$]*)\\s*(\\()?`, "g")
+  return [...segment.matchAll(re)].filter((match) => match[2] === undefined).map((match) => match[1])
 }
 
 /** Hook handlers reading a field their event does not deliver.
@@ -276,10 +303,21 @@ function eventFieldReads(segment: string, param: string): string[] {
  * The failure this catches is silence, not an error: JavaScript answers
  * `undefined`, the guard is false forever, and the handler does nothing while
  * looking correct. Nothing else in the toolchain says a word about it — the
- * pack builds, the hook loads, the sandbox runs it, and no variable moves. */
+ * pack builds, the hook loads, the sandbox runs it, and no variable moves.
+ *
+ * What it deliberately does NOT resolve, since it is a regex over source and an
+ * advisory finding is only worth having if it is nearly always right:
+ *   - a nested callback reusing the handler's parameter name (`rolls.forEach(e
+ *     => e.tool)`) is read as the handler's own, so a field valid on the inner
+ *     object can be reported against the outer one;
+ *   - destructured (`({reply}) => …`) and aliased (`const ev = event`) handlers
+ *     are not scanned at all — they are silently uncovered, never mis-flagged.
+ * Both fail toward saying nothing, except the first, which is why the parameter
+ * scope stops at the next `on(` rather than running to the end of the file. */
 function lintHookEventFields(source: PackLintSource, findings: PackLintFinding[]): void {
   for (const block of source.code) {
-    for (const match of [...block.source.matchAll(ON_HANDLER_RE)]) {
+    const code = withoutComments(block.source)
+    for (const match of [...code.matchAll(ON_HANDLER_RE)]) {
       const known = EVENT_PAYLOAD_KEYS[match[2]]
       if (known === undefined) continue
       const param = match[3]
@@ -287,11 +325,11 @@ function lintHookEventFields(source: PackLintSource, findings: PackLintFinding[]
       // the end. Coarse, but a hook file is small and a later handler's reads
       // would only be attributed to the wrong (still-real) finding.
       const start = match.index + match[0].length
-      const nextOn = block.source.slice(start).search(/\bon\s*\(\s*['"`]/)
-      const segment = nextOn < 0 ? block.source.slice(start) : block.source.slice(start, start + nextOn)
+      const nextOn = code.slice(start).search(/\bon\s*\(\s*['"`]/)
+      const segment = nextOn < 0 ? code.slice(start) : code.slice(start, start + nextOn)
 
       const seen = new Set<string>()
-      for (const field of eventFieldReads(segment, param)) {
+      for (const field of eventFieldReads(withoutStrings(segment), param)) {
         if (known.includes(field) || seen.has(field)) continue
         seen.add(field)
         findings.push(

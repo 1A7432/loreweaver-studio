@@ -299,8 +299,38 @@ describe("code rules", () => {
 
     it("stays quiet on an event whose payload it has not verified", () => {
       // The table is read off `core/hooks.py` and the `fire()` sites. An event
-      // missing from it gets no coverage rather than a guessed finding.
-      expect(fields(hook("on('tool_use', (e) => { log(e.whatever) })"))).toEqual([])
+      // missing from it gets no coverage rather than a guessed finding — and
+      // the specimen has to be an event the engine really does not fire, or
+      // this test would be asserting the table is incomplete.
+      expect(fields(hook("on('no_such_event', (e) => { log(e.whatever) })"))).toEqual([])
+    })
+
+    it("covers tool_use, where a wrong key silently permits every tool", () => {
+      // `agent/loop.py:974` fires `{tool, arguments}` and DENIES the call on
+      // the handler's say-so. A guard reading the wrong key does not misfire;
+      // it never fires, and the gate permits everything while looking armed.
+      expect(fields(hook("on('tool_use', (e) => { if (e.name === 'roll') deny('no') })"))).toEqual(["name"])
+      expect(fields(hook("on('tool_use', (e) => { log(e.tool, e.arguments) })"))).toEqual([])
+    })
+
+    it("reads code, not prose about code", () => {
+      // A comment naming the wrong key is the author already knowing; a string
+      // holding one is data. Flagging either would be arguing with them.
+      expect(
+        fields(hook("on('reply_ready', (e) => {\n  // e.text was the old key\n  log(e.reply)\n})")),
+      ).toEqual([])
+      expect(fields(hook("on('reply_ready', (e) => { log('e.text', e.reply) })"))).toEqual([])
+      expect(fields(hook("on('reply_ready', (e) => { /* e.text */ log(e.reply) })"))).toEqual([])
+    })
+
+    it("does not mistake a method call for a payload field", () => {
+      // `toString` is on every object; it was never a field the engine owed.
+      expect(fields(hook("on('reply_ready', (e) => { log(e.toString()) })"))).toEqual([])
+      expect(fields(hook("on('reply_ready', (e) => { log(e.reply.trim()) })"))).toEqual([])
+    })
+
+    it("reads an async handler like any other", () => {
+      expect(fields(hook("on('reply_ready', async (e) => { await log(e.text) })"))).toEqual(["text"])
     })
 
     it("ignores a handler that never names its event", () => {
