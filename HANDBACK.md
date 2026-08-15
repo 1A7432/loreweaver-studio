@@ -5,8 +5,16 @@ blocked the work: each item states what was shipped in the meantime and what
 would change if you decide otherwise. Newest batch last.
 
 All six batches are done, the owner's three follow-up decisions are
-implemented, and every gate in §1 is green — including the round-trip gate and
-its live-connect stage. Nothing is pushed.
+implemented, the independent review (`REVIEW-2026-08-15.md`) is fully worked
+off — its critical, all seven majors and all eight minors — and every gate in
+§1 is green, including the round-trip gate and its live-connect stage. Nothing
+is pushed.
+
+One decision fell out of the review and was taken here rather than deferred:
+the restore control's "remap into a different room" field was deleted rather
+than wired, because `net/admin.py::_import_room` refuses any room but the
+caller's and then requires the file to be a backup OF that room. There is no
+remap to wire. Say so if you would rather have an upstream ask for one.
 
 ## Batch 0 — reconnect
 
@@ -78,3 +86,16 @@ The probe is gone. `uv sync --extra ejs` is a documented prerequisite of the
 round-trip gate, checked by name up front: a missing extra fails with the exact
 command and the exact repo rather than surfacing later as a PackError about a
 rulepack. One path, and the same coverage on every machine.
+
+## The review pass — one new upstream ask
+
+### 5. A player can never learn the room's upload policy — FILED (item 14)
+
+`media_enabled` is unicast to the keeper who toggled it and the welcome does
+not carry the flag, so every other member's client cannot know whether uploads
+are allowed until a `media_disabled` refusal — after they have picked a file,
+hashed it and offered it. The studio now latches that refusal and disables the
+button from it, which is a client inferring room state from an error and is
+still wrong for the first upload of every session. The real fix is one line
+upstream (broadcast it, or put it in the welcome); it is `UPSTREAM_TODO.md`
+item 14. Nothing here is blocked on it.
