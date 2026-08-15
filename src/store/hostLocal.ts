@@ -5,7 +5,8 @@
 // started (and only then; reconnects never kill it).
 
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../lib/persistStorage"
 import {
   hostLocalStart,
   hostLocalStatus,
@@ -129,7 +130,7 @@ export const useHostLocalStore = create<HostLocalState>()(
     }),
     {
       name: "loreweaver-studio-host-local",
-      storage: createJSONStorage(() => localStorage),
+      storage: guardedLocalStorage,
       partialize: (s) => ({ homeOverride: s.homeOverride }),
     },
   ),

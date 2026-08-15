@@ -1,5 +1,6 @@
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../lib/persistStorage"
 import { applyTheme, DEFAULT_THEME, type ThemeName } from "../lib/themes"
 
 export type AppMode = "play" | "studio"
@@ -25,7 +26,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "loreweaver-studio-app",
-      storage: createJSONStorage(() => localStorage),
+      storage: guardedLocalStorage,
       partialize: (s) => ({ theme: s.theme }),
       onRehydrateStorage: () => (state) => {
         applyTheme(state?.theme ?? DEFAULT_THEME)

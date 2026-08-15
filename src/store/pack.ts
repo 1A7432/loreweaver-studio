@@ -1039,19 +1039,12 @@ export const usePackStore = create<PackState>()(
       // keystroke, so a quota error here would abort the edit that caused it.
       // See `lib/persistStorage.ts`.
       storage: guardedLocalStorage,
+      // The session's shape is this file's. Bump this when it changes and the
+      // stored one is dropped for a fresh session — there is no migration and
+      // no reader for an older shape, so a stale blob can never reach the UI
+      // half-filled (the metadata form is one persisted object, and a missing
+      // field would throw on the first `.trim()` inside a render).
       version: 1,
-      // The metadata form is ONE persisted object, so zustand's shallow merge
-      // replaces it wholesale — a blob written before a field existed comes
-      // back missing that field, and the first `.trim()` on it throws. Filling
-      // from the defaults is what makes adding a field to the form safe.
-      merge: (persisted, current) => {
-        const saved = (persisted ?? {}) as Partial<PackState>
-        return {
-          ...current,
-          ...saved,
-          metadata: { ...EMPTY_METADATA, ...(saved.metadata ?? {}) },
-        }
-      },
       // What survives: every classification, promotion decision, metadata
       // field, panel, kit entry and the paths the build already used. What does
       // not: raw bytes (dropped, flagged for re-attach), the engine probe and

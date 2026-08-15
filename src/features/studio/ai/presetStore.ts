@@ -4,7 +4,8 @@
 // `overrides` map so every tweak is revertible and the original stays exact.
 
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../../../lib/persistStorage"
 import { uid } from "../model"
 import type { StPresetImport } from "./stPreset"
 
@@ -77,7 +78,7 @@ export const usePresetStore = create<PresetState>()(
     }),
     {
       name: "loreweaver-studio-prompt-presets",
-      storage: createJSONStorage(() => localStorage),
+      storage: guardedLocalStorage,
       partialize: (s) => ({ presets: s.presets, activeId: s.activeId }),
     },
   ),

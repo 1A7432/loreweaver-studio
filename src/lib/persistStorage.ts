@@ -10,6 +10,13 @@
 // treated its two settings keys. What is on screen is the truth; what is in
 // localStorage is a convenience for the next launch. Losing the second must
 // never cost the first.
+//
+// EVERY persisted store in the app goes through this — the forge's projects,
+// the wizard's sessions, the pack bench, the split workbench, the preset
+// library, the AI provider settings, the host-local home and the theme. The
+// quota is shared across all of them, so the store that throws is rarely the
+// store that filled it: guarding only the big ones would mean the theme toggle
+// takes down whatever the author was typing.
 
 import { createJSONStorage } from "zustand/middleware"
 

@@ -3,7 +3,8 @@
 // credential store via the Rust side and never touches JS-visible storage.
 
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../../../lib/persistStorage"
 import {
   aiAvailable,
   llmChat,
@@ -65,7 +66,7 @@ export const useAiStore = create<AiSettingsState>()(
     }),
     {
       name: "loreweaver-studio-ai",
-      storage: createJSONStorage(() => localStorage),
+      storage: guardedLocalStorage,
       partialize: (state) => ({
         kind: state.kind,
         baseUrl: state.baseUrl,

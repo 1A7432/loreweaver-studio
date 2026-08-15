@@ -142,6 +142,8 @@ export const useSplitStore = create<SplitState>()(
       // Guarded: a quota error thrown inside `set` would take the edit down
       // with it. See `lib/persistStorage.ts`.
       storage: guardedLocalStorage,
+      // Bump when the session's shape changes: the stored one is dropped for a
+      // fresh session rather than half-loaded. No migration, by choice.
       version: 1,
       partialize: (state) => ({
         session:

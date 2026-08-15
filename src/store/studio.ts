@@ -1,5 +1,6 @@
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../lib/persistStorage"
 import {
   newLoreEntry,
   newPregen,
@@ -230,7 +231,7 @@ export const useStudioStore = create<StudioState>()(
     },
     {
       name: "loreweaver-studio-projects",
-      storage: createJSONStorage(() => localStorage),
+      storage: guardedLocalStorage,
       partialize: (s) => ({ projects: s.projects, activeUid: s.activeUid }),
     },
   ),

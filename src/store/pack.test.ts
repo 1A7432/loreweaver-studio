@@ -455,26 +455,13 @@ describe("pack session persistence", () => {
     expect(written).toHaveProperty("packResult")
   })
 
-  it("fills a metadata form saved before a field existed", () => {
-    // The form is ONE persisted object, so zustand's shallow merge replaces it
-    // wholesale — a blob written by an older build comes back missing whatever
-    // was added since, and the first `.trim()` on that field throws inside a
-    // render. Every field added to the form since is exercised by the read
-    // below; the merge is what makes adding one safe.
-    const merge = usePackStore.persist.getOptions().merge!
-    const stale = { metadata: { id: "old-pack", version: "0.1.0" }, step: "metadata" }
-    const merged = merge(stale, usePackStore.getState()) as ReturnType<typeof usePackStore.getState>
-
-    expect(merged.metadata.id).toBe("old-pack")
-    expect(merged.metadata.rulepackScriptSource).toBe("")
-    expect(merged.metadata.rulepackMode).toBe("patch")
-    // The store's own actions survive the merge — it is state, not a snapshot.
-    expect(typeof merged.addFiles).toBe("function")
-  })
-
-  it("merges an empty persisted blob into the untouched defaults", () => {
-    const merge = usePackStore.persist.getOptions().merge!
-    const merged = merge({}, usePackStore.getState()) as ReturnType<typeof usePackStore.getState>
-    expect(merged.metadata).toEqual(usePackStore.getState().metadata)
+  it("declares a session version, so a differently-shaped one is dropped", () => {
+    // The metadata form is one persisted object: a stored blob whose shape does
+    // not match this file would land in the UI half-filled and throw on the
+    // first `.trim()` inside a render. No migration exists and none is wanted —
+    // the version is what makes a shape change discard instead of half-load.
+    const options = usePackStore.persist.getOptions()
+    expect(options.version).toBe(1)
+    expect(options.migrate).toBeUndefined()
   })
 })

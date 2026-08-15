@@ -45,4 +45,21 @@ describe("guardedLocalStorage", () => {
     expect(() => storage.removeItem("k")).not.toThrow()
     expect(persistenceDegraded()).toBe(true)
   })
+
+  it("is the only storage any persisted store uses", () => {
+    // The quota is shared across every key, so the store that THROWS is rarely
+    // the store that filled it — one unguarded `persist` is enough to take an
+    // unrelated edit down with it. This is the rule that keeps the next store
+    // from being added without the guard; there is no per-store exception.
+    const sources: Record<string, string> = import.meta.glob("../{store,features}/**/*.ts", {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    })
+    const scanned = Object.entries(sources).filter(([path]) => !/\.test\.ts$/.test(path))
+    // A glob that matched nothing would make this pass by seeing nothing —
+    // the same vacuous green a zero-match test filter gives. Assert it looked.
+    expect(scanned.filter(([, text]) => text.includes("persist(")).length).toBeGreaterThan(5)
+    expect(scanned.filter(([, text]) => text.includes("createJSONStorage(")).map(([p]) => p)).toEqual([])
+  })
 })

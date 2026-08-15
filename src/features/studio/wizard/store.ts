@@ -4,7 +4,8 @@
 // stage writes through `applyStage` into the studio store.
 
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import { persist } from "zustand/middleware"
+import { guardedLocalStorage } from "../../../lib/persistStorage"
 import { useStudioStore } from "../../../store/studio"
 import { applyStage } from "./apply"
 import { emptyContract, type CardContract } from "./contract"
@@ -174,7 +175,7 @@ export const useWizardStore = create<WizardState>()(
     }),
     {
       name: "loreweaver-studio-wizard",
-      storage: createJSONStorage(() => localStorage),
+      storage: guardedLocalStorage,
       partialize: (s) => ({ sessions: s.sessions }),
     },
   ),
