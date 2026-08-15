@@ -14,9 +14,13 @@
 # Usage:  bash scripts/check_live_connect.sh   (also stage 5 of check_roundtrip.sh)
 # Engine repo: $TRPG_KP_REPO, default ../trpg_kp (sibling checkout).
 #
-# The engine runs fully sandboxed: its own keystore, data dir and env file under
-# a temp directory, so nothing touches the operator's campaign data, and with no
+# The engine runs sandboxed: its own keystore, data dir and env file under a
+# temp directory, so nothing touches the operator's campaign data, and with no
 # LLM configured it falls back to the offline demo Keeper (no external calls).
+# The sandbox covers the env file, and the env file is only half the story —
+# pydantic-settings reads real environment variables at HIGHER priority than the
+# file, so an exported `TRPG_DATA_DIR` or `TRPG_LLM__API_KEY` in the operator's
+# shell would walk straight past it. Every `TRPG_*` is scrubbed before spawning.
 
 set -euo pipefail
 
@@ -73,6 +77,9 @@ say "1/3 spawn the engine (--serve) in a sandboxed data dir"
 : >"$SANDBOX/env"
 (
   cd "$ENGINE_REPO"
+  # Drop the operator's own engine settings before the three this gate sets:
+  # anything left exported would outrank the empty env file above.
+  for name in $(env | sed -n 's/^\(TRPG_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$name"; done
   TRPG_ENV_FILE="$SANDBOX/env" \
   TRPG_DATA_DIR="$SANDBOX/data" \
   TRPG_BOOTSTRAP_ROOM="live-connect" \
@@ -100,12 +107,18 @@ KEY="$(sed -n 's/^key=//p' "$KEY_FILE" | head -1)"
 echo "ok: engine pid $ENGINE_PID serving ticket ${TICKET:0:24}…"
 
 say "2/3 dial it through the real transport crate"
+CARGO_LOG="$SANDBOX/cargo.log"
 (
   cd "$STUDIO_ROOT"
   LOREWEAVER_LIVE_TICKET="$TICKET" \
   LOREWEAVER_LIVE_KEY="$KEY" \
-    cargo test -p loreweaver-transport --test live_connect -- --ignored --nocapture
+    cargo test -p loreweaver-transport --test live_connect -- --ignored --nocapture 2>&1 | tee "$CARGO_LOG"
 )
+# `cargo test` exits 0 when a filter matches NOTHING, so the exit code alone
+# would let this gate pass vacuously — rename the test, or let the `#[ignore]`
+# attribute drift, and green would mean "ran zero tests". Assert the count.
+grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$CARGO_LOG" \
+  || fail "the live-connect test did not actually run (a filter that matches no test still exits 0) — check the test name and its #[ignore] attribute"
 
 say "3/3 the engine survived the session"
 kill -0 "$ENGINE_PID" 2>/dev/null || fail "the engine died during the handshake (see log above)"

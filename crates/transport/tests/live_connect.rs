@@ -87,12 +87,17 @@ async fn live_engine_welcome_reaches_the_event_channel() {
     // The point of the gate. The frontend (`store/connection.ts`) accepts any
     // welcome whose MAJOR matches the installed `@loreweaver/protocol`; if the
     // transport ever again refuses one the frontend would accept, the loop
-    // above sees Offline and fails. Pinning 2.x on top keeps the gate honest
-    // about which engine line it was actually run against.
-    assert_eq!(
-        protocol.split('.').next(),
-        Some("2"),
-        "engine announced protocol {protocol:?}; the studio targets the 2.x line"
+    // above sees Offline and fails.
+    //
+    // What this asserts is deliberately NOT which major it was: a hardcoded "2"
+    // here is the exact class of constant that caused the outage this gate was
+    // built for — a version predicate in a layer that does not depend on
+    // `@loreweaver/protocol`, which therefore cannot be bumped with it. The
+    // transport's job is to carry the banner intact; judging it belongs to the
+    // one layer that knows what the studio was built against.
+    assert!(
+        !protocol.is_empty(),
+        "welcome carries an empty protocol banner: {welcome}"
     );
     assert!(
         welcome.get("room").is_some(),

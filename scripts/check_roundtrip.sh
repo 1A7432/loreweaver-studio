@@ -85,8 +85,8 @@ trust = result.get("trust") or {}
 # [InitVar] + an EJS span, so engine-side world detection is exercised on the
 # SillyTavern path too), and the same character embedded in a PNG — the shape a
 # community editor hands around, which had never passed through the engine's
-# own parser. Plus one skill with hooks; a CoC7 patch and (when QuickJS is
-# available) a stage-E rules-script rulepack; one lorebook; two panels; one kit
+# own parser. Plus one skill with hooks; a CoC7 patch and a stage-E
+# rules-script rulepack; one lorebook; two panels; one kit
 # subject licensing imagegen; seven assets; one prep-phase plan script; one
 # keeper-style prompt preset (validated with the engine's real preset parser).
 expected = {

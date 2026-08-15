@@ -63,6 +63,19 @@ jobs:
         with:
           python-version: "3.11"
           enable-cache: true
+      # The gate's stage-3 fixture ships a rules-script rulepack, which compiles
+      # through QuickJS at pack-build time — and the engine keeps quickjs behind
+      # its optional `ejs` extra. Without this the gate fails at its own
+      # prerequisite check, by design, so sync the extra rather than skipping a
+      # lane: a lane skipped in CI is a lane nobody guards.
+      - name: Sync the engine's dependencies, ejs extra included
+        run: uv sync --extra ejs
+        working-directory: ../trpg_kp
+      # Stage 5 dials the engine through the real transport crate, so this job
+      # needs a toolchain too. No Tauri system libs: the transport crate is
+      # standalone and the gate builds only `-p loreweaver-transport`.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Run the round-trip gate
         run: bash scripts/check_roundtrip.sh
         env:
