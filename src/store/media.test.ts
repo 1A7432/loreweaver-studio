@@ -114,4 +114,44 @@ describe("media store", () => {
   it("ignores frames from the other families", () => {
     expect(useMediaStore.getState().ingest({ type: "system", level: "info", text: "x" })).toBe(false)
   })
+
+  describe("a refused offer", () => {
+    it("learns the room's policy from the refusal, since nothing else tells a player", async () => {
+      // The engine unicasts `media_enabled` to the keeper who toggled it and
+      // the welcome does not carry it, so a player's store stays null forever
+      // (UPSTREAM_TODO item 14). The `media_disabled` refusal is the only time
+      // the server states the policy to them.
+      await useMediaStore.getState().upload("/tmp/handout.png")
+      expect(useMediaStore.getState().uploads.abc123.phase).toBe("offering")
+
+      useMediaStore.getState().ingest({ type: "error", code: "media_disabled", message: "uploads are off" })
+
+      expect(useMediaStore.getState().uploadsEnabled).toBe(false)
+      expect(useMediaStore.getState().uploads.abc123.phase).toBe("error")
+      expect(useMediaStore.getState().uploads.abc123.error).toBe("play.media.err.media_disabled")
+    })
+
+    it("fails the stalled offer on a rate limit without touching the policy flag", async () => {
+      // The server answers a refused offer once and says nothing further, so
+      // an unanswered `offering` row would otherwise sit there for the session.
+      await useMediaStore.getState().upload("/tmp/handout.png")
+      useMediaStore.getState().ingest({ type: "error", code: "media_rate_limited", message: "slow down" })
+
+      expect(useMediaStore.getState().uploads.abc123.phase).toBe("error")
+      expect(useMediaStore.getState().uploadsEnabled).toBeNull()
+    })
+
+    it("does not consume the error — it still belongs in the chronicle", () => {
+      // Every other refusal a player sees is shown in the log; an upload's
+      // should not vanish because this store looked at it first.
+      expect(useMediaStore.getState().ingest({ type: "error", code: "media_disabled", message: "off" })).toBe(
+        false,
+      )
+    })
+
+    it("leaves an unrelated error alone", () => {
+      useMediaStore.getState().ingest({ type: "error", code: "bad_key", message: "unknown key" })
+      expect(useMediaStore.getState().uploadsEnabled).toBeNull()
+    })
+  })
 })

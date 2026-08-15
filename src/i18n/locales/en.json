@@ -266,6 +266,10 @@
       "useAsAvatar": "Use as avatar",
       "dismiss": "Dismiss",
       "uploadFailed": "{{name}} could not be shared: {{detail}}",
+      "err": {
+        "media_disabled": "the keeper has player uploads turned off for this room",
+        "media_rate_limited": "too many uploads in a row — wait a moment and try again"
+      },
       "phase": {
         "offering": "Offering {{name}}…",
         "sending": "Uploading {{name}}…",

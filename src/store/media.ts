@@ -92,6 +92,25 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
       case "media_accept":
         void resolveAccept(frame, set, get)
         return true
+      case "error":
+        // The refusal side of an upload. `_handle_media_offer` replies with
+        // `media_disabled` or `media_rate_limited` and sends nothing else, so
+        // without this the offer would sit at "offering" forever and the deck
+        // would keep inviting a player to try again.
+        //
+        // `media_disabled` also teaches this client something it has no other
+        // way to learn: the engine unicasts `media_enabled` only to the keeper
+        // who flipped it, and the welcome does not carry the flag, so a player
+        // who joined afterwards has `uploadsEnabled: null` for the whole
+        // session (UPSTREAM_TODO item 14). The refusal is the one moment the
+        // server states the room's policy to them, so it is recorded.
+        if (frame.code === "media_disabled") set({ uploadsEnabled: false })
+        if (frame.code === "media_disabled" || frame.code === "media_rate_limited") {
+          failOfferingUploads(set, get, `play.media.err.${frame.code}`)
+        }
+        // NOT consumed: an error still belongs in the chronicle, where every
+        // other refusal the player sees is shown.
+        return false
       default:
         return false
     }
@@ -156,6 +175,23 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
 
   reset: () => set({ ...EMPTY }),
 }))
+
+/** Mark every offer still waiting for an answer as failed. The server replies
+ * to a refused `media_offer` with one error frame and nothing else, and it
+ * names no hash — so whatever is still `offering` is what it refused. */
+function failOfferingUploads(
+  set: (fn: (state: MediaState) => Partial<MediaState>) => void,
+  get: () => MediaState,
+  errorKey: string,
+): void {
+  const stalled = Object.keys(get().uploads).filter((key) => get().uploads[key].phase === "offering")
+  if (stalled.length === 0) return
+  set((state) => {
+    const uploads = { ...state.uploads }
+    for (const key of stalled) uploads[key] = { ...uploads[key], phase: "error", error: errorKey }
+    return { uploads }
+  })
+}
 
 /** Finish one accepted offer. Split out because it is the only async path in
  * `ingest`, and `ingest` must stay synchronous for the frame router. */

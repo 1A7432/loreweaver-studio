@@ -65,8 +65,10 @@ catch-up itself.
    `packId/path` resolver from item 6 — **that half landed too**: `cmd_preset`
    (`gateway/commands.py:1178`) now resolves a pack-relative ref through
    `resolve_installed_path` before falling back to a literal server path
-   (`:1212–1215`). What remains open is only the finer marker→section mapping
-   contract — prompt_builder's own comment still calls the single-fold policy v0.
+   (`:1212–1215`). The finer marker→section mapping, the last half that was open
+   when this was written, landed the same day too: `core.preset.style_bands`
+   splits a preset four ways (see the 2026-08-15 landings below), so nothing in
+   this item is outstanding.
 
 10. **A world card's PROSE has nowhere to go.** **LANDED upstream `884fe51`** — the
     prose now seeds a keeper-only module brief at import. Studio-side: nothing is
@@ -94,12 +96,6 @@ catch-up itself.
     exactly one keeper-gated `.var set <id> <value>` / `.var add <id> <delta>` (or a
     panel-writable var op) over `core.modvars` validation.
 
-### The one half still genuinely open
-
-Item 9's finer marker→section mapping contract: `prompt_builder`'s own comment
-still calls the single-fold policy v0. Nothing studio-side is blocked on it —
-the studio ships the preset document; how the engine folds it is the engine's.
-
 ## New asks from the 2.x catch-up
 
 12. ~~**The M19 presentation schema never shipped the spec's template list + palette.**~~
@@ -126,6 +122,23 @@ the studio ships the preset document; how the engine folds it is the engine's.
     now owns an extension→MIME table (`_ASSET_MIME_BY_SUFFIX`), pinned per extension
     by `tests/core/test_pack_asset_mime.py`. The wizard's audio hint is back to the
     full documented list.
+
+14. **A player can never learn the room's upload policy.** `media_enabled` is
+    UNICAST to the keeper who toggled it (`net/session.py:661`,
+    `_handle_media_set_enabled` → `member.send_frame`), and `welcome_frame` does not
+    carry the flag. So every other member's client holds `uploadsEnabled: null` for
+    the whole session, no matter how many times the switch is flipped: a player who
+    joined before the toggle never hears about it, and one who joins after has
+    nothing to read it from. The only moment the server states the policy to a
+    player is the `media_disabled` refusal AFTER they picked a file, hashed it and
+    offered it.
+
+    The studio does what it can from this side — the refusal now latches the flag
+    locally and disables the button — but that is a client guessing from an error,
+    and it is wrong for the first upload of every session. The ask is one of:
+    broadcast `media_enabled` to the room on change (it is room state, not a
+    per-member setting), or carry the current value in `welcome`. Either makes the
+    control honest before the first attempt instead of after it.
 
 ## Engine-side landings, 2026-08-15 (the parallel lane §9 of docs/OVERHAUL-2026-08.md)
 

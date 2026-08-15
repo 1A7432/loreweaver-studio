@@ -14,6 +14,17 @@ import { useConnectionStore } from "../../store/connection"
 import { useMediaStore } from "../../store/media"
 import { assetFetch, assetReadBase64 } from "./panels/assets"
 
+/** A pending upload's `error` is either an i18n key under `play.media.err.`
+ * (a refusal the SERVER named, which we can say properly) or a verbatim message
+ * from the native side (which we cannot). Translate the first, show the second
+ * as it came. */
+function uploadDetail(t: (key: string) => string, error: string | null): string {
+  if (error === null) return ""
+  if (!error.startsWith("play.media.err.")) return error
+  const translated = t(error)
+  return translated === error ? error : translated
+}
+
 function Thumb({ item }: { item: MediaFrame }) {
   const { t } = useTranslation()
   const setAvatar = useMediaStore((s) => s.setAvatar)
@@ -80,6 +91,7 @@ export default function MediaDeck() {
     }
   }
 
+  const blocked = uploadsEnabled === false && !isKeeper
   const pending = Object.entries(uploads)
   if (images.length === 0 && pending.length === 0 && !isKeeper) return null
 
@@ -100,12 +112,15 @@ export default function MediaDeck() {
         ) : null}
       </header>
       <div className="dialog-row">
-        <button type="button" className="ghost-button" onClick={() => void share()}>
+        {/* A keeper is never blocked by their own switch — `_handle_media_offer`
+            gates on the room flag for everyone, but a keeper who turned uploads
+            off can turn them back on, so the button stays live for them. For a
+            player it disables only once the SERVER has said so: `uploadsEnabled`
+            is null until then, and guessing would hide a control that works. */}
+        <button type="button" className="ghost-button" disabled={blocked} onClick={() => void share()}>
           {t("play.media.share")}
         </button>
-        {uploadsEnabled === false && !isKeeper ? (
-          <span className="studio-hint">{t("play.media.uploadsOff")}</span>
-        ) : null}
+        {blocked ? <span className="studio-hint">{t("play.media.uploadsOff")}</span> : null}
       </div>
       {error !== null ? (
         <p className="studio-notice split-error" role="alert">
@@ -115,7 +130,7 @@ export default function MediaDeck() {
       {pending.map(([sha256, item]) => (
         <p key={sha256} className={item.phase === "error" ? "studio-hint split-error" : "studio-hint"}>
           {item.phase === "error"
-            ? t("play.media.uploadFailed", { name: item.name, detail: item.error ?? "" })
+            ? t("play.media.uploadFailed", { name: item.name, detail: uploadDetail(t, item.error) })
             : t(`play.media.phase.${item.phase}`, { name: item.name })}{" "}
           {item.phase === "done" || item.phase === "error" ? (
             <button type="button" className="ghost-button" onClick={() => clearUpload(sha256)}>

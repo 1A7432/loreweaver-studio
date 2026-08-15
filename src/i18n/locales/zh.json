@@ -266,6 +266,10 @@
       "useAsAvatar": "设为头像",
       "dismiss": "关闭",
       "uploadFailed": "{{name}} 分享失败：{{detail}}",
+      "err": {
+        "media_disabled": "守秘人关闭了本房间的玩家上传",
+        "media_rate_limited": "连续上传太频繁——稍候再试"
+      },
       "phase": {
         "offering": "正在申请上传 {{name}}…",
         "sending": "正在上传 {{name}}…",
