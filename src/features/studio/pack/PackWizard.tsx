@@ -45,6 +45,7 @@ import {
   buildPackSourcePlan,
   MAX_PREP_OPERATIONS,
   MAX_PREP_SCRIPT_CHARS,
+  MAX_RULES_SCRIPT_CHARS,
   PREP_DIR,
   presentationSummary,
   readPrepScript,
@@ -340,21 +341,55 @@ function TestDrivePanel({
   )
 }
 
-// i18n-exempt: a YAML sample — code, identical in every locale.
+// i18n-exempt: a YAML sample — code, identical in every locale. It is also a
+// sample the engine ACCEPTS: `core/resolution.py::compile_resolution` requires a
+// `roll:` expression and a non-empty `ranks:` ladder and rejects unknown keys,
+// and `_parse_initiative_section` requires the mapping below rather than a bare
+// dice string. A starter the build refuses teaches the wrong shape twice.
 const FULL_RULEPACK_SAMPLE = `names: [My System]
 set_keys: [mysys]
 defaults:
   力量: 50
   体质: 50
+  敏捷: 50
 derived:
   体力:
     floor_div: {of: 体质, by: 10}
 resolution:
-  kind: percentile`
+  version: 1
+  roll: 1d100
+  target: skill
+  compare: "<="
+  ranks:
+    - {id: crit, when: "roll == 1", success: true, critical: true, tier: 3}
+    - {id: fumble, when: "roll == 100", fumble: true, tier: 0}
+    - {id: success, when: "roll <= target", success: true, tier: 2}
+    - {id: fail, tier: 1}
+initiative:
+  roll: "1d100 + {敏捷}"`
 // i18n-exempt: as above.
 const PATCH_RULEPACK_SAMPLE = `extends: coc7
 defaults:
   San: 60`
+// i18n-exempt: emitted JavaScript, read by the author's editor and the engine.
+// The contract is `core/rules_script.py` + `core/resolution.py`, not invention:
+// the sandbox calls ONE named function (`resolve` for a resolution script,
+// `flow` for a subsystem), hands it the rolled input, and `validate_rank_result`
+// accepts EXACTLY `{rank: {id, tier, success?, critical?, fumble?}, margin?}` —
+// a flat rank object, or any extra key, is rejected outright.
+const RULES_SCRIPT_SAMPLE = `// Stage-E resolution script: the engine rolls, this grades.
+// input:  {roll, dice, total, target, raw_target, modifier,
+//          successes, ones, variant, difficulty}
+// return: {rank: {id, tier, success?, critical?, fumble?}, margin?}
+function resolve(input) {
+  if (input.roll === 1) return {rank: {id: 'crit', tier: 3, success: true, critical: true}}
+  if (input.roll === 100) return {rank: {id: 'fumble', tier: 0, fumble: true}}
+  var hit = input.target !== null && input.roll <= input.target
+  return {
+    rank: hit ? {id: 'success', tier: 2, success: true} : {id: 'fail', tier: 1},
+    margin: input.target === null ? null : input.target - input.roll,
+  }
+}`
 
 /** The rulepack editor. Two modes over ONE artifact: a `patch` is an `extends:`
  * over a built-in system (what the bench has always offered), a `full` pack is
@@ -368,6 +403,20 @@ function RulepackSection() {
   const setMetadata = usePackStore((s) => s.setMetadata)
   const full = metadata.rulepackMode === "full"
   const reading = readRulepack(metadata.rulepackPatch)
+  // The engine reads a rules script from NEXT TO the YAML, under the name the
+  // YAML declares — so the YAML is what decides whether this pack has a script
+  // lane at all, and the editor follows it rather than the other way round.
+  const declaredScript = reading.summary.scripts[0]
+  const scriptIssues: Issue[] = []
+  if (declaredScript !== undefined && !metadata.rulepackScriptSource.trim()) {
+    scriptIssues.push({ key: "rulepackScriptMissing", params: { file: declaredScript } })
+  }
+  if (declaredScript === undefined && metadata.rulepackScriptSource.trim()) {
+    scriptIssues.push({ key: "rulepackScriptOrphan" })
+  }
+  if (metadata.rulepackScriptSource.length > MAX_RULES_SCRIPT_CHARS) {
+    scriptIssues.push({ key: "rulepackScriptTooLong", params: { max: MAX_RULES_SCRIPT_CHARS } })
+  }
 
   const loadFromFile = async () => {
     const files = await pickAnyFiles()
@@ -377,6 +426,15 @@ function RulepackSection() {
       rulepackMode: "full",
       // The file stem IS the system id players type in `.set`, so adopt it.
       rulepackId: metadata.rulepackId || files[0].name.replace(/\.[^.]*$/, ""),
+    })
+  }
+
+  const loadScriptFromFile = async () => {
+    const files = await pickAnyFiles()
+    if (files.length === 0) return
+    setMetadata({
+      rulepackScriptSource: new TextDecoder("utf-8").decode(files[0].bytes),
+      rulepackScriptName: files[0].name,
     })
   }
 
@@ -423,9 +481,31 @@ function RulepackSection() {
           })}
         </p>
       ) : null}
-      {reading.issues.length > 0 ? (
+      {declaredScript !== undefined ? (
+        <div className="pack-extra-block">
+          <h4>{t("studio.pack.rulepack.scriptTitle", { file: declaredScript })}</h4>
+          <p className="studio-hint">{t("studio.pack.rulepack.scriptHint")}</p>
+          <div className="dialog-row">
+            <button type="button" className="ghost-button" onClick={() => void loadScriptFromFile()}>
+              {t("studio.pack.rulepack.scriptLoad")}
+            </button>
+          </div>
+          <label className="field field-wide">
+            {t("studio.pack.rulepack.scriptSource")}
+            <textarea
+              className="wizard-yaml"
+              rows={14}
+              value={metadata.rulepackScriptSource}
+              onChange={(e) => setMetadata({ rulepackScriptSource: e.target.value })}
+              placeholder={RULES_SCRIPT_SAMPLE}
+              spellCheck={false}
+            />
+          </label>
+        </div>
+      ) : null}
+      {reading.issues.length > 0 || scriptIssues.length > 0 ? (
         <ul className="issue-list">
-          {reading.issues.map((issue, index) => (
+          {[...reading.issues, ...scriptIssues].map((issue, index) => (
             <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params)}</li>
           ))}
         </ul>

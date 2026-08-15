@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest"
 import en from "./locales/en.json"
 import zh from "./locales/zh.json"
 
+/** Every studio source file, as text. Vite resolves this at transform time, so
+ * the test needs no filesystem access of its own. */
+const STUDIO_SOURCES: Record<string, string> = import.meta.glob("../features/studio/**/*.{ts,tsx}", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+})
+
 function keyPaths(value: unknown, prefix = ""): string[] {
   if (typeof value !== "object" || value === null) return [prefix]
   return Object.entries(value).flatMap(([key, child]) => keyPaths(child, prefix ? `${prefix}.${key}` : key))
@@ -19,5 +27,29 @@ describe("locale resources", () => {
       const flat = JSON.stringify(locale)
       expect(flat).not.toContain('""')
     }
+  })
+
+  it("every Issue key a reader can emit has a message under studio.pack.err", () => {
+    // Issue keys are looked up dynamically (`t(\`studio.pack.err.${issue.key}\`)`),
+    // so the i18n lint — which reads literals at their call sites — cannot see
+    // them, and a missing one renders as its own raw key in the panel. That is
+    // how `rulepackInitiativeString` shipped with no message at all. This walks
+    // the readers instead: every `{ key: "…" }` an Issue is built from must
+    // resolve.
+    // Both Issue namespaces: the forge renders `studio.err.*`, the pack bench
+    // `studio.pack.err.*`, and a reader shared by the two may land in either.
+    const messages = new Set([...Object.keys(en.studio.err), ...Object.keys(en.studio.pack.err)])
+    const emitted = new Set<string>()
+    for (const [path, text] of Object.entries(STUDIO_SOURCES)) {
+      if (/\.test\.tsx?$/.test(path)) continue
+      // An Issue literal is `{ key }` or `{ key, params }` and nothing else —
+      // that shape is what separates it from the many `{ key, label, … }`
+      // descriptors elsewhere in the tree.
+      for (const match of text.matchAll(/\{\s*key:\s*"([A-Za-z0-9_]+)"\s*(?:\}|,\s*params:)/g)) {
+        emitted.add(match[1])
+      }
+    }
+    expect(emitted.size).toBeGreaterThan(20)
+    expect([...emitted].filter((key) => !messages.has(key)).sort()).toEqual([])
   })
 })

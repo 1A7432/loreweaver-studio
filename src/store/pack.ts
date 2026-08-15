@@ -40,6 +40,7 @@ import {
   type WorldPackDraft,
 } from "../features/studio/split/packSource"
 import { countVariableSpecs, looksLikeLorecard, lorecardToCard } from "../features/studio/split/lorecard"
+import { readRulepack } from "../features/studio/split/rulepack"
 import type { PackEpisode } from "../features/studio/split/episodes"
 import type { PackBuildSuccess } from "../features/studio/pack/buildResult"
 import type { Issue } from "../features/studio/model"
@@ -107,6 +108,13 @@ export interface PackMetadataForm {
    * `rulepacks/<id>.yaml`; the mode changes the editor and the advice, not the
    * artifact — `core/rulepacks.py` does not distinguish them either. */
   rulepackMode: "patch" | "full"
+  /** The rules script (stage E) shipped beside the YAML, when it declares one.
+   * `core/pack.py::_rulepack_script_files` reads the name off `resolution.script`
+   * / `subsystems.*.script` and reads the file from NEXT TO the YAML, so the
+   * name here is a bare file name and the source is its whole contents. Without
+   * this pair, a YAML naming a script builds into a pack that cannot load. */
+  rulepackScriptName: string
+  rulepackScriptSource: string
 }
 
 const EMPTY_METADATA: PackMetadataForm = {
@@ -121,6 +129,8 @@ const EMPTY_METADATA: PackMetadataForm = {
   rulepackPatch: "",
   rulepackId: "",
   rulepackMode: "patch",
+  rulepackScriptName: "",
+  rulepackScriptSource: "",
 }
 
 /** The starter a new prep script opens with. Real, runnable, and small enough
@@ -1115,12 +1125,22 @@ export function buildDraftFromState(
       descriptionZh: `从「${item.card?.name ?? item.fileName}」抽取的房间 hooks。`,
       hooks: item.hooks,
     }))
+  // A rules script ships only when the YAML actually declares one: the engine
+  // reads the name off `resolution.script` / `subsystems.*.script` and would
+  // reject an orphan file, and a declared-but-absent script fails the build.
+  // Ship it under the name the YAML asked for, whatever the field says.
+  const declaredScript = readRulepack(metadata.rulepackPatch).summary.scripts[0]
+  const scripts =
+    declaredScript !== undefined && metadata.rulepackScriptSource.trim()
+      ? [{ fileName: declaredScript, source: metadata.rulepackScriptSource }]
+      : []
   const rulepacks = metadata.rulepackPatch.trim()
     ? [
         {
           // The file stem IS the system id (`.set <id>`), so the author owns it.
           id: metadata.rulepackId.trim() || `${metadata.id}-rules`,
           yamlText: metadata.rulepackPatch,
+          scripts,
         },
       ]
     : []

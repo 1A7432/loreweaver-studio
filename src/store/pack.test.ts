@@ -160,6 +160,8 @@ describe("pack store pipeline", () => {
       rulepackPatch: "",
       rulepackId: "",
       rulepackMode: "patch" as const,
+      rulepackScriptName: "",
+      rulepackScriptSource: "",
     })
     expect(draft.cards).toHaveLength(1)
     // Manifest v2: the author draft carries NO kind — detection stamps it.
@@ -191,8 +193,49 @@ describe("pack store pipeline", () => {
       rulepackPatch: "",
       rulepackId: "",
       rulepackMode: "patch" as const,
+      rulepackScriptName: "",
+      rulepackScriptSource: "",
     })
     expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64, episode: "" }])
+  })
+
+  describe("rules scripts", () => {
+    const withRulepack = (yamlText: string, source: string) =>
+      buildDraftFromState([], {
+        id: "p",
+        version: "0.1.0",
+        nameEn: "P",
+        nameZh: "",
+        descriptionEn: "d",
+        descriptionZh: "",
+        authors: "a",
+        license: "MIT",
+        rulepackPatch: yamlText,
+        rulepackId: "mysys",
+        rulepackMode: "full" as const,
+        rulepackScriptName: "whatever-the-picker-called-it.js",
+        rulepackScriptSource: source,
+      })
+
+    it("ships the script under the name the YAML declares, not the picked one", () => {
+      // `core/pack.py` reads the script by the name in `resolution.script` and
+      // from NEXT TO the yaml. The file name the author happened to pick on
+      // disk is not the contract; the declaration is.
+      const draft = withRulepack("resolution:\n  script: grade.js\n  roll: 1d100\n", "function resolve() {}")
+      expect(draft.rulepacks[0].scripts).toEqual([{ fileName: "grade.js", source: "function resolve() {}" }])
+    })
+
+    it("ships nothing when the YAML declares no script", () => {
+      // An orphan file would be dead weight at best; the engine never reads a
+      // script it was not pointed at.
+      const draft = withRulepack("extends: coc7\n", "function resolve() {}")
+      expect(draft.rulepacks[0].scripts).toEqual([])
+    })
+
+    it("ships nothing when the declaration has no source behind it", () => {
+      const draft = withRulepack("resolution:\n  script: grade.js\n  roll: 1d100\n", "   ")
+      expect(draft.rulepacks[0].scripts).toEqual([])
+    })
   })
 })
 
@@ -211,6 +254,8 @@ describe("presentation kit (M19) store actions", () => {
     rulepackPatch: "",
     rulepackId: "",
     rulepackMode: "patch" as const,
+    rulepackScriptName: "",
+    rulepackScriptSource: "",
   }
 
   it("opts in explicitly (null by default), and addPresentation is idempotent", () => {
@@ -320,6 +365,8 @@ describe("pack session persistence", () => {
     rulepackPatch: "",
     rulepackId: "",
     rulepackMode: "patch" as const,
+    rulepackScriptName: "",
+    rulepackScriptSource: "",
   }
 
   /** What zustand's `persist` would write, without going through localStorage. */

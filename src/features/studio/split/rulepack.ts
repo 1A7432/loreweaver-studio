@@ -64,6 +64,10 @@ export interface RulepackReading {
     commands: number
     hasResolution: boolean
     hasSheet: boolean
+    /** Rules-script file names this YAML declares — `core/pack.py`'s
+     * `_rulepack_script_files`, same two places, same bare-name rule. Each one
+     * must ship beside the YAML or the pack does not build. */
+    scripts: string[]
   }
 }
 
@@ -75,6 +79,28 @@ const EMPTY_SUMMARY: RulepackReading["summary"] = {
   commands: 0,
   hasResolution: false,
   hasSheet: false,
+  scripts: [],
+}
+
+/** `core/pack.py::_rulepack_script_files` — the two places a rulepack may name
+ * a rules script, and the bare-name rule both are held to. */
+function declaredScripts(data: Record<string, unknown>): { names: string[]; bad: string[] } {
+  const raw: string[] = []
+  if (isRecord(data.resolution) && typeof data.resolution.script === "string") {
+    raw.push(data.resolution.script.trim())
+  }
+  if (isRecord(data.subsystems)) {
+    for (const spec of Object.values(data.subsystems)) {
+      if (isRecord(spec) && typeof spec.script === "string") raw.push(spec.script.trim())
+    }
+  }
+  const names: string[] = []
+  const bad: string[] = []
+  for (const name of raw) {
+    if (!name || name.includes("/") || name.includes("\\")) bad.push(name)
+    else names.push(name)
+  }
+  return { names: [...new Set(names)].sort(), bad }
 }
 
 function countKeys(value: unknown): number {
@@ -183,8 +209,20 @@ export function readRulepack(yamlText: string): RulepackReading {
     })
   }
 
-  if (data.initiative !== undefined && typeof data.initiative !== "string") {
-    issues.push({ key: "rulepackInitiativeString" })
+  // `_parse_initiative_section`: a MAPPING carrying a non-empty string `roll`,
+  // and nothing else will do — a bare `initiative: 1d20+DEX` raises. The shape
+  // reads like a scalar and is not one, which is exactly why it is worth saying
+  // here rather than letting the build say it.
+  if (data.initiative !== undefined) {
+    const roll = isRecord(data.initiative) ? data.initiative.roll : undefined
+    if (typeof roll !== "string" || !roll.trim()) {
+      issues.push({ key: "rulepackInitiativeRoll" })
+    }
+  }
+
+  const scripts = declaredScripts(data)
+  for (const name of scripts.bad) {
+    issues.push({ key: "rulepackScriptBareName", params: { file: name } })
   }
 
   // A pack that is neither a patch nor a system says nothing to the engine.
@@ -205,6 +243,7 @@ export function readRulepack(yamlText: string): RulepackReading {
       commands: countKeys(data.commands),
       hasResolution: data.resolution !== undefined,
       hasSheet: data.sheet !== undefined,
+      scripts: scripts.names,
     },
   }
 }

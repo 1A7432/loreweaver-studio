@@ -28,13 +28,25 @@ derived:
   移动力:
     expr: "if(力量 > 体型, 8, 7)"
 resolution:
-  kind: percentile
+  version: 1
+  roll: 1d100
+  target: skill
+  compare: "<="
+  ranks:
+    - {id: crit, when: "roll == 1", success: true, critical: true, tier: 3}
+    - {id: regular, when: "roll <= target", success: true, tier: 2}
+    - {id: fail, tier: 1}
+initiative:
+  roll: "1d100 + {敏捷}"
 sheet:
   sections: []
 `
 
 describe("readRulepack", () => {
   it("accepts a real system pack without complaint", () => {
+    // REAL means real: this is `rulepacks/coc7.yaml`'s shape, trimmed — down to
+    // the resolution ladder and the `initiative:` mapping. A fixture that
+    // invents an easier shape only proves the reader agrees with the fixture.
     const reading = readRulepack(REAL_PACK)
     expect(reading.issues).toEqual([])
     expect(reading.summary).toEqual({
@@ -45,7 +57,23 @@ describe("readRulepack", () => {
       commands: 0,
       hasResolution: true,
       hasSheet: true,
+      scripts: [],
     })
+  })
+
+  it("lists the rules scripts the YAML declares, from both places", () => {
+    // `core/pack.py::_rulepack_script_files`: resolution.script and every
+    // subsystems.*.script, deduped and sorted, each a bare name.
+    const reading = readRulepack(
+      "resolution:\n  script: grade.js\nsubsystems:\n  chase:\n    script: chase.js\n  duel:\n    script: grade.js\n",
+    )
+    expect(reading.summary.scripts).toEqual(["chase.js", "grade.js"])
+    expect(reading.issues.map((issue) => issue.key)).not.toContain("rulepackScriptBareName")
+  })
+
+  it("refuses a script name with a path in it", () => {
+    expect(keys("resolution:\n  script: ../grade.js\n")).toContain("rulepackScriptBareName")
+    expect(keys("subsystems:\n  chase:\n    script: sub/dir.js\n")).toContain("rulepackScriptBareName")
   })
 
   it("accepts the patch shape the pack bench has always emitted", () => {
@@ -79,9 +107,26 @@ describe("readRulepack", () => {
     expect(keys("defaults: [1, 2]\n")).toContain("rulepackSectionMapping")
     expect(keys("names: {a: 1}\n")).toContain("rulepackSectionList")
     expect(keys("extends: [coc7]\n")).toContain("rulepackExtendsType")
-    expect(keys("initiative: {a: 1}\n")).toContain("rulepackInitiativeString")
     expect(keys("alias:\n  力量: STR\n")).toContain("rulepackAliasList")
     expect(keys("defaults:\n  力量: {a: 1}\n")).toContain("rulepackDefaultScalar")
+  })
+
+  describe("initiative", () => {
+    it("requires the mapping the engine requires, and accepts nothing else", () => {
+      // `_parse_initiative_section` raises unless this is a Mapping whose
+      // `roll` is a non-empty string. Reading it the other way round — which
+      // this once did — reddens the only valid form and greens every invalid
+      // one, which is worse than not checking at all.
+      expect(keys("initiative:\n  roll: 1d20+DEX\n")).not.toContain("rulepackInitiativeRoll")
+      expect(keys("initiative: 1d20+DEX\n")).toContain("rulepackInitiativeRoll")
+      expect(keys("initiative: {}\n")).toContain("rulepackInitiativeRoll")
+      expect(keys("initiative:\n  roll: '  '\n")).toContain("rulepackInitiativeRoll")
+      expect(keys("initiative:\n  roll: 12\n")).toContain("rulepackInitiativeRoll")
+    })
+
+    it("says nothing when the section is absent", () => {
+      expect(keys("extends: coc7\n")).not.toContain("rulepackInitiativeRoll")
+    })
   })
 
   describe("derived specs", () => {
