@@ -735,6 +735,8 @@
       "model": "Model",
       "maxTokens": "Max tokens",
       "apiKey": "API key",
+      "maxTokensUnset": "the provider's maximum",
+      "maxTokensHint": "Leave blank and the request carries no cap, so the provider applies its own maximum — the right answer in almost every case. Set one only to bound what a single call may spend. This is the OUTPUT limit for one reply, not the model's context window: they are different numbers, and a cap above the model's output ceiling is rejected outright.",
       "keyPlaceholder": "sk-…",
       "showKey": "Show",
       "hideKey": "Hide",

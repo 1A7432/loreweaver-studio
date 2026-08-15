@@ -109,11 +109,13 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
           {t("studio.ai.maxTokens")}
           <input
             type="number"
-            min={256}
-            max={32000}
-            value={settings.maxTokens}
-            onChange={(e) => settings.setConfig({ maxTokens: Number(e.target.value) || 16384 })}
+            min={0}
+            step={1024}
+            value={settings.maxTokens === 0 ? "" : settings.maxTokens}
+            placeholder={t("studio.ai.maxTokensUnset")}
+            onChange={(e) => settings.setConfig({ maxTokens: Math.max(0, Number(e.target.value) || 0) })}
           />
+          <p className="studio-hint">{t("studio.ai.maxTokensHint")}</p>
         </label>
 
         <div className="field">

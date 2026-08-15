@@ -42,10 +42,12 @@ describe("the API key", () => {
     expect(aiReady({ ...base, apiKey: "sk-test" })).toBe(false)
   })
 
-  it("defaults the output cap high enough for one whole card", () => {
-    // 4096 truncated a drafted card mid-JSON, which does not surface as "too
-    // long" — it surfaces as unparseable output, and burns a retry.
-    useAiStore.persist.clearStorage()
-    expect(useAiStore.getInitialState().maxTokens).toBeGreaterThanOrEqual(16384)
+  it("ships no output cap of its own", () => {
+    // 0 = omit `max_tokens` and let the provider apply its own maximum. Any
+    // number invented here is wrong in one of two directions: too low truncates
+    // a drafted card mid-JSON (which surfaces as unparseable output, not as
+    // "too long", and burns a retry), too high is a 400 from a model whose
+    // OUTPUT ceiling is below its context window.
+    expect(useAiStore.getInitialState().maxTokens).toBe(0)
   })
 })

@@ -45,10 +45,15 @@ export const useAiStore = create<AiSettingsState>()(
       kind: "openai",
       baseUrl: "",
       model: "",
-      // The output cap for ONE call. A card is drafted as a single JSON
-      // document, and 4096 truncated those mid-object — which does not arrive
-      // as "too long", it arrives as unparseable JSON and burns a retry.
-      maxTokens: 16384,
+      // 0 = no cap of our own: the OpenAI-compatible payload omits `max_tokens`
+      // entirely and the provider applies ITS OWN maximum. That is the only
+      // right answer from here — a number invented in this app truncates the
+      // draft mid-JSON when it is low, and 400s when it is above a model's
+      // output ceiling (which is NOT its context window: kimi-k3 is 1M context
+      // and nothing like 1M output). The engine does the same: `max_tokens`
+      // appears once in its whole provider layer, inside the Anthropic adapter,
+      // because that API requires it.
+      maxTokens: 0,
       apiKey: "",
       engineRepoDir: "",
 
@@ -83,7 +88,7 @@ function currentConfig(sampling?: LlmSamplingParams): LlmProviderConfig {
     baseUrl: state.baseUrl.trim(),
     model: state.model.trim(),
     apiKey: state.apiKey.trim(),
-    maxTokens: state.maxTokens,
+    ...(state.maxTokens > 0 ? { maxTokens: state.maxTokens } : {}),
     sampling,
   }
 }

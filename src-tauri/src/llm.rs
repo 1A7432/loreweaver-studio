@@ -19,11 +19,12 @@ use std::time::Duration;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_ERROR_BODY_CHARS: usize = 600;
-/// Output cap when the caller names none. Big enough for the thing this proxy
-/// actually carries — a whole card as one JSON document. The old 4096 truncated
-/// those mid-object, and a truncated document is not an error the caller can
-/// see: it arrives as unparseable JSON and burns a retry.
-const DEFAULT_MAX_TOKENS: u32 = 16384;
+/// The Anthropic Messages API REQUIRES `max_tokens`, so that shape alone needs a
+/// number when the caller names none. The engine picks its own the same way
+/// (`infra/providers.py:498` — the only `max_tokens` in its whole provider
+/// layer, and it is inside the Anthropic adapter). This sits above a whole
+/// drafted card and inside the output ceiling of every current Claude model.
+const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 32768;
 
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -118,8 +119,17 @@ fn openai_payload(
     let mut body = json!({
         "model": config.model,
         "messages": wire_messages,
-        "max_tokens": config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
     });
+    // No `max_tokens` unless the caller asked for one. It is optional on this
+    // shape, and omitting it means the provider applies ITS OWN maximum — which
+    // is always right and never guessable from here. A number invented here can
+    // only be wrong in one of two directions: too low truncates the document
+    // mid-JSON, too high is a 400 from a model whose output ceiling is lower
+    // than its context window (they are different limits; kimi-k3 is 1M context
+    // and nothing like 1M output).
+    if let Some(cap) = config.max_tokens {
+        body["max_tokens"] = json!(cap);
+    }
     if let Some(sampling) = &config.sampling {
         if let Some(v) = sampling.temperature {
             body["temperature"] = json!(v);
@@ -151,7 +161,7 @@ fn anthropic_payload(
         .collect();
     let mut body = json!({
         "model": config.model,
-        "max_tokens": config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+        "max_tokens": config.max_tokens.unwrap_or(ANTHROPIC_DEFAULT_MAX_TOKENS),
         "messages": wire_messages,
     });
     if let Some(system_text) = system {
@@ -236,7 +246,7 @@ pub async fn llm_chat(
 mod tests {
     use super::{
         anthropic_payload, extract_anthropic_text, extract_openai_text, openai_payload,
-        trimmed_base, ChatMessage, LlmProviderConfig, SamplingParams,
+        trimmed_base, ChatMessage, LlmProviderConfig, SamplingParams, ANTHROPIC_DEFAULT_MAX_TOKENS,
     };
     use serde_json::json;
 
@@ -260,6 +270,37 @@ mod tests {
             presence_penalty: Some(0.2),
             seed: Some(42),
         }
+    }
+
+    #[test]
+    fn openai_omits_max_tokens_unless_the_caller_sets_one() {
+        // The provider's own maximum is always right and never guessable from
+        // here; a number invented in this app truncates a drafted card mid-JSON
+        // when low, and 400s when above the model's OUTPUT ceiling — which is a
+        // different, much smaller limit than its context window.
+        let messages = vec![ChatMessage {
+            role: "user".to_owned(),
+            content: "hi".to_owned(),
+        }];
+        let mut uncapped = config("openai", None);
+        uncapped.max_tokens = None;
+        let body = openai_payload(&uncapped, &None, &messages);
+        assert!(body.get("max_tokens").is_none());
+
+        let capped = openai_payload(&config("openai", None), &None, &messages);
+        assert_eq!(capped["max_tokens"], json!(1024));
+    }
+
+    #[test]
+    fn anthropic_always_carries_max_tokens_because_that_api_requires_it() {
+        let messages = vec![ChatMessage {
+            role: "user".to_owned(),
+            content: "hi".to_owned(),
+        }];
+        let mut uncapped = config("anthropic", None);
+        uncapped.max_tokens = None;
+        let body = anthropic_payload(&uncapped, &None, &messages);
+        assert_eq!(body["max_tokens"], json!(ANTHROPIC_DEFAULT_MAX_TOKENS));
     }
 
     #[test]

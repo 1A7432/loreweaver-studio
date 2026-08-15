@@ -735,6 +735,8 @@
       "model": "模型",
       "maxTokens": "最大 token 数",
       "apiKey": "API 密钥",
+      "maxTokensUnset": "服务商上限",
+      "maxTokensHint": "留空则请求不带上限，由服务商套用它自己的最大值——绝大多数情况下这就是对的。只有想给单次调用封顶时才填。这是单次回复的输出上限，不是模型的上下文窗口：两者是不同的数，填成高于模型输出天花板的值会被直接拒绝。",
       "keyPlaceholder": "sk-…",
       "showKey": "显示",
       "hideKey": "隐藏",
