@@ -7,7 +7,10 @@
 // written:
 //   - `admin_export_room` writes a backup JSON server-side; omitting `path`
 //     lets the server choose, under `<data_dir>/room_backups/`.
-//   - `admin_import_room` restores one, optionally remapped to another room.
+//   - `admin_import_room` restores one INTO THE CALLER'S OWN ROOM. There is no
+//     remap: `net/admin.py::_import_room` refuses a `room` that is not the
+//     caller's with `forbidden`, and `import_room` additionally requires the
+//     file to be a backup of that same room. So the request carries no room.
 //   - `admin_reset_room` restarts a campaign IN PLACE — keys, bindings, live
 //     connections and room settings survive, no backup is taken, nobody is
 //     evicted. `scope` decides how much of the campaign goes.
@@ -88,7 +91,6 @@ export default function RoomLifecycle() {
 
   const [exportPath, setExportPath] = useState("")
   const [importPath, setImportPath] = useState("")
-  const [importRoom, setImportRoom] = useState("")
   const [scope, setScope] = useState<AdminResetScope>("story")
   const [backupBeforeDelete, setBackupBeforeDelete] = useState(true)
 
@@ -157,7 +159,7 @@ export default function RoomLifecycle() {
         label={t("play.rooms.restore")}
         hint={t("play.rooms.restoreHint")}
         confirmLabel={t("play.rooms.restoreConfirm")}
-        onConfirm={() => admin.importRoom(importPath.trim(), importRoom.trim() || undefined)}
+        onConfirm={() => admin.importRoom(importPath.trim())}
       >
         <div className="dialog-row">
           <label className="field">
@@ -166,15 +168,6 @@ export default function RoomLifecycle() {
               value={importPath}
               onChange={(e) => setImportPath(e.target.value)}
               placeholder="/…/room_backups/table-2026-08-15.json"
-              spellCheck={false}
-            />
-          </label>
-          <label className="field field-narrow">
-            {t("play.rooms.remapRoom")}
-            <input
-              value={importRoom}
-              onChange={(e) => setImportRoom(e.target.value)}
-              placeholder={room}
               spellCheck={false}
             />
           </label>

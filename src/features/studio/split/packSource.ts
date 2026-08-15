@@ -1054,7 +1054,13 @@ export function presentationSummary(kit: PackPresentationDraft): {
   mode: "allow" | "pack_only"
   imagegen: boolean
 } {
-  const withRefs = kit.subjects.filter((subject) => subject.refBase64 !== "").length
+  // The engine's rule is the ref PATH, not the bytes:
+  // `any(kit.generates and any(subject.ref for subject in kit.subjects))`
+  // (`core/pack.py`), and `ref` is what `buildPresentationYaml` writes from
+  // `refFileName`. Counting base64 instead made the preview disagree with the
+  // built pack after any reload, since the persisted session drops those bytes
+  // and keeps the name.
+  const withRefs = kit.subjects.filter((subject) => subject.refFileName.trim() !== "").length
   const mode = kit.generation === "pack_only" ? "pack_only" : "allow"
   return {
     subjects: kit.subjects.length,

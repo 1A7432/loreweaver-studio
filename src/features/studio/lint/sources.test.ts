@@ -191,4 +191,36 @@ describe("lintSourceFromPackBench", () => {
       { path: "assets/rain.mp3", from: "rain" },
     ])
   })
+
+  it("carries a whole-file episode tag through, for the kinds that have no entries", () => {
+    // An asset's tag reached nothing before this: it has no lore entries, so
+    // the entry-level check could never see it, and the build includes an
+    // unknown tag by design. It is now checked as a file.
+    const source = lintSourceFromPackBench({
+      items: [
+        cardItem({ kind: "asset", fileName: "map.png", uid: "a1", episode: "ep2" }),
+        cardItem({ kind: "asset", fileName: "cover.png", uid: "a2" }),
+      ],
+      metadata: {
+        id: "corridor",
+        version: "1.0.0",
+        nameEn: "C",
+        nameZh: "走",
+        descriptionEn: "d",
+        descriptionZh: "描",
+        authors: "Nyx",
+        license: "MIT",
+        rulepackPatch: "",
+        rulepackId: "",
+        rulepackMode: "patch" as const,
+        rulepackScriptName: "",
+        rulepackScriptSource: "",
+      },
+      panels: null,
+      manualSkills: [],
+      presentation: null,
+    })
+    // Only the tagged one, and under the path the pack will ship it at.
+    expect(source.taggedFiles).toEqual([{ path: "assets/map.png", episode: "ep2" }])
+  })
 })

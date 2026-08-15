@@ -22,8 +22,17 @@ export default function UndoToast() {
   const newest = entries.at(-1)
   useEffect(() => {
     if (newest === undefined) return
-    // Only tick while an offer could still be standing.
-    const timer = setInterval(() => setNow(Date.now()), TICK_MS)
+    // Only tick while an offer could still be standing — and STOP once the
+    // newest one has run out. Nothing else changes `newest`, so an interval
+    // left running here would re-render the whole app twice a second for the
+    // rest of the session over a toast that is no longer on screen.
+    const timer = setInterval(() => {
+      const at = Date.now()
+      setNow(at)
+      // Stopped by the SAME predicate that hides the toast, so the clock can
+      // never outlive the offer or stop while it is still on screen.
+      if (currentUndo([newest], at) === null) clearInterval(timer)
+    }, TICK_MS)
     return () => clearInterval(timer)
   }, [newest])
 

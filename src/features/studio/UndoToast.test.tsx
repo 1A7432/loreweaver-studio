@@ -50,4 +50,18 @@ describe("UndoToast", () => {
       vi.useRealTimers()
     }
   })
+
+  it("stops its clock when the offer expires, instead of ticking all session", () => {
+    // Nothing else changes the newest entry, so an interval left running here
+    // re-renders the app twice a second forever over a toast nobody can see.
+    vi.useFakeTimers()
+    try {
+      useUndoStore.getState().push("pregen", "Hana", () => {})
+      render(<UndoToast />)
+      act(() => vi.advanceTimersByTime(UNDO_WINDOW_MS + 1000))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

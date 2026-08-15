@@ -341,6 +341,26 @@ describe("serialized-module rules", () => {
     expect(unknown[0].params).toMatchObject({ tag: "ep9" })
   })
 
+  it("catches the same typo on a FILE, which has no entries to surface it", () => {
+    // An asset carries no lore entries, so the entry loop above never sees its
+    // tag; a PNG card is the same. The build includes an unknown tag on
+    // purpose, which means nothing else would ever mention it.
+    const findings = lintPack(
+      source({
+        episodes: EPISODES,
+        buildUpTo: 2,
+        taggedFiles: [
+          { path: "assets/chapter-two-map.png", episode: "ep9" },
+          { path: "assets/cover.png", episode: "ep1" },
+        ],
+      }),
+    )
+    const unknown = findings.filter((f) => f.ruleId === "episodeUnknown")
+    expect(unknown).toHaveLength(1)
+    expect(unknown[0].params).toMatchObject({ tag: "ep9", title: "assets/chapter-two-map.png" })
+    expect(unknown[0].target).toEqual({ kind: "asset", id: "assets/chapter-two-map.png" })
+  })
+
   it("reports an episode that will ship with no release notes", () => {
     const findings = lintPack(source({ episodes: EPISODES, buildUpTo: 2 }))
     const missing = findings.filter((f) => f.ruleId === "episodeNoNotes")

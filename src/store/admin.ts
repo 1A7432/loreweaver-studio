@@ -59,8 +59,12 @@ interface AdminState {
   /** Write a room backup JSON server-side. Omitting `path` lets the server
    * choose, under `<data_dir>/room_backups/`. */
   exportRoom: (room: string, path?: string) => void
-  /** Restore a server-side backup. `room` remaps the snapshot before restoring. */
-  importRoom: (path: string, room?: string) => void
+  /** Restore a server-side backup INTO THE CALLER'S OWN ROOM. There is no
+   * remap and there cannot be one: `net/admin.py::_import_room` answers
+   * `forbidden` to any `room` that is not the caller's, and `import_room` then
+   * requires the file to be a backup of that same room. Taking no room here is
+   * what keeps the signature honest about that. */
+  importRoom: (path: string) => void
   /** Restart a campaign IN PLACE: keys, bindings, live connections and room
    * settings all survive, and no backup is taken (that is
    * `deleteRoomData`'s job). Scope decides how much of the campaign goes. */
@@ -170,7 +174,7 @@ export const useAdminStore = create<AdminState>((set) => ({
   listRules: () => send({ type: "admin_list_rules" }, set),
   generateModule: (description) => send({ type: "admin_generate", kind: "module", description }, set),
   exportRoom: (room, path) => send({ type: "admin_export_room", room, ...(path ? { path } : {}) }, set),
-  importRoom: (path, room) => send({ type: "admin_import_room", path, ...(room ? { room } : {}) }, set),
+  importRoom: (path) => send({ type: "admin_import_room", path }, set),
   resetRoom: (room, scope) => send({ type: "admin_reset_room", room, scope }, set),
   deleteRoom: (room) => send({ type: "admin_delete_room", room }, set),
   deleteRoomData: (room, backup, path) =>

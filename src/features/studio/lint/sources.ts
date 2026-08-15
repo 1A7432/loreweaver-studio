@@ -47,6 +47,7 @@ export function lintSourceFromProject(project: ForgeProject): PackLintSource {
     buildUpTo: 0,
     shippedFiles: [],
     assetRefs: [],
+    taggedFiles: [],
   }
 }
 
@@ -107,8 +108,18 @@ export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSour
   const code: PackLintSource["code"] = []
   const shippedFiles: string[] = []
   const assetRefs: PackLintSource["assetRefs"] = []
+  const taggedFiles: PackLintSource["taggedFiles"] = []
 
   for (const item of input.items) {
+    // The whole-file tag, for every kind. A card's or lorebook's tag also
+    // reaches the lore entries below, but an asset has no entries, and neither
+    // does a PNG card — so the file-level check is the only one they get.
+    if (item.episode.trim()) {
+      taggedFiles.push({
+        path: item.kind === "asset" ? `assets/${item.fileName}` : item.fileName,
+        episode: item.episode,
+      })
+    }
     if (item.kind === "asset") shippedFiles.push(`assets/${item.fileName}`)
     if (item.kind === "lorebook" && item.jsonText !== null) {
       // A file tagged to an installment tags everything it carries, unless an
@@ -193,5 +204,6 @@ export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSour
     buildUpTo: input.buildUpTo ?? latestOrdinal(input.episodes ?? []),
     shippedFiles,
     assetRefs,
+    taggedFiles,
   }
 }

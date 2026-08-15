@@ -123,6 +123,17 @@ export interface PackLintSource {
    * the missing-asset rule needs one list, not two. */
   shippedFiles: string[]
   assetRefs: LintAssetRef[]
+  /** Every FILE carrying an episode tag, whatever its kind. Lore entries carry
+   * their own tags and are checked through `lore`, but an asset has no entries
+   * to hide a typo in — and neither does a PNG card, whose tag lives only on
+   * the item. Without this list the whole-file tag was checked for nobody. */
+  taggedFiles: LintTaggedFile[]
+}
+
+export interface LintTaggedFile {
+  /** Pack-relative path, for the finding's own text. */
+  path: string
+  episode: string
 }
 
 export function emptyLintSource(): PackLintSource {
@@ -136,5 +147,6 @@ export function emptyLintSource(): PackLintSource {
     buildUpTo: 0,
     shippedFiles: [],
     assetRefs: [],
+    taggedFiles: [],
   }
 }

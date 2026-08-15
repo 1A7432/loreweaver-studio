@@ -196,7 +196,6 @@
       "restore": "恢复备份",
       "restoreHint": "从服务器文件系统读取一份备份 JSON 并恢复。填写房间名可在恢复前把快照重映射到另一个房间。",
       "restoreConfirm": "恢复",
-      "remapRoom": "恢复到房间",
       "reset": "重置战役",
       "resetKeepsHint": "密钥、频道与 keeper 绑定、在线连接以及房间设置（语言、家规、已启用技能）全部保留——不会踢出任何人，也不会自动备份。想要备份请先自行备份。",
       "resetHint": {

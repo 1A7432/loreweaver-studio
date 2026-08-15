@@ -196,7 +196,6 @@
       "restore": "Restore a backup",
       "restoreHint": "Reads a backup JSON off the server's filesystem and restores it. Give a room name to remap the snapshot into a different room before restoring.",
       "restoreConfirm": "Restore",
-      "remapRoom": "Restore into room",
       "reset": "Reset the campaign",
       "resetKeepsHint": "Keys, channel and keeper bindings, live connections and room settings (language, house rules, enabled skills) all survive — nobody is evicted and no backup is taken. Back up first if you want one.",
       "resetHint": {

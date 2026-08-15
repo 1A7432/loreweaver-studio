@@ -365,6 +365,26 @@ function lintEpisodes(source: PackLintSource, findings: PackLintFinding[]): void
       ),
     )
   }
+  // …and the same rule over whole FILES. An asset carries no entries for a
+  // typo to surface through, so without this its tag was checked by nobody:
+  // the build would include it (unknown tag = included, deliberately) and
+  // nothing would ever say the episode it named does not exist.
+  for (const file of source.taggedFiles) {
+    const tag = file.episode.trim()
+    if (!tag || byId.has(tag)) continue
+    findings.push(
+      finding(
+        "episodeUnknown",
+        "warn",
+        "episodeUnknown",
+        { title: file.path, tag },
+        {
+          kind: "asset",
+          id: file.path,
+        },
+      ),
+    )
+  }
 
   // 2. An episode that ships with nothing to say about itself. The changelog is
   //    what a subscriber reads to find out the new chapter arrived.
