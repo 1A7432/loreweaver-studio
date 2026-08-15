@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   importPackAudioCommand,
   normalizeVolume,
+  LAYER_DEFAULT_LOOP,
   playCommand,
   transportCommand,
   volumeCommand,
@@ -30,6 +31,16 @@ describe("audio commands", () => {
     // things on bgm and sfx.
     expect(playCommand("sfx", "door", { loop: false })).toBe(".sfx door once")
     expect(playCommand("sfx", "door", { loop: true })).toBe(".sfx door loop")
+  })
+
+  it("mirrors each layer's own loop default", () => {
+    // `gateway/commands.py`: `.bgm`/`.ambience` are `default_loop=True`,
+    // `.sfx` is `default_loop=False`. The deck shows this per layer instead of
+    // one shared flag — a keeper firing a door slam must not get it forever.
+    expect(LAYER_DEFAULT_LOOP).toEqual({ bgm: true, ambience: true, sfx: false })
+    // Untouched, the command carries no token at all and the server applies
+    // that same default, so the box and the outcome cannot disagree.
+    expect(playCommand("sfx", "door", { loop: undefined })).toBe(".sfx door")
   })
 
   it("normalizes volume the way `_parse_audio_volume` does", () => {

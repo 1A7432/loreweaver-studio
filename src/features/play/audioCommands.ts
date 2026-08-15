@@ -20,6 +20,17 @@
 
 import type { AudioLayer } from "@loreweaver/protocol"
 
+/** Each layer's own loop default, from `gateway/commands.py`: `.bgm` and
+ * `.ambience` are declared `default_loop=True`, `.sfx` `default_loop=False` — a
+ * one-shot is what a sound effect IS. The UI shows this rather than one shared
+ * flag, so a keeper firing an sfx does not get an endless loop from a checkbox
+ * that was ticked for the music. */
+export const LAYER_DEFAULT_LOOP: Record<AudioLayer, boolean> = {
+  bgm: true,
+  ambience: true,
+  sfx: false,
+}
+
 /** Mirror of `_parse_audio_volume`: a value above 1 is read as a percentage,
  * and the result is clamped to 0..1. Doing it here means the command line
  * always carries the same number the UI showed. */

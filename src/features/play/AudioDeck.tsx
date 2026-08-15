@@ -20,7 +20,13 @@ import { AUDIO_LAYERS, effectiveVolume, useAudioStore, type LayerState } from ".
 import { isTauri, transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useMediaStore } from "../../store/media"
-import { importPackAudioCommand, playCommand, transportCommand, volumeCommand } from "./audioCommands"
+import {
+  importPackAudioCommand,
+  LAYER_DEFAULT_LOOP,
+  playCommand,
+  transportCommand,
+  volumeCommand,
+} from "./audioCommands"
 
 /** Pull one blob into the verified cache and hand back a `data:` URL.
  *
@@ -126,7 +132,12 @@ function KeeperControls() {
   const library = useMediaStore((s) => s.audio)
   const [layer, setLayer] = useState<AudioLayer>("bgm")
   const [choice, setChoice] = useState("")
-  const [loop, setLoop] = useState(true)
+  // `null` = the keeper has not touched the box for this layer, so the layer's
+  // own default stands and the command omits the token entirely — the server
+  // then applies the same default the checkbox is showing. One shared `true`
+  // here is how an sfx one-shot became an endless loop.
+  const [loopOverride, setLoopOverride] = useState<boolean | null>(null)
+  const loop = loopOverride ?? LAYER_DEFAULT_LOOP[layer]
   const [packId, setPackId] = useState("")
 
   const run = (command: string) => {
@@ -140,7 +151,15 @@ function KeeperControls() {
       <div className="dialog-row">
         <label className="field field-narrow">
           {t("play.audio.keeperLayer")}
-          <select value={layer} onChange={(e) => setLayer(e.target.value as AudioLayer)}>
+          <select
+            value={layer}
+            onChange={(e) => {
+              setLayer(e.target.value as AudioLayer)
+              // A new layer brings its own default; a tick made for the music
+              // must not follow the keeper over to the sound effects.
+              setLoopOverride(null)
+            }}
+          >
             {AUDIO_LAYERS.map((name) => (
               <option key={name} value={name}>
                 {t(`play.audio.layers.${name}`)}
@@ -160,14 +179,14 @@ function KeeperControls() {
           </select>
         </label>
         <label className="audio-mute">
-          <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
+          <input type="checkbox" checked={loop} onChange={(e) => setLoopOverride(e.target.checked)} />
           {t("play.audio.keeperLoop")}
         </label>
         <button
           type="button"
           className="primary-button"
           disabled={choice === ""}
-          onClick={() => run(playCommand(layer, choice, { loop }))}
+          onClick={() => run(playCommand(layer, choice, { loop: loopOverride ?? undefined }))}
         >
           {t("play.audio.keeperPlay")}
         </button>
