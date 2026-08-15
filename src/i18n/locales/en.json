@@ -415,7 +415,7 @@
       }
     },
     "hooks": {
-      "hint": "Sandboxed room hooks (QuickJS server-side). Events: turn_start, reply_ready, dice_rolled, variables_changed. Effects: inject, narrate, rewriteReply, emitUI, log, setvar/getvar."
+      "hint": "Sandboxed room hooks (QuickJS server-side). Events, with what each one hands your handler: turn_start {user_message, actor} · reply_ready {reply} · dice_rolled {rolls} · variables_changed {writes} · clock_advanced {from, to, delta} · tool_use {tool, arguments}. Reading any other key gives undefined and fails silently. Effects: inject, narrate, rewriteReply, emitUI, log, setvar/getvar."
     },
     "pregens": {
       "hint": "Pregenerated investigators are the module's claimable cast (.pc list / .pc claim). Sheets are built from the system's defaults plus these skill overrides — deterministic, no LLM. At most 8.",

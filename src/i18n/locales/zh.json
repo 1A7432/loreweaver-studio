@@ -415,7 +415,7 @@
       }
     },
     "hooks": {
-      "hint": "沙箱化房间 hooks（服务端 QuickJS 执行）。事件：turn_start、reply_ready、dice_rolled、variables_changed。效果：inject、narrate、rewriteReply、emitUI、log、setvar/getvar。"
+      "hint": "沙箱化房间 hooks（服务端 QuickJS 执行）。事件及其交给 handler 的载荷：turn_start {user_message, actor} · reply_ready {reply} · dice_rolled {rolls} · variables_changed {writes} · clock_advanced {from, to, delta} · tool_use {tool, arguments}。读取其他键得到的是 undefined，且不会报错。效果：inject、narrate、rewriteReply、emitUI、log、setvar/getvar。"
     },
     "pregens": {
       "hint": "预设调查员是模组可供认领的调查员阵容（.pc list / .pc claim）。人物卡由系统默认值加上这里的技能覆盖确定性生成，不经过 LLM。最多 8 名。",
