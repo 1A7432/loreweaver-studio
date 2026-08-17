@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
   stripControlChars,
@@ -367,6 +367,11 @@ function PackCardRow({ card, online }: { card: PackCardEntry; online: boolean })
   )
 }
 
+/** How long the picker waits for a `pack_cards` reply before it stops claiming
+ * to load and offers a retry. An older (<2.2) server never answers the request
+ * at all, so without this the card would spin forever. */
+export const PACK_CARDS_REPLY_TIMEOUT_MS = 8_000
+
 /** v2.2 "import from installed pack" picker: opening it asks the server for
  * the card files installed packs ship (`list_pack_cards`), so a player never
  * types a path. `packCards === null` means no reply yet. */
@@ -376,6 +381,13 @@ function PackImportCard() {
   const packCards = useSessionStore((s) => s.packCards)
   const requestPackCards = useSessionStore((s) => s.requestPackCards)
   const [open, setOpen] = useState(false)
+  const [timedOut, setTimedOut] = useState(false)
+  const waiting = open && packCards === null && !timedOut
+  useEffect(() => {
+    if (!waiting) return
+    const timer = window.setTimeout(() => setTimedOut(true), PACK_CARDS_REPLY_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [waiting])
   if (!online && !open) return null
   return (
     <section className="desk-card">
@@ -385,7 +397,10 @@ function PackImportCard() {
           type="button"
           className="ghost-button"
           onClick={() => {
-            if (!open) requestPackCards()
+            if (!open) {
+              setTimedOut(false)
+              requestPackCards()
+            }
             setOpen(!open)
           }}
         >
@@ -394,7 +409,23 @@ function PackImportCard() {
       </header>
       {open ? (
         packCards === null ? (
-          <p className="studio-hint">{t("session.packImportLoading")}</p>
+          timedOut ? (
+            <p className="studio-hint">
+              {t("session.packImportTimeout")}{" "}
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  setTimedOut(false)
+                  requestPackCards()
+                }}
+              >
+                {t("session.packImportRetry")}
+              </button>
+            </p>
+          ) : (
+            <p className="studio-hint">{t("session.packImportLoading")}</p>
+          )
         ) : packCards.length === 0 ? (
           <p className="studio-hint">{t("session.packImportEmpty")}</p>
         ) : (

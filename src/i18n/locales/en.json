@@ -71,6 +71,8 @@
     "packImportBrowse": "Browse",
     "packImportClose": "Close",
     "packImportLoading": "Fetching the card list…",
+    "packImportTimeout": "No reply from the server — it may predate protocol 2.2.",
+    "packImportRetry": "Retry",
     "packImportEmpty": "No installed pack ships character cards.",
     "packImportAction": "Import",
     "varEdit": "Write",

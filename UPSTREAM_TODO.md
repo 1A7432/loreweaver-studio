@@ -212,7 +212,7 @@ the studio must react to (R) or may now surface (S):
   lane). Dependency bumped, lockfile refreshed, the temporary local v2.2 type
   shim folded back into package imports. Streaming and the picker are live.
 - **(S) Player pack-relative PC imports are open** — `.import <packId>/cards/x>
-  pc` works for players (confined to `data_dir/packs/`), `.import list` prints
+pc` works for players (confined to `data_dir/packs/`), `.import list` prints
   refs, and the Studio picker rides the v2.2 frames.
 - **(S) World import may pin the room system** — a world card from a pack that
   ships exactly one rulepack pins `room_state["room_system"]`; state/panels may

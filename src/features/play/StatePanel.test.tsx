@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -14,7 +14,7 @@ vi.mock("../../lib/transport", () => ({
 import "../../i18n"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
-import StatePanel from "./StatePanel"
+import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS } from "./StatePanel"
 
 describe("StatePanel", () => {
   beforeEach(() => useSessionStore.getState().clear())
@@ -240,6 +240,30 @@ describe("PackImportCard (v2.2)", () => {
 
     await userEvent.click(screen.getAllByRole("button", { name: "Import" })[0])
     expect(sent).toContainEqual({ type: "input", text: ".import midnight-pier/cards/lin_wan.png pc" })
+  })
+
+  it("stops claiming to load when the server never answers, and retry re-asks", () => {
+    // An older (<2.2) server never sends `pack_cards`; without the timeout the
+    // picker would spin forever on "Fetching the card list…". fireEvent (not
+    // userEvent) on purpose: userEvent's own waiting deadlocks under fake timers.
+    vi.useFakeTimers()
+    try {
+      render(<StatePanel />)
+      fireEvent.click(screen.getByRole("button", { name: "Browse" }))
+      expect(screen.getByText("Fetching the card list…")).toBeInTheDocument()
+
+      act(() => {
+        vi.advanceTimersByTime(PACK_CARDS_REPLY_TIMEOUT_MS)
+      })
+      expect(screen.getByText(/No reply from the server/)).toBeInTheDocument()
+
+      sent.length = 0
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+      expect(sent).toEqual([{ type: "list_pack_cards" }])
+      expect(screen.getByText("Fetching the card list…")).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("shows a friendly empty state when no installed pack ships cards", async () => {
