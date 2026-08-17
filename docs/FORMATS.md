@@ -194,13 +194,15 @@ it; every ref/cue file lives under `assets/` and MUST sit in the manifest
 image, a cue asset as audio).
 
 ```yaml
-version: 1 # required, must be 1
+version: 2 # required; v1 files are refused (KIT_VERSION = 2)
 generation:
   allow # allow | pack_only — pack_only is the 宁缺毋滥
   # author veto: pack art only, no config overrides
+templates: [title_card, letter] # optional allowlist; omitted = all shapes
 style: # optional; carried on EVERY image request
   keywords: { en: "ink wash, muted indigo", zh: "水墨, 靛青" } # ≤400 chars/locale
   banned: [text overlays, modern clothing] # ≤24 entries, ≤400 chars each
+  palette: ["#16232e", "wet slate blue"] # optional; ≤8 hex or color words
 subjects: # ≤64; id is a slug ^[a-z0-9][a-z0-9-]{0,63}$
   - id: gu-wantang
     kind: npc # npc | location | item

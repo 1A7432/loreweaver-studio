@@ -193,3 +193,15 @@ the studio must react to (R) or may now surface (S):
   `meta.source`; a re-import surface can replace exactly what a file wrote last
   time. `{{random}}/{{pick}}` turn-seeding is documented for authors
   (`docs/cards.md`).
+
+## Engine landings, 2026-08-15 evening (k3 pipeline playtest dispositions)
+
+- **(R) Empty-final discard is now a stated client obligation** — docs/protocol.md:
+  a closing `narrative` whose text is empty DISCARDS its draft (abandoned tool
+  round / dead turn) and must be removed, never rendered. The k3 run observed
+  empty kp bubbles on the player wire; verify NarrativeLog complies (drop empty
+  finals, matched-draft or not).
+- (context) Keeper re-imports now replace lore by provenance (serialized-module
+  contract real at last); `.panels enable` admits kit-only packs; `.var list`
+  shows typed trackers; the Scribe runs on the CLI channel too. Nothing studio-
+  side consumes these directly.
