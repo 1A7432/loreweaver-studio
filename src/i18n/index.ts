@@ -10,11 +10,24 @@ export const resources = {
   zh: { translation: zh },
 } as const
 
+/** Resolve the startup locale. `navigator.language` is optional — bun's test
+ * runner (and some embedded WebViews) expose `navigator` without it. */
+export function detectLanguage(
+  stored: string | null | undefined,
+  navigatorLanguage: string | null | undefined,
+): "en" | "zh" {
+  if (stored === "en" || stored === "zh") return stored
+  const nav = typeof navigatorLanguage === "string" ? navigatorLanguage.toLowerCase() : ""
+  return nav.startsWith("zh") ? "zh" : "en"
+}
+
 function initialLanguage(): string {
   const stored = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null
-  if (stored === "en" || stored === "zh") return stored
-  const nav = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "en"
-  return nav.startsWith("zh") ? "zh" : "en"
+  const navLang =
+    typeof navigator !== "undefined" && typeof navigator.language === "string"
+      ? navigator.language
+      : undefined
+  return detectLanguage(stored, navLang)
 }
 
 void i18n.use(initReactI18next).init({
