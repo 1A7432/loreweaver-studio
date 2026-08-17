@@ -1,5 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { NarrativeFrame, ServerFrame } from "@loreweaver/protocol"
+
+const sent: unknown[] = []
+vi.mock("../lib/transport", () => ({
+  transportSend: async (frame: unknown) => {
+    sent.push(frame)
+  },
+}))
+
 import { MAX_LOG_ENTRIES, MAX_STREAM_TEXT, TURN_BUSY_TIMEOUT_MS, useSessionStore } from "./session"
 
 function narrative(id: string, text: string, extra: Partial<NarrativeFrame> = {}): ServerFrame {
@@ -186,5 +194,39 @@ describe("session store — ui frames (v1.7)", () => {
     const { uiPanels } = useSessionStore.getState()
     expect(uiPanels).toHaveLength(1)
     expect(uiPanels[0].frame.blocks[0]).toMatchObject({ kind: "divider" })
+  })
+})
+
+describe("session store — installed-pack cards (v2.2)", () => {
+  beforeEach(() => {
+    sent.length = 0
+    useSessionStore.getState().clear()
+  })
+
+  it("starts unknown and populates from a pack_cards frame", () => {
+    expect(useSessionStore.getState().packCards).toBeNull()
+    useSessionStore.getState().ingest({
+      type: "pack_cards",
+      cards: [
+        { ref: "midnight-pier/cards/lin_wan.png", pack: "midnight-pier", name: "lin_wan" },
+        { ref: "midnight-pier/cards/chen_jiuli.png", pack: "midnight-pier", name: "chen_jiuli" },
+      ],
+    })
+    expect(useSessionStore.getState().packCards).toEqual([
+      { ref: "midnight-pier/cards/lin_wan.png", pack: "midnight-pier", name: "lin_wan" },
+      { ref: "midnight-pier/cards/chen_jiuli.png", pack: "midnight-pier", name: "chen_jiuli" },
+    ])
+  })
+
+  it("keeps an empty reply (nothing installed) distinct from no reply yet", () => {
+    useSessionStore.getState().ingest({ type: "pack_cards", cards: [] })
+    expect(useSessionStore.getState().packCards).toEqual([])
+    useSessionStore.getState().clear()
+    expect(useSessionStore.getState().packCards).toBeNull()
+  })
+
+  it("requestPackCards sends the list_pack_cards request through the transport", () => {
+    useSessionStore.getState().requestPackCards()
+    expect(sent).toEqual([{ type: "list_pack_cards" }])
   })
 })

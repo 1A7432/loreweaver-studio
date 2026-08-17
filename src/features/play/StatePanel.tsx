@@ -10,6 +10,7 @@ import {
 import { transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
+import type { PackCardEntry } from "@loreweaver/protocol"
 import AudioDeck from "./AudioDeck"
 import Avatar from "./Avatar"
 import MediaDeck from "./MediaDeck"
@@ -340,6 +341,74 @@ function PregenCard({ game }: { game: StateFrame }) {
   )
 }
 
+/** One importable card row: name + owning pack, the raw ref as tooltip.
+ * Importing goes through the ordinary command path (`.import <ref> pc`), the
+ * same lane the chat box uses — the server's own gates keep applying no
+ * matter how the ref was discovered. */
+function PackCardRow({ card, online }: { card: PackCardEntry; online: boolean }) {
+  const { t } = useTranslation()
+  return (
+    <li className="party-row" title={card.ref}>
+      <span className="party-name">{stripControlChars(card.name)}</span>
+      <span className="desk-tag">{stripControlChars(card.pack)}</span>
+      <button
+        type="button"
+        className="ghost-button"
+        disabled={!online}
+        onClick={() => {
+          void transportSend({ type: "input", text: `.import ${card.ref} pc` }).catch(() => {
+            // The transport surfaces failures through status events.
+          })
+        }}
+      >
+        {t("session.packImportAction")}
+      </button>
+    </li>
+  )
+}
+
+/** v2.2 "import from installed pack" picker: opening it asks the server for
+ * the card files installed packs ship (`list_pack_cards`), so a player never
+ * types a path. `packCards === null` means no reply yet. */
+function PackImportCard() {
+  const { t } = useTranslation()
+  const online = useConnectionStore((s) => s.status === "online")
+  const packCards = useSessionStore((s) => s.packCards)
+  const requestPackCards = useSessionStore((s) => s.requestPackCards)
+  const [open, setOpen] = useState(false)
+  if (!online && !open) return null
+  return (
+    <section className="desk-card">
+      <header className="desk-title">
+        {t("session.packImport")}
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => {
+            if (!open) requestPackCards()
+            setOpen(!open)
+          }}
+        >
+          {t(open ? "session.packImportClose" : "session.packImportBrowse")}
+        </button>
+      </header>
+      {open ? (
+        packCards === null ? (
+          <p className="studio-hint">{t("session.packImportLoading")}</p>
+        ) : packCards.length === 0 ? (
+          <p className="studio-hint">{t("session.packImportEmpty")}</p>
+        ) : (
+          <ul className="party-list">
+            {packCards.map((card) => (
+              <PackCardRow key={card.ref} card={card} online={online} />
+            ))}
+          </ul>
+        )
+      ) : null}
+    </section>
+  )
+}
+
 function SceneCard({ game }: { game: StateFrame }) {
   const { t } = useTranslation()
   if (!game.scene && !game.clock) return null
@@ -429,6 +498,7 @@ export default function StatePanel() {
       {game ? <VariablesCard game={game} /> : null}
       {game ? <PartyCard game={game} /> : null}
       {game ? <PregenCard game={game} /> : null}
+      <PackImportCard />
       {game ? <SceneCard game={game} /> : null}
       {game ? <InitiativeCard game={game} /> : null}
       <PresenceCard />

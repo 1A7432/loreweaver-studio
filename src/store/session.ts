@@ -1,14 +1,17 @@
 import { create } from "zustand"
+import { FrameType } from "@loreweaver/protocol"
 import type {
   DiceFrame,
   NarrativeDeltaFrame,
   NarrativeFrame,
+  PackCardEntry,
   PresenceFrame,
   ServerFrame,
   StateFrame,
   SystemFrame,
   UiFrame,
 } from "@loreweaver/protocol"
+import { transportSend } from "../lib/transport"
 import { usePanelsStore } from "./panels"
 
 /** Scrollback cap, mirroring the reference TUI client. */
@@ -43,8 +46,13 @@ interface SessionState {
   presence: PresenceFrame | null
   turn: TurnState
   uiPanels: UiPanelRegion[]
+  /** v2.2 installed-pack card list; `null` until the first `pack_cards` reply,
+   * then the (possibly empty) card list. */
+  packCards: PackCardEntry[] | null
   /** Feed one validated server frame into the session. */
   ingest: (frame: ServerFrame, now?: number) => void
+  /** Ask the server for the card files installed packs ship (v2.2). */
+  requestPackCards: () => void
   /** Clear a stale busy indicator once the safety timeout has elapsed. */
   expireTurnSafety: (now: number) => void
   clear: () => void
@@ -142,6 +150,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   presence: null,
   turn: IDLE_TURN,
   uiPanels: [],
+  packCards: null,
 
   ingest: (frame, now = Date.now()) => {
     switch (frame.type) {
@@ -172,6 +181,9 @@ export const useSessionStore = create<SessionState>((set) => ({
       case "presence":
         set({ presence: frame })
         return
+      case "pack_cards":
+        set({ packCards: frame.cards })
+        return
       // v1.8 module panels live in their own store; the session store stays
       // the single ingest chokepoint.
       case "ui_manifest":
@@ -194,12 +206,18 @@ export const useSessionStore = create<SessionState>((set) => ({
     }
   },
 
+  requestPackCards: () => {
+    void transportSend({ type: FrameType.ListPackCards }).catch(() => {
+      // The transport surfaces failures through status events.
+    })
+  },
+
   expireTurnSafety: (now) => {
     set((s) => (s.turn.busy && now - s.turn.since >= TURN_BUSY_TIMEOUT_MS ? { turn: IDLE_TURN } : s))
   },
 
   clear: () => {
     usePanelsStore.getState().resetSession()
-    set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [] })
+    set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [], packCards: null })
   },
 }))

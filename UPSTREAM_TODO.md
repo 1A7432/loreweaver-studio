@@ -201,6 +201,22 @@ the studio must react to (R) or may now surface (S):
   round / dead turn) and must be removed, never rendered. The k3 run observed
   empty kp bubbles on the player wire; verify NarrativeLog complies (drop empty
   finals, matched-draft or not).
+
+## Engine landings, 2026-08-17 (streaming fix + player pack imports)
+
+- **(DONE 2026-08-17) `loreweaver-protocol` 2.2.0 landed.** The ≤2.1.1
+  validator table had NO `narrative_delta` entry — `isServerFrame` silently
+  dropped every streaming frame, so the studio's delta handling in
+  `src/store/session.ts` was dead code on every live table (fixed in 2.1.2);
+  v2.2 adds `list_pack_cards`/`pack_cards` (the pack import picker's data
+  lane). Dependency bumped, lockfile refreshed, the temporary local v2.2 type
+  shim folded back into package imports. Streaming and the picker are live.
+- **(S) Player pack-relative PC imports are open** — `.import <packId>/cards/x>
+  pc` works for players (confined to `data_dir/packs/`), `.import list` prints
+  refs, and the Studio picker rides the v2.2 frames.
+- **(S) World import may pin the room system** — a world card from a pack that
+  ships exactly one rulepack pins `room_state["room_system"]`; state/panels may
+  want to surface the room's effective system.
 - (context) Keeper re-imports now replace lore by provenance (serialized-module
   contract real at last); `.panels enable` admits kit-only packs; `.var list`
   shows typed trackers; the Scribe runs on the CLI channel too. Nothing studio-

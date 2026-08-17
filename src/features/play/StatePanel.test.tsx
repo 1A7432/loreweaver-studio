@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -189,6 +189,73 @@ describe("PregenCard", () => {
     useSessionStore.setState({ game: { ...BASE, pregens: [] } })
     render(<StatePanel />)
     expect(screen.queryByText("Pre-generated cast")).not.toBeInTheDocument()
+  })
+})
+
+describe("PackImportCard (v2.2)", () => {
+  beforeEach(() => {
+    sent.length = 0
+    useSessionStore.getState().clear()
+    useConnectionStore.setState({
+      status: "online",
+      welcome: {
+        type: "welcome",
+        protocol: "2.1",
+        room: "table",
+        you: { id: "u1", name: "Nyx", role: "player" },
+        locale: "en",
+        server: "loreweaver/1",
+      },
+    })
+  })
+
+  it("requests the card list on open, renders entries, and imports through the chat lane", async () => {
+    render(<StatePanel />)
+
+    // Opening the picker is what asks the server — no request before that.
+    expect(sent).toEqual([])
+    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
+    expect(sent).toEqual([{ type: "list_pack_cards" }])
+    expect(screen.getByText("Fetching the card list…")).toBeInTheDocument()
+
+    // The unicast reply lands in the store; drive it directly (the installed
+    // 2.1.x package validator would drop the frame on a real connection).
+    act(() => {
+      useSessionStore.getState().ingest({
+        type: "pack_cards",
+        cards: [
+          { ref: "midnight-pier/cards/lin_wan.png", pack: "midnight-pier", name: "lin_wan" },
+          { ref: "midnight-pier/cards/chen_jiuli.png", pack: "midnight-pier", name: "chen_jiuli" },
+        ],
+      })
+    })
+
+    expect(screen.getByText("lin_wan")).toBeInTheDocument()
+    expect(screen.getAllByText("midnight-pier")).toHaveLength(2)
+    // The raw ref rides along as the row tooltip.
+    expect(screen.getByText("lin_wan").closest("li")).toHaveAttribute(
+      "title",
+      "midnight-pier/cards/lin_wan.png",
+    )
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Import" })[0])
+    expect(sent).toContainEqual({ type: "input", text: ".import midnight-pier/cards/lin_wan.png pc" })
+  })
+
+  it("shows a friendly empty state when no installed pack ships cards", async () => {
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
+    act(() => {
+      useSessionStore.getState().ingest({ type: "pack_cards", cards: [] })
+    })
+    expect(screen.getByText("No installed pack ships character cards.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument()
+  })
+
+  it("stays hidden while offline", () => {
+    useConnectionStore.setState({ status: "offline", welcome: null })
+    render(<StatePanel />)
+    expect(screen.queryByText("Import from pack")).not.toBeInTheDocument()
   })
 })
 
