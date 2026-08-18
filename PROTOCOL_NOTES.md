@@ -11,6 +11,17 @@ outside — feedback for upstream, not workarounds we expect to keep forever.
 > `narrative_delta` chunks closed by one full-text `narrative`); the corresponding local
 > workarounds (source alias, stream/done merging) have been removed.
 
+> **Update — protocol 2.3 (`pack_cards.kind`), 2026-08-18.** Every `pack_cards` entry now
+> carries the card's 拆卡 kind, and it decides the import VERB: `character` → `.import <ref>
+pc`, `world` → the keeper-only `.import <ref> world`. Before it existed the studio (and
+> the TUI, and this repo's own play lane) hard-coded `pc`, so a player clicking a module's
+> world card asked the server to build a character out of a module. The studio still pins
+> `npm:loreweaver-protocol@2.2.0`, whose `PackCardEntry` has no `kind`, so
+> `PackCardEntry23` in `src/features/play/StatePanel.tsx` adds it locally — ONE alias to
+> delete when the dependency moves to 2.3.0. Note the authoring lane never had the bug:
+> `src/features/studio/pack/testDrive.ts` reads `kind` off the local pack source. The gap
+> was only ever that the wire did not carry what the manifest already knew.
+
 > **Update — the major-version check.** The shared package grew the compatibility
 > predicate (`protocolMajor` / `protocolMismatch`) on 2026-08-08, hours after 2.1.0 was
 > published; **2.1.1** carries it, and the studio pins that. The studio REFUSES a

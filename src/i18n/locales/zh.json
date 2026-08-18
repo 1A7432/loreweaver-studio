@@ -75,6 +75,8 @@
     "packImportRetry": "重试",
     "packImportEmpty": "已安装的内容包中没有角色卡。",
     "packImportAction": "导入",
+    "packImportWorld": "世界卡",
+    "packImportKeeperOnly": "模组机器部件——由守秘人导入。",
     "varEdit": "写入",
     "varEditDone": "完成",
     "varEditHint": "这些操作走的是普通的 `.var set` / `.var add` 命令，因此引擎会按变量自己的规格校验每个值——上下界、可选项，一样不少——牌桌会立刻看到变化。",

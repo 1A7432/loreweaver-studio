@@ -341,22 +341,47 @@ function PregenCard({ game }: { game: StateFrame }) {
   )
 }
 
+/** `PackCardEntry` plus the v2.3 `kind`, until `loreweaver-protocol` publishes 2.3.0
+ * and this package's dependency moves off 2.2.0. ONE alias so there is one place to
+ * delete, not a cast at every use. Optional on purpose either way: a pre-2.3 server
+ * omits the field, and `character` — what every client assumed before it existed — is
+ * the right reading of a missing one. */
+export type PackCardEntry23 = PackCardEntry & { kind?: "character" | "world" }
+
 /** One importable card row: name + owning pack, the raw ref as tooltip.
- * Importing goes through the ordinary command path (`.import <ref> pc`), the
- * same lane the chat box uses — the server's own gates keep applying no
- * matter how the ref was discovered. */
-function PackCardRow({ card, online }: { card: PackCardEntry; online: boolean }) {
+ * Importing goes through the ordinary command path, the same lane the chat box
+ * uses — the server's own gates keep applying no matter how the ref was
+ * discovered.
+ *
+ * The VERB comes from the card's own kind (protocol 2.3). Every client used to
+ * hard-code `pc`, so clicking a module's world card asked the server to build a
+ * player character out of a module and failed on a name collision. A world card
+ * is module machinery: keeper-only, and it lands through `.import <ref> world`. */
+function PackCardRow({
+  card,
+  online,
+  isKeeper,
+}: {
+  card: PackCardEntry23
+  online: boolean
+  isKeeper: boolean
+}) {
   const { t } = useTranslation()
+  const world = card.kind === "world"
+  const locked = world && !isKeeper
   return (
     <li className="party-row" title={card.ref}>
       <span className="party-name">{stripControlChars(card.name)}</span>
       <span className="desk-tag">{stripControlChars(card.pack)}</span>
+      {world ? <span className="desk-tag">{t("session.packImportWorld")}</span> : null}
       <button
         type="button"
         className="ghost-button"
-        disabled={!online}
+        disabled={!online || locked}
+        title={locked ? t("session.packImportKeeperOnly") : undefined}
         onClick={() => {
-          void transportSend({ type: "input", text: `.import ${card.ref} pc` }).catch(() => {
+          const verb = world ? "world" : "pc"
+          void transportSend({ type: "input", text: `.import ${card.ref} ${verb}` }).catch(() => {
             // The transport surfaces failures through status events.
           })
         }}
@@ -378,6 +403,7 @@ export const PACK_CARDS_REPLY_TIMEOUT_MS = 8_000
 function PackImportCard() {
   const { t } = useTranslation()
   const online = useConnectionStore((s) => s.status === "online")
+  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
   const packCards = useSessionStore((s) => s.packCards)
   const requestPackCards = useSessionStore((s) => s.requestPackCards)
   const [open, setOpen] = useState(false)
@@ -431,7 +457,7 @@ function PackImportCard() {
         ) : (
           <ul className="party-list">
             {packCards.map((card) => (
-              <PackCardRow key={card.ref} card={card} online={online} />
+              <PackCardRow key={card.ref} card={card} online={online} isKeeper={isKeeper} />
             ))}
           </ul>
         )

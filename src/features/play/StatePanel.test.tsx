@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -14,7 +14,7 @@ vi.mock("../../lib/transport", () => ({
 import "../../i18n"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
-import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS } from "./StatePanel"
+import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS, type PackCardEntry23 } from "./StatePanel"
 
 describe("StatePanel", () => {
   beforeEach(() => useSessionStore.getState().clear())
@@ -274,6 +274,88 @@ describe("PackImportCard (v2.2)", () => {
     })
     expect(screen.getByText("No installed pack ships character cards.")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument()
+  })
+
+  it("imports a world card with the WORLD verb when the keeper clicks it", async () => {
+    // The bug: every picker hard-coded `pc`, so the module's own world card was
+    // offered as a character and the import died on a name collision.
+    useConnectionStore.setState({
+      status: "online",
+      welcome: {
+        type: "welcome",
+        protocol: "2.3",
+        room: "table",
+        you: { id: "u1", name: "Nyx", role: "keeper" },
+        locale: "en",
+        server: "loreweaver/1",
+      },
+    })
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
+    act(() => {
+      useSessionStore.getState().ingest({
+        type: "pack_cards",
+        cards: [
+          {
+            ref: "mistwharf/cards/customs.json",
+            pack: "mistwharf",
+            name: "customs",
+            kind: "world",
+          } as PackCardEntry23,
+        ],
+      })
+    })
+
+    const row = screen.getByText("customs").closest("li")!
+    expect(within(row).getByText("world card")).toBeInTheDocument()
+    await userEvent.click(within(row).getByRole("button", { name: "Import" }))
+    expect(sent).toContainEqual({ type: "input", text: ".import mistwharf/cards/customs.json world" })
+  })
+
+  it("offers a player no click on a world card", async () => {
+    useConnectionStore.setState({
+      status: "online",
+      welcome: {
+        type: "welcome",
+        protocol: "2.3",
+        room: "table",
+        you: { id: "u1", name: "Nyx", role: "player" },
+        locale: "en",
+        server: "loreweaver/1",
+      },
+    })
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
+    act(() => {
+      useSessionStore.getState().ingest({
+        type: "pack_cards",
+        cards: [
+          {
+            ref: "mistwharf/cards/customs.json",
+            pack: "mistwharf",
+            name: "customs",
+            kind: "world",
+          } as PackCardEntry23,
+        ],
+      })
+    })
+
+    const row = screen.getByText("customs").closest("li")!
+    expect(within(row).getByRole("button", { name: "Import" })).toBeDisabled()
+  })
+
+  it("still sends `pc` for a card whose kind a pre-2.3 server omits", async () => {
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
+    act(() => {
+      useSessionStore.getState().ingest({
+        type: "pack_cards",
+        cards: [{ ref: "harbour/cards/pilot.json", pack: "harbour", name: "pilot" }],
+      })
+    })
+
+    await userEvent.click(screen.getByRole("button", { name: "Import" }))
+    expect(sent).toContainEqual({ type: "input", text: ".import harbour/cards/pilot.json pc" })
   })
 
   it("stays hidden while offline", () => {
