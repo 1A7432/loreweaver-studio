@@ -139,23 +139,22 @@ describe("CharacterScreen — editing", () => {
     await userEvent.clear(box)
     await userEvent.type(box, "70{Enter}")
 
-    expect(sent).toEqual([{ type: "input", text: ".st 力量 70" }])
+    expect(sent).toEqual([{ type: "input", text: ".st 力量=70" }])
   })
 
-  it("lands a negative target through the engine's RELATIVE form — it has no absolute one", async () => {
-    // `.st X -3` is "current minus 3" to the engine (`_apply_value_expr`), so a
-    // negative literal typed as an absolute value must go out as the signed delta.
-    expect(sheetWrite("力量", 55, 70)).toBe(".st 力量 70")
-    expect(sheetWrite("力量", 55, 0)).toBe(".st 力量 0")
-    expect(sheetWrite("mod", 5, -3)).toBe(".st mod -8")
-    expect(sheetWrite("mod", -5, -3)).toBe(".st mod +2")
+  it("writes through the explicit `=` form, so a negative or a digit-bearing key is exact", async () => {
+    // The bare `.st X -3` is "current minus 3" to the engine and `.st skill2 30` splits
+    // the name; `.st X=-3` / `.st skill2=30` are absolute and unambiguous (engine 2.3).
+    expect(sheetWrite("力量", 70)).toBe(".st 力量=70")
+    expect(sheetWrite("mod", -3)).toBe(".st mod=-3")
+    expect(sheetWrite("skill2", 30)).toBe(".st skill2=30")
 
     render(<CharacterScreen onBack={() => {}} />)
     await userEvent.click(screen.getByRole("button", { name: "55" }))
     const box = screen.getByLabelText("力量")
     await userEvent.clear(box)
     await userEvent.type(box, "-5{Enter}")
-    expect(sent).toEqual([{ type: "input", text: ".st 力量 -60" }])
+    expect(sent).toEqual([{ type: "input", text: ".st 力量=-5" }])
   })
 
   it("keeps the picker honest across modes: a system chosen for Describe is not shown for Roll", async () => {

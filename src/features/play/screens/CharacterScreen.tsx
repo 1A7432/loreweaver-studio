@@ -177,9 +177,9 @@ function CreateCharacter() {
   )
 }
 
-/** One attribute row. Editing writes through `.st`, which the server validates
- * against the pack's constraints and answers in the chat log — nothing is assumed
- * to have worked here; the next `state` frame is the truth. */
+/** One attribute row. Editing writes through `.st <name>=<value>`, which the server
+ * validates against the pack's constraints and answers in the chat log — nothing is
+ * assumed to have worked here; the next `state` frame is the truth. */
 function AttributeRow({ name, value }: { name: string; value: unknown }) {
   const { t } = useTranslation()
   const online = useConnectionStore((s) => s.status === "online")
@@ -198,7 +198,7 @@ function AttributeRow({ name, value }: { name: string; value: unknown }) {
     const next = (draft ?? "").trim()
     setDraft(null)
     if (!next || Number(next) === value || !Number.isFinite(Number(next))) return
-    send(sheetWrite(name, value, Number(next)))
+    send(sheetWrite(name, Number(next)))
   }
 
   return (

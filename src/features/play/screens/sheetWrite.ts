@@ -1,13 +1,11 @@
-/** The `.st` write that lands `target` on an attribute now at `current`.
+/** The `.st` write that lands `target` on an attribute.
  *
- * `.st <name> <n>` sets `n`; but the engine reads a leading sign as RELATIVE
- * (`gateway/commands.py` `_apply_value_expr`: `-5` is current−5, `+5` current+5), and
- * it has no syntax for an absolute negative. So a non-negative target goes out as
- * itself, and a negative one as the signed delta from the value on the wire —
- * reachable either way with the engine's own grammar, and the next `state` frame is
- * still the truth. */
-export function sheetWrite(name: string, current: number, target: number): string {
-  if (target >= 0) return `.st ${name} ${target}`
-  const delta = target - current
-  return `.st ${name} ${delta >= 0 ? `+${delta}` : `${delta}`}`
+ * The EXPLICIT form, `.st <name>=<value>` (engine ≥ 2.3): `=` assigns ABSOLUTELY, so
+ * a negative target is simply written with its sign, and the name is everything left
+ * of the `=` — a storage key with a digit or a space in it (`skill2`, `spot hidden`)
+ * cannot be mis-split. The bare `.st <name> <n>` form reads a leading sign as RELATIVE
+ * and scans for the value inside the name, which is why a client that builds writes
+ * out of arbitrary pack keys does not use it. */
+export function sheetWrite(name: string, target: number): string {
+  return `.st ${name}=${target}`
 }
