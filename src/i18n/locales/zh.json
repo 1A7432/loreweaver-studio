@@ -180,8 +180,32 @@
       "empty": "尚未安装守秘人技能。"
     },
     "character": {
-      "none": "还没有角色——守秘人指派或模组创建后会出现在这里。",
-      "readonlyHint": "只读卡面。建卡与加点目前在终端客户端完成。"
+      "none": "还没有角色——在下面建一个，或者从模组的预设名单里认领。",
+      "noSystems": "服务端没有报告任何规则系统，可能低于协议 2.3。",
+      "createMode": "怎么建",
+      "mode": {
+        "roll": "掷骰",
+        "roll.hint": "由服务端掷这个系统的属性，其余数值全部从属性派生。",
+        "describe": "描述",
+        "describe.hint": "写他是谁，守秘人的模型起草卡面，再由规则校验定案。",
+        "import": "导入卡片",
+        "import.hint": "服务端上的酒馆角色卡。世界机器部件在导入时被剥掉。"
+      },
+      "system": "规则系统",
+      "name": "名字",
+      "namePlaceholder": "留空则由服务端起名",
+      "description": "他是谁？",
+      "descriptionPlaceholder": "码头文书，闲下来读潮汐表，从不看人的眼睛。",
+      "cardPath": "卡片文件",
+      "cardPathPlaceholder": "cards/pilot.png，或包内引用 harbour/cards/pilot.png",
+      "create": "建立角色",
+      "sent": "已发送：{{command}}",
+      "editHint": "点数值即可修改——每一次写入都由服务端按规则系统校验。",
+      "finalize": "重新派生生命体征",
+      "finalizeHint": "把当前 HP / MP / 理智按现在的属性重置回上限。",
+      "delete": "删除角色",
+      "deleteConfirm": "确认删除",
+      "deleteCancel": "算了"
     },
     "settings": {
       "themeHint": "与终端客户端 F1–F5 同一套、同一顺序的桌面配色。Lamplight 是 Loreweaver 的识别色。",
@@ -1319,6 +1343,91 @@
         "syntaxAt": "“{{where}}”：[InitVar] 块在第 {{line}} 行无法解析——{{detail}} 未从中取得任何变量。"
       }
     },
-    "macroDeterminism": "{{random}} / {{pick}}（以及世界书条目的 probability 掷骰）按「房间 + 回合」播种：不同回合自由变化，但重跑同一回合——重试、撤销回放——会得到完全相同的结果。所以同一回合内「随机」会重复，这正是回合可复现的原因。两种抽取使用各自独立的流，因此新增一个 {{random}} 不会改变哪些概率条目被触发。"
+    "macroDeterminism": "{{random}} / {{pick}}（以及世界书条目的 probability 掷骰）按「房间 + 回合」播种：不同回合自由变化，但重跑同一回合——重试、撤销回放——会得到完全相同的结果。所以同一回合内「随机」会重复，这正是回合可复现的原因。两种抽取使用各自独立的流，因此新增一个 {{random}} 不会改变哪些概率条目被触发。",
+    "panels": {
+      "describe": "说说这个模组需要什么面板",
+      "describePlaceholder": "边栏放一块潮汐钟，再显示还有几盏灯亮着；另外给守秘人一块板，记谁开始怀疑港务长。",
+      "draft": "起草面板",
+      "drafting": "起草中…",
+      "aiUnset": "先在 AI 设置里配好模型，才能按描述起草。",
+      "mode": "编辑方式",
+      "modeVisual": "表单",
+      "modeYaml": "YAML",
+      "unparseable": "这份面板文件解析不了，表单编辑已关闭：{{error}}",
+      "opaque": "有 {{count}} 块面板自带 HTML，已原样保留——那些请到 YAML 页改。",
+      "addPanel": "添加面板",
+      "removePanel": "删除这块面板",
+      "addBlock": "添加区块…",
+      "removeBlock": "删除区块",
+      "moveUp": "上移",
+      "moveDown": "下移",
+      "blockKind": "区块",
+      "id": "面板 id",
+      "title": "标题",
+      "slot": "位置",
+      "audience": "谁能看见",
+      "visibleWhen": "何时显示",
+      "repeat": "按前缀重复",
+      "repeatPlaceholder": "变量 id 前缀，例如 lantern.",
+      "slotName": {
+        "sidebar": "边栏",
+        "inline": "正文里"
+      },
+      "audienceName": {
+        "all": "所有人",
+        "player": "只给玩家",
+        "keeper": "只给守秘人"
+      },
+      "kind": {
+        "divider": "分隔线",
+        "meter": "量表",
+        "stat": "数值",
+        "badge": "标记",
+        "text": "文字",
+        "image": "图片",
+        "letter": "信件",
+        "clipping": "剪报",
+        "title_card": "标题卡",
+        "map_pin": "地图标点"
+      },
+      "field": {
+        "mode": "{{field}} 取值来源",
+        "literal": "固定值",
+        "text": "文字",
+        "leaf": "重复项",
+        "binding": "变量",
+        "noVariables": "还没有声明任何变量",
+        "label": "标签",
+        "value": "数值",
+        "min": "最小",
+        "max": "最大",
+        "tone": "色调",
+        "style": "样式",
+        "src": "文件",
+        "caption": "图注",
+        "alt": "替代文字",
+        "body": "正文",
+        "from": "寄件人",
+        "to": "收件人",
+        "date": "日期",
+        "headline": "标题",
+        "source": "来源",
+        "title": "标题",
+        "subtitle": "副标题",
+        "act": "幕",
+        "x": "X",
+        "y": "Y",
+        "note": "备注"
+      },
+      "problem": {
+        "badId": "面板「{{panel}}」：id 必须是小写短横线格式，例如 tide-board。",
+        "duplicateId": "有两块面板用了同一个 id「{{panel}}」。",
+        "noTitle": "面板「{{panel}}」没有标题。",
+        "noBlocks": "面板「{{panel}}」没有任何区块，渲染出来会是空的。",
+        "missingField": "{{at}}：「{{field}}」是必填的。",
+        "unknownVar": "{{at}}：「{{path}}」不是这个包声明过的变量——到了桌上这个区块会无声消失。",
+        "meterRange": "{{at}}：量表的最大值必须大于最小值。"
+      }
+    }
   }
 }

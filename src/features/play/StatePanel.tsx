@@ -7,10 +7,10 @@ import {
   type ResourceState,
   type StateFrame,
 } from "@loreweaver/protocol"
+import { type PackCardEntry23 } from "../../lib/protocol23"
 import { transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
-import type { PackCardEntry } from "@loreweaver/protocol"
 import AudioDeck from "./AudioDeck"
 import Avatar from "./Avatar"
 import MediaDeck from "./MediaDeck"
@@ -340,13 +340,6 @@ function PregenCard({ game }: { game: StateFrame }) {
     </section>
   )
 }
-
-/** `PackCardEntry` plus the v2.3 `kind`, until `loreweaver-protocol` publishes 2.3.0
- * and this package's dependency moves off 2.2.0. ONE alias so there is one place to
- * delete, not a cast at every use. Optional on purpose either way: a pre-2.3 server
- * omits the field, and `character` — what every client assumed before it existed — is
- * the right reading of a missing one. */
-export type PackCardEntry23 = PackCardEntry & { kind?: "character" | "world" }
 
 /** One importable card row: name + owning pack, the raw ref as tooltip.
  * Importing goes through the ordinary command path, the same lane the chat box

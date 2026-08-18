@@ -14,7 +14,8 @@ vi.mock("../../lib/transport", () => ({
 import "../../i18n"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
-import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS, type PackCardEntry23 } from "./StatePanel"
+import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS } from "./StatePanel"
+import type { PackCardEntry23 } from "../../lib/protocol23"
 
 describe("StatePanel", () => {
   beforeEach(() => useSessionStore.getState().clear())

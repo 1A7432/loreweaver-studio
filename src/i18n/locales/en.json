@@ -180,8 +180,32 @@
       "empty": "No keeper skills installed."
     },
     "character": {
-      "none": "No character yet — it appears once the Keeper assigns or the module creates one.",
-      "readonlyHint": "Read-only sheet. Creation and point-buy run in the terminal client for now."
+      "none": "No character yet — make one below, or claim one from the module's cast.",
+      "noSystems": "The server reported no rule systems. It may predate protocol 2.3.",
+      "createMode": "How to make it",
+      "mode": {
+        "roll": "Roll",
+        "roll.hint": "The server rolls this system's characteristics and derives everything from them.",
+        "describe": "Describe",
+        "describe.hint": "Write who they are; the Keeper's model drafts a sheet and the rules validate it.",
+        "import": "Import a card",
+        "import.hint": "A SillyTavern character card on the server. World machinery is stripped on the way in."
+      },
+      "system": "Rule system",
+      "name": "Name",
+      "namePlaceholder": "Leave empty to let the server name them",
+      "description": "Who are they?",
+      "descriptionPlaceholder": "A dock clerk who reads the tide tables for fun and never looks anyone in the eye.",
+      "cardPath": "Card file",
+      "cardPathPlaceholder": "cards/pilot.png, or a pack ref like harbour/cards/pilot.png",
+      "create": "Create character",
+      "sent": "Sent: {{command}}",
+      "editHint": "Click a value to change it — the server validates every write against the rule system.",
+      "finalize": "Re-derive vitals",
+      "finalizeHint": "Sets current HP / MP / SAN back to their maxima for the current characteristics.",
+      "delete": "Delete character",
+      "deleteConfirm": "Delete for good",
+      "deleteCancel": "Keep"
     },
     "settings": {
       "themeHint": "The table's palettes, same order as the TUI's F1–F5. Lamplight is the Loreweaver identity.",
@@ -1319,6 +1343,91 @@
         "syntaxAt": "“{{where}}”: the [InitVar] block does not parse at line {{line}} — {{detail}} No variables were taken from it."
       }
     },
-    "macroDeterminism": "{{random}} / {{pick}} (and a lore entry's probability roll) are seeded per room and TURN: different turns vary freely, but re-running the same turn — a retry, an undo replay — reproduces the same picks. Expect “random” to repeat within one turn; that is what makes a turn reconstructable. The two draws use separate streams, so adding a {{random}} never shifts which probabilistic entries fire."
+    "macroDeterminism": "{{random}} / {{pick}} (and a lore entry's probability roll) are seeded per room and TURN: different turns vary freely, but re-running the same turn — a retry, an undo replay — reproduces the same picks. Expect “random” to repeat within one turn; that is what makes a turn reconstructable. The two draws use separate streams, so adding a {{random}} never shifts which probabilistic entries fire.",
+    "panels": {
+      "describe": "Describe the panels this module needs",
+      "describePlaceholder": "A sidebar showing the tide clock and how many lanterns are still lit, plus a keeper-only board tracking who suspects the harbourmaster.",
+      "draft": "Draft panels",
+      "drafting": "Drafting…",
+      "aiUnset": "Set a model under AI settings to draft from a description.",
+      "mode": "Editor mode",
+      "modeVisual": "Fields",
+      "modeYaml": "YAML",
+      "unparseable": "This panels file cannot be parsed, so the field editor is off: {{error}}",
+      "opaque": "{{count}} panel(s) ship their own HTML and are kept exactly as written — edit those in the YAML tab.",
+      "addPanel": "Add a panel",
+      "removePanel": "Remove this panel",
+      "addBlock": "Add a block…",
+      "removeBlock": "Remove block",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "blockKind": "Block",
+      "id": "Panel id",
+      "title": "Title",
+      "slot": "Where",
+      "audience": "Who sees it",
+      "visibleWhen": "Show when",
+      "repeat": "Repeat over",
+      "repeatPlaceholder": "a variable id prefix, e.g. lantern.",
+      "slotName": {
+        "sidebar": "Sidebar",
+        "inline": "In the log"
+      },
+      "audienceName": {
+        "all": "Everyone",
+        "player": "Players only",
+        "keeper": "Keeper only"
+      },
+      "kind": {
+        "divider": "Divider",
+        "meter": "Meter",
+        "stat": "Stat",
+        "badge": "Badge",
+        "text": "Text",
+        "image": "Picture",
+        "letter": "Letter",
+        "clipping": "Clipping",
+        "title_card": "Title card",
+        "map_pin": "Map pin"
+      },
+      "field": {
+        "mode": "{{field}} source",
+        "literal": "Value",
+        "text": "Text",
+        "leaf": "Repeat item",
+        "binding": "Variable",
+        "noVariables": "no variables declared yet",
+        "label": "Label",
+        "value": "Value",
+        "min": "Min",
+        "max": "Max",
+        "tone": "Tone",
+        "style": "Style",
+        "src": "File",
+        "caption": "Caption",
+        "alt": "Alt text",
+        "body": "Body",
+        "from": "From",
+        "to": "To",
+        "date": "Date",
+        "headline": "Headline",
+        "source": "Source",
+        "title": "Title",
+        "subtitle": "Subtitle",
+        "act": "Act",
+        "x": "X",
+        "y": "Y",
+        "note": "Note"
+      },
+      "problem": {
+        "badId": "Panel “{{panel}}”: the id must be a lowercase slug like tide-board.",
+        "duplicateId": "Two panels share the id “{{panel}}”.",
+        "noTitle": "Panel “{{panel}}” has no title.",
+        "noBlocks": "Panel “{{panel}}” has no blocks — it would render as nothing.",
+        "missingField": "{{at}}: “{{field}}” is required.",
+        "unknownVar": "{{at}}: “{{path}}” is not a variable this pack declares — the block would silently vanish at the table.",
+        "meterRange": "{{at}}: a meter's max must be greater than its min."
+      }
+    }
   }
 }
