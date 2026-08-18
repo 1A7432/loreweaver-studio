@@ -4,10 +4,10 @@ import {
   stripControlChars,
   type CharacterState,
   type ModuleVariable,
+  type PackCardEntry,
   type ResourceState,
   type StateFrame,
 } from "@loreweaver/protocol"
-import { type PackCardEntry23 } from "../../lib/protocol23"
 import { transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
@@ -355,7 +355,7 @@ function PackCardRow({
   online,
   isKeeper,
 }: {
-  card: PackCardEntry23
+  card: PackCardEntry
   online: boolean
   isKeeper: boolean
 }) {

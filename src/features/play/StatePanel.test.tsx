@@ -15,7 +15,6 @@ import "../../i18n"
 import { useConnectionStore } from "../../store/connection"
 import { useSessionStore } from "../../store/session"
 import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS } from "./StatePanel"
-import type { PackCardEntry23 } from "../../lib/protocol23"
 
 describe("StatePanel", () => {
   beforeEach(() => useSessionStore.getState().clear())
@@ -302,7 +301,7 @@ describe("PackImportCard (v2.2)", () => {
             pack: "mistwharf",
             name: "customs",
             kind: "world",
-          } as PackCardEntry23,
+          },
         ],
       })
     })
@@ -336,7 +335,7 @@ describe("PackImportCard (v2.2)", () => {
             pack: "mistwharf",
             name: "customs",
             kind: "world",
-          } as PackCardEntry23,
+          },
         ],
       })
     })

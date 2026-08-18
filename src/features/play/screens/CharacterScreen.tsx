@@ -18,8 +18,7 @@
 
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { stripControlChars } from "@loreweaver/protocol"
-import { ruleSystems } from "../../../lib/protocol23"
+import { stripControlChars, type RuleSystemEntry } from "@loreweaver/protocol"
 import { transportSend } from "../../../lib/transport"
 import { useConnectionStore } from "../../../store/connection"
 import { useSessionStore } from "../../../store/session"
@@ -44,13 +43,18 @@ function send(text: string): void {
   })
 }
 
+/** The one empty list every "no systems" answer returns. A fresh `[]` per call makes
+ * a zustand selector look changed on every render, which is an infinite re-render, not
+ * a style point. */
+const NO_SYSTEMS: RuleSystemEntry[] = []
+
 type CreateMode = "roll" | "describe" | "import"
 
 /** Make a character. Three modes, all resolved by the server: it rolls, it drafts from
  * a description, or it reads a card file. */
 function CreateCharacter() {
   const { t } = useTranslation()
-  const systems = useSessionStore((s) => ruleSystems(s.game))
+  const systems = useSessionStore((s) => s.game?.systems ?? NO_SYSTEMS)
   const online = useConnectionStore((s) => s.status === "online")
   const creatable = systems.filter((entry) => entry.make_char)
   const [mode, setMode] = useState<CreateMode>("roll")
