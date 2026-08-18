@@ -54,9 +54,14 @@ describe("locale resources", () => {
     // how `rulepackInitiativeString` shipped with no message at all. This walks
     // the readers instead: every `{ key: "…" }` an Issue is built from must
     // resolve.
-    // Both Issue namespaces: the forge renders `studio.err.*`, the pack bench
-    // `studio.pack.err.*`, and a reader shared by the two may land in either.
-    const messages = new Set([...Object.keys(en.studio.err), ...Object.keys(en.studio.pack.err)])
+    // Every namespace a `{ key }` literal is rendered from: the forge renders
+    // `studio.err.*`, the pack bench `studio.pack.err.*` (a reader shared by the two
+    // may land in either), and the panels editor its own `studio.panels.problem.*`.
+    const messages = new Set([
+      ...Object.keys(en.studio.err),
+      ...Object.keys(en.studio.pack.err),
+      ...Object.keys(en.studio.panels.problem),
+    ])
     const emitted = new Set<string>()
     for (const [path, text] of Object.entries(STUDIO_SOURCES)) {
       if (/\.test\.tsx?$/.test(path)) continue

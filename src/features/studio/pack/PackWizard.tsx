@@ -39,6 +39,7 @@ import { isTestDriveErrorKey, useTestDriveStore } from "../../../store/testDrive
 import type { TestDriveMode } from "./testDrive"
 import LintPanel from "../lint/LintPanel"
 import { lintPack } from "../lint/packLint"
+import PanelsEditor from "./PanelsEditor"
 import { lintSourceFromPackBench } from "../lint/sources"
 import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
 import {
@@ -1116,17 +1117,18 @@ export default function PackWizard() {
   )
   // Advisory, alongside the blocking `issues` above and never mixed with them:
   // these are packs that build fine and then do nothing.
-  const lintFindings = lintPack(
-    lintSourceFromPackBench({
-      items: store.items,
-      metadata: store.metadata,
-      panels: store.panels,
-      manualSkills: store.manualSkills,
-      presentation: store.presentation,
-      episodes: store.episodes,
-      buildUpTo: store.buildUpTo,
-    }),
-  )
+  // Also the panels editor's variable list: the closed set a `$var` binding may
+  // name is exactly what the lint resolves bindings against, so both read one source.
+  const lintSource = lintSourceFromPackBench({
+    items: store.items,
+    metadata: store.metadata,
+    panels: store.panels,
+    manualSkills: store.manualSkills,
+    presentation: store.presentation,
+    episodes: store.episodes,
+    buildUpTo: store.buildUpTo,
+  })
+  const lintFindings = lintPack(lintSource)
   // Kit issues live on the presentation step (every kit key shares the
   // packPresentation prefix; kit-raised path collisions are tagged `from`) —
   // the metadata step only gates on its own fields, the build gates on ALL.
@@ -1349,20 +1351,16 @@ export default function PackWizard() {
           <section className="pack-extra-section">
             <h3>{t("studio.pack.panels.title")}</h3>
             <p className="studio-hint">{t("studio.pack.panels.hint")}</p>
-            <label className="field field-wide">
-              {t("studio.pack.panels.yaml")}
-              <textarea
-                rows={10}
-                value={store.panels?.yamlText ?? ""}
-                onChange={(e) => store.setPanelsYaml(e.target.value)}
-                placeholder={
-                  // i18n-exempt: a panels YAML sample — code. Its own {en, zh}
-                  // labels are the point: panel text is authored bilingual.
-                  "panels:\n  - id: hud\n    title: {en: HUD, zh: 状态板}\n    slot: sidebar\n    blocks:\n      - {kind: meter, label: {en: Fear, zh: 恐慌}, value: {$var: fear}, min: 0, max: 10}"
-                }
-                spellCheck={false}
-              />
-            </label>
+            {/* Forms first, YAML behind a tab. Panels are a closed vocabulary of
+                blocks over the pack's own declared variables — exactly the shape a
+                form can hold — and asking an author to hand-write the file was the
+                reason most packs shipped none. `PanelsEditor` reads and writes the
+                same YAML either way, so a hand-written file opens here untouched. */}
+            <PanelsEditor
+              yamlText={store.panels?.yamlText ?? ""}
+              onChange={store.setPanelsYaml}
+              variables={lintSource.variables}
+            />
             <div className="dialog-row">
               <label className="field field-narrow">
                 {t("studio.pack.panels.subdir")}
