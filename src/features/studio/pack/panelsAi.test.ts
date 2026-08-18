@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest"
 import type { LintVariable } from "../lint/model"
 import { gatePanelsDraft, panelsSystemPrompt } from "./panelsAi"
-import { BLOCK_KINDS } from "./panelsModel"
+import { BLOCK_KINDS, PANEL_SLOTS } from "./panelsModel"
 
 const VARIABLES: LintVariable[] = [
   { id: "tide", labelEn: "Tide", labelZh: "潮汐", visibility: "player" },
@@ -32,6 +32,15 @@ describe("the drafting prompt", () => {
     // Generated from the field table, so the prompt cannot describe a kind the
     // editor lacks (or miss one it has).
     for (const kind of BLOCK_KINDS) expect(prompt).toContain(`- ${kind}:`)
+  })
+
+  it("teaches the model the ENGINE's slots, each with what it means", () => {
+    // `sidebar|tray|modal` is `core/panels.py` `PANEL_SLOTS`. The first draft taught
+    // `inline` — the hook `ui` frame's word — and every drafted panel failed the build.
+    const prompt = panelsSystemPrompt(VARIABLES)
+    expect(prompt).toContain('"slot": "sidebar" | "tray" | "modal"')
+    for (const slot of PANEL_SLOTS) expect(prompt).toContain(`- ${slot}:`)
+    expect(prompt).not.toContain("inline")
   })
 
   it("hands the model the pack's own variables, with their visibility", () => {
@@ -72,6 +81,32 @@ describe("the gate", () => {
     expect(value).toBeNull()
     expect(problems.join(" ")).toContain("max must be greater")
     expect(problems.join(" ")).toContain('"label" is missing')
+  })
+
+  it("refuses a block kind outside the vocabulary — from a model that is a wrong answer, not a keepsake", () => {
+    const draft = structuredClone(GOOD) as { panels: { blocks: unknown[] }[] }
+    draft.panels[0].blocks.push({ kind: "hologram", label: { en: "Ghost", zh: "鬼影" } })
+    const { value, problems } = gatePanelsDraft(draft, VARIABLES)
+    expect(value).toBeNull()
+    expect(problems.join(" ")).toContain('"hologram" is not a block kind')
+  })
+
+  it("accepts a choices block and wants each option whole", () => {
+    const draft = structuredClone(GOOD) as { panels: { blocks: unknown[] }[] }
+    draft.panels[0].blocks.push({
+      kind: "choices",
+      prompt: { en: "What now?", zh: "现在呢？" },
+      options: [{ id: "look", label: { en: "Look around", zh: "环顾" }, input: ".ra 侦查" }],
+    })
+    expect(gatePanelsDraft(draft, VARIABLES).problems).toEqual([])
+
+    draft.panels[0].blocks.push({
+      kind: "choices",
+      options: [{ id: "", label: { en: "x", zh: "x" }, input: "go" }],
+    })
+    const { value, problems } = gatePanelsDraft(draft, VARIABLES)
+    expect(value).toBeNull()
+    expect(problems.join(" ")).toContain("every option needs an id")
   })
 
   it("refuses a reply that is not a panels document at all", () => {

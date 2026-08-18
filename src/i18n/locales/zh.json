@@ -197,7 +197,7 @@
       "description": "他是谁？",
       "descriptionPlaceholder": "码头文书，闲下来读潮汐表，从不看人的眼睛。",
       "cardPath": "卡片文件",
-      "cardPathPlaceholder": "cards/pilot.png，或包内引用 harbour/cards/pilot.png",
+      "cardPathPlaceholder": "包内引用，如 harbour/cards/pilot.png（可在 队伍 → 从内容包导入 里浏览）；服务器路径仅 keeper 可用",
       "create": "建立角色",
       "sent": "已发送：{{command}}",
       "editHint": "点数值即可修改——每一次写入都由服务端按规则系统校验。",
@@ -1355,10 +1355,14 @@
       "modeYaml": "YAML",
       "unparseable": "这份面板文件解析不了，表单编辑已关闭：{{error}}",
       "opaque": "有 {{count}} 块面板自带 HTML，已原样保留——那些请到 YAML 页改。",
+      "opaqueBlocks": "有 {{count}} 个块是本编辑器不认识的类型，已原样保留——那些请到 YAML 页改。",
+      "opaqueBlock": "已原样保留——本编辑器不认识这种块；请到 YAML 页改。",
       "addPanel": "添加面板",
       "removePanel": "删除这块面板",
       "addBlock": "添加区块…",
       "removeBlock": "删除区块",
+      "addOption": "添加选项",
+      "removeOption": "删除选项",
       "moveUp": "上移",
       "moveDown": "下移",
       "blockKind": "区块",
@@ -1369,9 +1373,11 @@
       "visibleWhen": "何时显示",
       "repeat": "按前缀重复",
       "repeatPlaceholder": "变量 id 前缀，例如 lantern.",
+      "repeatVisibleWhen": "整组重复的显示条件",
       "slotName": {
-        "sidebar": "边栏",
-        "inline": "正文里"
+        "sidebar": "边栏（始终可见）",
+        "tray": "托盘（玩家自己拉开的抽屉）",
+        "modal": "弹窗（按需大幅打开）"
       },
       "audienceName": {
         "all": "所有人",
@@ -1384,6 +1390,7 @@
         "stat": "数值",
         "badge": "标记",
         "text": "文字",
+        "choices": "选项",
         "image": "图片",
         "letter": "信件",
         "clipping": "剪报",
@@ -1403,6 +1410,11 @@
         "max": "最大",
         "tone": "色调",
         "style": "样式",
+        "prompt": "提示语",
+        "options": "选项列表",
+        "optionId": "选项 id",
+        "input": "发送",
+        "inputPlaceholder": "选中时发送的输入，例如 .ra 侦查",
         "src": "文件",
         "caption": "图注",
         "alt": "替代文字",
@@ -1426,7 +1438,11 @@
         "noBlocks": "面板「{{panel}}」没有任何区块，渲染出来会是空的。",
         "missingField": "{{at}}：「{{field}}」是必填的。",
         "unknownVar": "{{at}}：「{{path}}」不是这个包声明过的变量——到了桌上这个区块会无声消失。",
-        "meterRange": "{{at}}：量表的最大值必须大于最小值。"
+        "meterRange": "{{at}}：量表的最大值必须大于最小值。",
+        "leafOutsideRepeat": "{{at}}：“{{field}}”用了重复项，但这个块并不重复。",
+        "bindingNotAllowed": "{{at}}：“{{field}}”这里只能是普通值——引擎不接受绑定。",
+        "tooManyOptions": "{{at}}：最多 {{max}} 个选项。",
+        "optionIncomplete": "{{at}}：每个选项都需要 id、标签和要发送的内容。"
       }
     }
   }

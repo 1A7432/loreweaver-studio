@@ -10,7 +10,7 @@
 // Every form field comes from `BLOCK_FIELDS`: there is no per-block-kind UI code, so
 // a new block kind reaches this editor by adding a row to that table.
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { LintVariable } from "../lint/model"
 import { useActivePreset } from "../ai/presetStore"
@@ -18,22 +18,29 @@ import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { assembleSystemPrompt, toLlmSampling } from "../ai/stPreset"
 import { gatePanelsDraft, panelsSystemPrompt } from "./panelsAi"
 import {
-  BLOCK_FIELDS,
   BLOCK_KINDS,
   LEAF_PARTS,
   PANEL_AUDIENCES,
   PANEL_SLOTS,
   type BlockDraft,
+  type ChoiceOptionDraft,
   type FieldSpec,
+  type FieldValue,
   type LeafPart,
   type Localized,
   type LocalizedField,
   type PanelDraft,
   type PanelsDocument,
+  emptyFieldValue,
   emptyLocalized,
+  fieldMayBind,
+  fieldsFor,
   isLocalized,
+  isOpaqueBlock,
+  isOptions,
   literal,
   newBlock,
+  newOption,
   newPanel,
   nextUid,
   parsePanelsYaml,
@@ -50,27 +57,32 @@ interface Props {
 
 const EMPTY_DOC: PanelsDocument = { panels: [], opaque: [] }
 
-/** ONE control for every field, localized or scalar. The three sources a field may
- * have — text an author types, a live variable binding, and (inside a `repeat`) the
- * current instance's own leaf — are the schema's, not the editor's, so offering them
- * uniformly is what keeps a hand-written panels file editable here without loss. */
+/** ONE control for every localized-or-scalar field. The three sources such a field
+ * may have — text an author types, a live variable binding, and (inside a `repeat`)
+ * the current instance's own leaf — are the schema's, not the editor's, so offering
+ * them uniformly is what keeps a hand-written panels file editable here without
+ * loss. Which sources are OFFERED follows the schema too: a `path` or `enum` field is
+ * a plain string to the engine (no binding), and `$leaf` exists only inside a repeat. */
 function FieldInput({
   label,
   spec,
   value,
   onChange,
   variables,
+  inRepeat,
 }: {
   label: string
   spec: FieldSpec
   value: LocalizedField
   onChange: (next: LocalizedField) => void
   variables: LintVariable[]
+  inRepeat: boolean
 }) {
   const { t } = useTranslation()
   const localized = spec.type === "localized"
   const mode = isLocalized(value) ? "text" : value.mode
   const Field = spec.name === "body" ? "textarea" : "input"
+  const mayBind = fieldMayBind(spec.type)
 
   const setMode = (next: string) => {
     if (next === "var") onChange({ mode: "var", path: "" })
@@ -81,17 +93,19 @@ function FieldInput({
   return (
     <div className="panel-field">
       <span className="panel-field-name">{label}</span>
-      <select
-        aria-label={t("studio.panels.field.mode", { field: label })}
-        value={mode}
-        onChange={(e) => setMode(e.target.value)}
-      >
-        <option value={localized ? "text" : "literal"}>
-          {localized ? t("studio.panels.field.text") : t("studio.panels.field.literal")}
-        </option>
-        <option value="var">{t("studio.panels.field.binding")}</option>
-        <option value="leaf">{t("studio.panels.field.leaf")}</option>
-      </select>
+      {mayBind ? (
+        <select
+          aria-label={t("studio.panels.field.mode", { field: label })}
+          value={mode}
+          onChange={(e) => setMode(e.target.value)}
+        >
+          <option value={localized ? "text" : "literal"}>
+            {localized ? t("studio.panels.field.text") : t("studio.panels.field.literal")}
+          </option>
+          <option value="var">{t("studio.panels.field.binding")}</option>
+          {inRepeat ? <option value="leaf">{t("studio.panels.field.leaf")}</option> : null}
+        </select>
+      ) : null}
       {isLocalized(value) ? (
         localized ? (
           <>
@@ -165,6 +179,72 @@ function FieldInput({
   )
 }
 
+/** The option list of a `choices` block: each row is what the client shows and the
+ * input it sends when picked. The label is an ordinary localized field. */
+function OptionsInput({
+  label,
+  options,
+  onChange,
+  variables,
+  inRepeat,
+}: {
+  label: string
+  options: ChoiceOptionDraft[]
+  onChange: (next: ChoiceOptionDraft[]) => void
+  variables: LintVariable[]
+  inRepeat: boolean
+}) {
+  const { t } = useTranslation()
+  const set = (index: number, next: ChoiceOptionDraft) =>
+    onChange(options.map((option, i) => (i === index ? next : option)))
+  return (
+    <div className="panel-options">
+      <span className="panel-field-name">{label}</span>
+      <ul className="panel-option-list">
+        {options.map((option, index) => (
+          <li key={option.uid} className="panel-option">
+            <div className="panel-field">
+              <span className="panel-field-name">{t("studio.panels.field.optionId")}</span>
+              <input
+                aria-label={`${t("studio.panels.field.optionId")} ${index + 1}`}
+                value={option.id}
+                onChange={(e) => set(index, { ...option, id: e.target.value })}
+                spellCheck={false}
+              />
+              <span className="panel-field-name">{t("studio.panels.field.input")}</span>
+              <input
+                aria-label={`${t("studio.panels.field.input")} ${index + 1}`}
+                value={option.input}
+                onChange={(e) => set(index, { ...option, input: e.target.value })}
+                placeholder={t("studio.panels.field.inputPlaceholder")}
+              />
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => onChange(options.filter((_, i) => i !== index))}
+                aria-label={t("studio.panels.removeOption")}
+              >
+                ✕
+              </button>
+            </div>
+            <FieldInput
+              spec={{ name: "label", type: "localized", required: true }}
+              label={`${t("studio.panels.field.label")} ${index + 1}`}
+              value={option.label}
+              onChange={(next) => set(index, { ...option, label: next })}
+              variables={variables}
+              inRepeat={inRepeat}
+            />
+          </li>
+        ))}
+      </ul>
+      <button type="button" className="ghost-button" onClick={() => onChange([...options, newOption()])}>
+        {t("studio.panels.addOption")}
+      </button>
+    </div>
+  )
+}
+
 /** A panel TITLE: text only, because the schema forbids a binding there. */
 function TitleInput({
   label,
@@ -208,21 +288,29 @@ function BlockCard({
   onMove: (delta: number) => void
 }) {
   const { t } = useTranslation()
-  const fields = BLOCK_FIELDS[block.kind] ?? []
+  const fields = fieldsFor(block.kind) ?? []
+  const opaque = isOpaqueBlock(block)
+  const inRepeat = block.repeatPrefix.trim() !== ""
+  const setField = (name: string, next: FieldValue) =>
+    onChange({ ...block, fields: { ...block.fields, [name]: next } })
   return (
     <li className="panel-block">
       <div className="panel-block-head">
-        <select
-          aria-label={t("studio.panels.blockKind")}
-          value={block.kind}
-          onChange={(e) => onChange({ ...newBlock(e.target.value), uid: block.uid })}
-        >
-          {BLOCK_KINDS.map((kind) => (
-            <option key={kind} value={kind}>
-              {t(`studio.panels.kind.${kind}`)}
-            </option>
-          ))}
-        </select>
+        {opaque ? (
+          <span className="desk-tag">{block.kind}</span>
+        ) : (
+          <select
+            aria-label={t("studio.panels.blockKind")}
+            value={block.kind}
+            onChange={(e) => onChange({ ...newBlock(e.target.value), uid: block.uid })}
+          >
+            {BLOCK_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {t(`studio.panels.kind.${kind}`)}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           type="button"
           className="ghost-button"
@@ -248,36 +336,73 @@ function BlockCard({
           ✕
         </button>
       </div>
-      {fields.map((spec) => (
-        <FieldInput
-          key={spec.name}
-          spec={spec}
-          label={t(`studio.panels.field.${spec.name}`, { defaultValue: spec.name })}
-          value={block.fields[spec.name] ?? (spec.type === "localized" ? emptyLocalized() : literal(""))}
-          onChange={(next) => onChange({ ...block, fields: { ...block.fields, [spec.name]: next } })}
-          variables={variables}
-        />
-      ))}
-      <div className="panel-field">
-        <span className="panel-field-name">{t("studio.panels.visibleWhen")}</span>
-        <input
-          aria-label={t("studio.panels.visibleWhen")}
-          value={block.visibleWhen}
-          onChange={(e) => onChange({ ...block, visibleWhen: e.target.value })}
-          placeholder="day >= 3"
-          spellCheck={false}
-        />
-      </div>
-      <div className="panel-field">
-        <span className="panel-field-name">{t("studio.panels.repeat")}</span>
-        <input
-          aria-label={t("studio.panels.repeat")}
-          value={block.repeatPrefix}
-          onChange={(e) => onChange({ ...block, repeatPrefix: e.target.value })}
-          placeholder={t("studio.panels.repeatPlaceholder")}
-          spellCheck={false}
-        />
-      </div>
+      {opaque ? (
+        // A block this table does not model — kept exactly as written, and said so,
+        // rather than silently rewritten or dropped.
+        <p className="studio-hint">{t("studio.panels.opaqueBlock")}</p>
+      ) : (
+        <>
+          {fields.map((spec) => {
+            const value = block.fields[spec.name] ?? emptyFieldValue(spec.type)
+            const label = t(`studio.panels.field.${spec.name}`, { defaultValue: spec.name })
+            if (isOptions(value)) {
+              return (
+                <OptionsInput
+                  key={spec.name}
+                  label={label}
+                  options={value.options}
+                  onChange={(options) => setField(spec.name, { mode: "options", options })}
+                  variables={variables}
+                  inRepeat={inRepeat}
+                />
+              )
+            }
+            return (
+              <FieldInput
+                key={spec.name}
+                spec={spec}
+                label={label}
+                value={value}
+                onChange={(next) => setField(spec.name, next)}
+                variables={variables}
+                inRepeat={inRepeat}
+              />
+            )
+          })}
+          <div className="panel-field">
+            <span className="panel-field-name">{t("studio.panels.visibleWhen")}</span>
+            <input
+              aria-label={t("studio.panels.visibleWhen")}
+              value={block.visibleWhen}
+              onChange={(e) => onChange({ ...block, visibleWhen: e.target.value })}
+              placeholder="day >= 3"
+              spellCheck={false}
+            />
+          </div>
+          <div className="panel-field">
+            <span className="panel-field-name">{t("studio.panels.repeat")}</span>
+            <input
+              aria-label={t("studio.panels.repeat")}
+              value={block.repeatPrefix}
+              onChange={(e) => onChange({ ...block, repeatPrefix: e.target.value })}
+              placeholder={t("studio.panels.repeatPlaceholder")}
+              spellCheck={false}
+            />
+          </div>
+          {inRepeat ? (
+            <div className="panel-field">
+              <span className="panel-field-name">{t("studio.panels.repeatVisibleWhen")}</span>
+              <input
+                aria-label={t("studio.panels.repeatVisibleWhen")}
+                value={block.repeatVisibleWhen}
+                onChange={(e) => onChange({ ...block, repeatVisibleWhen: e.target.value })}
+                placeholder="day >= 3"
+                spellCheck={false}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
     </li>
   )
 }
@@ -395,24 +520,34 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
   const [draftProblems, setDraftProblems] = useState<string[]>([])
   const aiSettings = useAiStore()
   const activePreset = useActivePreset()
+  // The text this editor itself last wrote up. The parent stores it and hands it
+  // straight back as `yamlText`; re-parsing our own serialization would rebuild the
+  // model with fresh uids under the author's cursor — every card remounts and the
+  // focused input is destroyed after one keystroke. So the file is re-read only when
+  // the text is NOT ours: on mount, and when the YAML tab (or anything else) changed it.
+  const lastEmitted = useRef<string | null>(null)
 
-  // The file is the source of truth on disk; this parses it once on mount and
-  // whenever the YAML tab hands back different text.
   useEffect(() => {
+    if (yamlText === lastEmitted.current) return
+    lastEmitted.current = null
     const result = parsePanelsYaml(yamlText)
     setParseError(result.error)
     if (result.error === null) setDocument(result.document)
-    // Parsing keys on the TEXT alone: re-parsing our own serialization on every
-    // keystroke would rebuild the model under the author's cursor.
   }, [yamlText])
 
   const commit = (next: PanelsDocument) => {
+    const text = serializePanelsYaml(next)
+    lastEmitted.current = text
     setDocument(next)
-    onChange(serializePanelsYaml(next))
+    onChange(text)
   }
 
   const declared = useMemo(() => new Set(variables.map((variable) => variable.id)), [variables])
   const problems = useMemo(() => problemsFor(document, declared), [document, declared])
+  const opaqueBlocks = useMemo(
+    () => document.panels.reduce((n, panel) => n + panel.blocks.filter(isOpaqueBlock).length, 0),
+    [document],
+  )
 
   const draft = async () => {
     const text = description.trim()
@@ -541,6 +676,9 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
           </button>
           {document.opaque.length > 0 ? (
             <p className="studio-hint">{t("studio.panels.opaque", { count: document.opaque.length })}</p>
+          ) : null}
+          {opaqueBlocks > 0 ? (
+            <p className="studio-hint">{t("studio.panels.opaqueBlocks", { count: opaqueBlocks })}</p>
           ) : null}
         </>
       )}

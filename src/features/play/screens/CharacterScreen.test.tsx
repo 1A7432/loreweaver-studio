@@ -20,6 +20,7 @@ import "../../../i18n"
 import { useConnectionStore } from "../../../store/connection"
 import { useSessionStore } from "../../../store/session"
 import CharacterScreen from "./CharacterScreen"
+import { sheetWrite } from "./sheetWrite"
 
 const SYSTEMS = [{ id: "coc7", make_char: "coc" }, { id: "dnd5e", make_char: "dnd" }, { id: "wod" }]
 
@@ -139,6 +140,35 @@ describe("CharacterScreen — editing", () => {
     await userEvent.type(box, "70{Enter}")
 
     expect(sent).toEqual([{ type: "input", text: ".st 力量 70" }])
+  })
+
+  it("lands a negative target through the engine's RELATIVE form — it has no absolute one", async () => {
+    // `.st X -3` is "current minus 3" to the engine (`_apply_value_expr`), so a
+    // negative literal typed as an absolute value must go out as the signed delta.
+    expect(sheetWrite("力量", 55, 70)).toBe(".st 力量 70")
+    expect(sheetWrite("力量", 55, 0)).toBe(".st 力量 0")
+    expect(sheetWrite("mod", 5, -3)).toBe(".st mod -8")
+    expect(sheetWrite("mod", -5, -3)).toBe(".st mod +2")
+
+    render(<CharacterScreen onBack={() => {}} />)
+    await userEvent.click(screen.getByRole("button", { name: "55" }))
+    const box = screen.getByLabelText("力量")
+    await userEvent.clear(box)
+    await userEvent.type(box, "-5{Enter}")
+    expect(sent).toEqual([{ type: "input", text: ".st 力量 -60" }])
+  })
+
+  it("keeps the picker honest across modes: a system chosen for Describe is not shown for Roll", async () => {
+    useSessionStore.getState().clear()
+    useSessionStore.getState().ingest(stateFrame())
+    render(<CharacterScreen onBack={() => {}} />)
+    await userEvent.click(screen.getByRole("button", { name: "Describe" }))
+    await userEvent.selectOptions(screen.getByLabelText("Rule system"), "wod")
+    await userEvent.click(screen.getByRole("button", { name: "Roll" }))
+    // Roll cannot make a wod sheet (no make-char word): the box falls back to the
+    // first rollable system and the button is live for THAT, not disabled for wod.
+    expect((screen.getByLabelText("Rule system") as HTMLSelectElement).value).toBe("coc7")
+    expect(screen.getByRole("button", { name: "Create character" })).toBeEnabled()
   })
 
   it("sends nothing when the value did not change", async () => {

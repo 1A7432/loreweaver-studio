@@ -10,9 +10,17 @@
 // the model is never told about a field the editor does not have (or the other way
 // round) — the two cannot drift.
 
-import { BLOCK_FIELDS, PANEL_AUDIENCES, PANEL_SLOTS, documentFromRaw, problemsFor } from "./panelsModel"
+import {
+  BLOCK_FIELDS,
+  MAX_CHOICE_OPTIONS,
+  PANEL_AUDIENCES,
+  PANEL_SLOTS,
+  documentFromRaw,
+  isOpaqueBlock,
+  problemsFor,
+} from "./panelsModel"
 import type { LintVariable } from "../lint/model"
-import type { PanelsDocument } from "./panelsModel"
+import type { PanelSlot, PanelsDocument } from "./panelsModel"
 
 function blockVocabulary(): string {
   return Object.entries(BLOCK_FIELDS)
@@ -25,6 +33,18 @@ function blockVocabulary(): string {
       return `- ${kind}: ${parts.join(", ")}`
     })
     .join("\n")
+}
+
+/** What each panel slot means to a client — `core/panels.py` `PANEL_SLOTS`, in the
+ * words `docs/authoring.md` uses. Generated from the same list the editor offers. */
+function slotVocabulary(): string {
+  // `Record<PanelSlot, …>`: a slot the engine grows must be described here to compile.
+  const meaning: Record<PanelSlot, string> = {
+    sidebar: "always in view beside the log — a glance, not a report",
+    tray: "a collapsible drawer the player opens when they want it — reference material, things in hand",
+    modal: "opened on demand and shown large — a map, a document to read closely",
+  }
+  return PANEL_SLOTS.map((slot) => `- ${slot}: ${meaning[slot]}`).join("\n")
 }
 
 function variableList(variables: LintVariable[]): string {
@@ -48,14 +68,18 @@ export function panelsSystemPrompt(variables: LintVariable[]): string {
 Output ONE JSON object and nothing else:
 {"panels": [{"id": "<lowercase-slug>", "title": {"en": "…", "zh": "…"}, "slot": "${PANEL_SLOTS.join('" | "')}", "audience": "${PANEL_AUDIENCES.join('" | "')}", "blocks": [ … ]}]}
 
+Slots — where a panel lives:
+${slotVocabulary()}
+
 Block kinds and their fields (a "?" marks an optional field):
 ${blockVocabulary()}
 
 Field types:
 - localized: {"en": "…", "zh": "…"} — write BOTH languages.
 - scalar: a number or string literal, OR a live binding {"$var": "<variable id>"}.
-- path: a pack-relative file path, e.g. "assets/map.png". Only use one the author named.
-- enum: exactly one of the listed words.
+- path: a pack-relative file path, e.g. "assets/map.png". Only use one the author named. Never a binding.
+- enum: exactly one of the listed words. Never a binding.
+- options: a list of {"id": "<short-id>", "label": <localized>, "input": "<the text the client sends when this option is picked>"} — 1 to ${MAX_CHOICE_OPTIONS} entries.
 
 A block may also carry "visible_when": "<condition>" — a small expression over the
 same variables (e.g. "day >= 3", "alarm == true") deciding when it is shown.
@@ -84,6 +108,18 @@ export function gatePanelsDraft(parsed: unknown, variables: LintVariable[]): Pan
   if (document.panels.length === 0) {
     return { value: null, problems: ["the `panels` list is empty — draft at least one panel"] }
   }
+  // A block outside the vocabulary is carried through verbatim for a HUMAN author;
+  // from a model it is a wrong answer, and it goes back as one.
+  const unknown: string[] = []
+  for (const panel of document.panels) {
+    for (const [index, block] of panel.blocks.entries()) {
+      if (isOpaqueBlock(block))
+        unknown.push(
+          `panel "${panel.id || "(unnamed)"}" block ${index + 1}: "${block.kind}" is not a block kind — use only the kinds listed`,
+        )
+    }
+  }
+  if (unknown.length > 0) return { value: null, problems: unknown }
   const declared = new Set(variables.map((variable) => variable.id))
   const problems = problemsFor(document, declared).map((problem) => {
     const params = problem.params ?? {}
@@ -102,6 +138,14 @@ export function gatePanelsDraft(parsed: unknown, variables: LintVariable[]): Pan
         return `${params.at}: "${params.path}" is not a variable this pack declares`
       case "meterRange":
         return `${params.at}: a meter's max must be greater than its min`
+      case "leafOutsideRepeat":
+        return `${params.at}: "${params.field}" uses {"$leaf"} but the block is not inside a repeat`
+      case "bindingNotAllowed":
+        return `${params.at}: "${params.field}" must be a plain value, not a binding`
+      case "tooManyOptions":
+        return `${params.at}: at most ${params.max} options`
+      case "optionIncomplete":
+        return `${params.at}: every option needs an id, a label and an input`
       default:
         return `${params.at ?? ""} ${problem.key}`.trim()
     }

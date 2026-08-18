@@ -24,6 +24,7 @@ import { useConnectionStore } from "../../../store/connection"
 import { useSessionStore } from "../../../store/session"
 import { ResourceRow } from "../StatePanel"
 import ScreenShell from "./ScreenShell"
+import { sheetWrite } from "./sheetWrite"
 
 function attrText(value: unknown): string {
   if (value === null || value === undefined) return ""
@@ -64,9 +65,13 @@ function CreateCharacter() {
   const [path, setPath] = useState("")
   const [sent, setSent] = useState("")
 
-  // The picker defaults to the first system the server offers rather than to a
-  // hard-coded one; `systems` arrives with the first state frame.
-  const chosen = system || creatable[0]?.id || systems[0]?.id || ""
+  // The picker offers the CURRENT mode's list (roll needs a make-char word; describe
+  // and import take any system) and defaults to its first entry rather than to a
+  // hard-coded one; `systems` arrives with the first state frame. A pick that is not
+  // in this mode's list (chosen in another mode) falls back the same way, so the box
+  // never shows one system while the button is disabled for another.
+  const offered = mode === "roll" ? creatable : systems
+  const chosen = offered.some((entry) => entry.id === system) ? system : (offered[0]?.id ?? "")
   const makeCharWord = creatable.find((entry) => entry.id === chosen)?.make_char ?? ""
 
   if (systems.length === 0) {
@@ -123,7 +128,7 @@ function CreateCharacter() {
       <label className="field">
         {t("play.character.system")}
         <select value={chosen} onChange={(e) => setSystem(e.target.value)}>
-          {(mode === "roll" ? creatable : systems).map((entry) => (
+          {offered.map((entry) => (
             <option key={entry.id} value={entry.id}>
               {stripControlChars(entry.id)}
             </option>
@@ -172,9 +177,9 @@ function CreateCharacter() {
   )
 }
 
-/** One attribute row. Editing writes through `.st <name> <value>`, which the server
- * validates against the pack's constraints and answers in the chat log — nothing is
- * assumed to have worked here; the next `state` frame is the truth. */
+/** One attribute row. Editing writes through `.st`, which the server validates
+ * against the pack's constraints and answers in the chat log — nothing is assumed
+ * to have worked here; the next `state` frame is the truth. */
 function AttributeRow({ name, value }: { name: string; value: unknown }) {
   const { t } = useTranslation()
   const online = useConnectionStore((s) => s.status === "online")
@@ -193,7 +198,7 @@ function AttributeRow({ name, value }: { name: string; value: unknown }) {
     const next = (draft ?? "").trim()
     setDraft(null)
     if (!next || Number(next) === value || !Number.isFinite(Number(next))) return
-    send(`.st ${name} ${next}`)
+    send(sheetWrite(name, value, Number(next)))
   }
 
   return (

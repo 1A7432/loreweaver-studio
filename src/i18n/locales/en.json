@@ -197,7 +197,7 @@
       "description": "Who are they?",
       "descriptionPlaceholder": "A dock clerk who reads the tide tables for fun and never looks anyone in the eye.",
       "cardPath": "Card file",
-      "cardPathPlaceholder": "cards/pilot.png, or a pack ref like harbour/cards/pilot.png",
+      "cardPathPlaceholder": "a pack ref like harbour/cards/pilot.png (browse them under Party → Import from pack); a server path is keeper-only",
       "create": "Create character",
       "sent": "Sent: {{command}}",
       "editHint": "Click a value to change it — the server validates every write against the rule system.",
@@ -1355,10 +1355,14 @@
       "modeYaml": "YAML",
       "unparseable": "This panels file cannot be parsed, so the field editor is off: {{error}}",
       "opaque": "{{count}} panel(s) ship their own HTML and are kept exactly as written — edit those in the YAML tab.",
+      "opaqueBlocks": "{{count}} block(s) are of a kind this editor does not model and are kept exactly as written — edit those in the YAML tab.",
+      "opaqueBlock": "Kept exactly as written — this editor does not model this block; edit it in the YAML tab.",
       "addPanel": "Add a panel",
       "removePanel": "Remove this panel",
       "addBlock": "Add a block…",
       "removeBlock": "Remove block",
+      "addOption": "Add an option",
+      "removeOption": "Remove option",
       "moveUp": "Move up",
       "moveDown": "Move down",
       "blockKind": "Block",
@@ -1369,9 +1373,11 @@
       "visibleWhen": "Show when",
       "repeat": "Repeat over",
       "repeatPlaceholder": "a variable id prefix, e.g. lantern.",
+      "repeatVisibleWhen": "Show the whole repeat when",
       "slotName": {
-        "sidebar": "Sidebar",
-        "inline": "In the log"
+        "sidebar": "Sidebar (always in view)",
+        "tray": "Tray (a drawer the player opens)",
+        "modal": "Modal (opened large, on demand)"
       },
       "audienceName": {
         "all": "Everyone",
@@ -1384,6 +1390,7 @@
         "stat": "Stat",
         "badge": "Badge",
         "text": "Text",
+        "choices": "Choices",
         "image": "Picture",
         "letter": "Letter",
         "clipping": "Clipping",
@@ -1403,6 +1410,11 @@
         "max": "Max",
         "tone": "Tone",
         "style": "Style",
+        "prompt": "Prompt",
+        "options": "Options",
+        "optionId": "Option id",
+        "input": "Sends",
+        "inputPlaceholder": "the input sent when picked, e.g. .ra 侦查",
         "src": "File",
         "caption": "Caption",
         "alt": "Alt text",
@@ -1426,7 +1438,11 @@
         "noBlocks": "Panel “{{panel}}” has no blocks — it would render as nothing.",
         "missingField": "{{at}}: “{{field}}” is required.",
         "unknownVar": "{{at}}: “{{path}}” is not a variable this pack declares — the block would silently vanish at the table.",
-        "meterRange": "{{at}}: a meter's max must be greater than its min."
+        "meterRange": "{{at}}: a meter's max must be greater than its min.",
+        "leafOutsideRepeat": "{{at}}: “{{field}}” uses a repeat item, but the block does not repeat.",
+        "bindingNotAllowed": "{{at}}: “{{field}}” must be a plain value here — the engine takes no binding in this field.",
+        "tooManyOptions": "{{at}}: at most {{max}} options.",
+        "optionIncomplete": "{{at}}: every option needs an id, a label and something to send."
       }
     }
   }
