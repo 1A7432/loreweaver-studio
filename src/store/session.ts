@@ -20,12 +20,38 @@ export const MAX_LOG_ENTRIES = 200
 export const MAX_STREAM_TEXT = 20_000
 /** Safety timeout for a lost `turn_status idle` frame (the protocol asks clients to apply one). */
 export const TURN_BUSY_TIMEOUT_MS = 120_000
+/** How long an un-echoed local line waits before it is shown as undelivered. */
+export const PENDING_ECHO_TIMEOUT_MS = 120_000
+
+/**
+ * A line this client sent and has not seen come back yet.
+ *
+ * A whole player turn occupies its room (the server takes a per-room turn lock
+ * at the transport chokepoint), so input typed while someone else's turn runs
+ * queues silently — with no local echo the app simply looks dead. The echo is
+ * strictly a VIEW of what we sent: it never enters the chronicle the server
+ * owns, and it is removed the moment the real line arrives, so the player is
+ * never shown the same words twice.
+ */
+export interface PendingEcho {
+  /** The seat that typed it, for the speaker header. */
+  speaker: string
+  /** Exactly the text that went on the wire — the key the broadcast matches. */
+  text: string
+  /** A `.`/`/` line is answered by a receipt, not by an echo of itself. */
+  command: boolean
+  /** Epoch ms, for the delivery timeout. */
+  at: number
+  /** The send itself failed, or nothing came back in time. */
+  failed?: boolean
+}
 
 export type LogEntry =
   | { seq: number; kind: "narrative"; frame: NarrativeFrame; draft?: boolean }
   | { seq: number; kind: "dice"; frame: DiceFrame }
   | { seq: number; kind: "system"; frame: SystemFrame }
   | { seq: number; kind: "ui"; frame: UiFrame }
+  | { seq: number; kind: "pending"; pending: PendingEcho }
 
 /** One named sidebar region fed by `ui` frames (later same-key frames replace it). */
 export interface UiPanelRegion {
@@ -78,6 +104,13 @@ interface SessionState {
   packCards: PackCardEntry[] | null
   /** Feed one validated server frame into the session. */
   ingest: (frame: ServerFrame, now?: number) => void
+  /** Show a line this client just sent, until the table reflects it back.
+   * Returns the entry's seq, so the caller can fail it if the send throws. */
+  echoLocalInput: (text: string, speaker: string, now?: number) => number
+  /** Mark one pending echo undelivered (the send itself failed). */
+  failEcho: (seq: number) => void
+  /** Mark every echo older than the delivery timeout undelivered. */
+  expirePendingEchoes: (now: number) => void
   /** Ask the server for the card files installed packs ship (v2.2). */
   requestPackCards: () => void
   /** Clear a stale busy indicator once the safety timeout has elapsed. */
@@ -161,6 +194,54 @@ function ingestInlineUi(entries: LogEntry[], frame: UiFrame): LogEntry[] {
   return pushEntry(entries, { kind: "ui", frame })
 }
 
+/** Is this a slash/dot command rather than something the table will echo back? */
+export function isCommandLine(text: string): boolean {
+  return text.startsWith(".") || text.startsWith("/")
+}
+
+/**
+ * The broadcast of a player line retires its local echo.
+ *
+ * Matching is on the WORDS, preferring this seat's own pending line and
+ * falling back to any pending line with the same text. A server that labels
+ * the seat differently than `welcome.you.name` would otherwise strand an echo
+ * next to the very line it duplicates — and showing the player their sentence
+ * twice is the failure this whole lane exists to avoid. The cost of the loose
+ * match is that two players typing the identical sentence retire each other's
+ * echo a beat early, which costs nobody anything: the real lines still arrive.
+ */
+function retireEcho(entries: LogEntry[], frame: NarrativeFrame): LogEntry[] {
+  if (frame.speaker !== "player") return entries
+  const text = frame.text.trim()
+  const name = frame.name ?? ""
+  const matches = (entry: LogEntry, seat: boolean): boolean =>
+    entry.kind === "pending" &&
+    !entry.pending.command &&
+    entry.pending.text === text &&
+    (!seat || entry.pending.speaker === name)
+  let index = entries.findIndex((entry) => matches(entry, true))
+  if (index === -1) index = entries.findIndex((entry) => matches(entry, false))
+  return index === -1 ? entries : entries.filter((_, i) => i !== index)
+}
+
+/**
+ * A command's echo is retired by its RECEIPT — the system line, dice roll or
+ * `ui` block the server answers with — because the server never echoes the
+ * command text itself. The oldest outstanding command goes first: commands
+ * from one client are answered in the order they were sent.
+ */
+function retireCommandEcho(entries: LogEntry[]): LogEntry[] {
+  const index = entries.findIndex((entry) => entry.kind === "pending" && entry.pending.command)
+  return index === -1 ? entries : entries.filter((_, i) => i !== index)
+}
+
+/** End of turn: every command sent into it has been answered, or never will be. */
+function retireAllCommandEchoes(entries: LogEntry[]): LogEntry[] {
+  return entries.some((entry) => entry.kind === "pending" && entry.pending.command)
+    ? entries.filter((entry) => !(entry.kind === "pending" && entry.pending.command))
+    : entries
+}
+
 /** A later sidebar frame with the same id replaces that region; no id = one anonymous region. */
 function upsertUiPanel(panels: UiPanelRegion[], frame: UiFrame): UiPanelRegion[] {
   const key = frame.id ?? ""
@@ -185,20 +266,20 @@ export const useSessionStore = create<SessionState>((set) => ({
         if (frame.panel === "sidebar") {
           set((s) => ({ uiPanels: upsertUiPanel(s.uiPanels, frame) }))
         } else {
-          set((s) => ({ entries: ingestInlineUi(s.entries, frame) }))
+          set((s) => ({ entries: ingestInlineUi(retireCommandEcho(s.entries), frame) }))
         }
         return
       case "narrative":
-        set((s) => ({ entries: ingestNarrative(s.entries, frame) }))
+        set((s) => ({ entries: ingestNarrative(retireEcho(s.entries, frame), frame) }))
         return
       case "narrative_delta":
         set((s) => ({ entries: ingestDelta(s.entries, frame) }))
         return
       case "dice":
-        set((s) => ({ entries: pushEntry(s.entries, { kind: "dice", frame }) }))
+        set((s) => ({ entries: pushEntry(retireCommandEcho(s.entries), { kind: "dice", frame }) }))
         return
       case "system":
-        set((s) => ({ entries: pushEntry(s.entries, { kind: "system", frame }) }))
+        set((s) => ({ entries: pushEntry(retireCommandEcho(s.entries), { kind: "system", frame }) }))
         return
       case "state":
         // `reset:true` marks the snapshot right after a campaign wipe: the
@@ -233,12 +314,49 @@ export const useSessionStore = create<SessionState>((set) => ({
               }
             : { turn: IDLE_TURN },
         )
+        if (frame.status === "idle") set((s) => ({ entries: retireAllCommandEchoes(s.entries) }))
         return
       default:
         // Media, audio, admin, pong… are no-ops here; unknown frame types
         // are ignored by design (additive protocol).
         return
     }
+  },
+
+  echoLocalInput: (text, speaker, now = Date.now()) => {
+    const seq = nextSeq
+    set((s) => ({
+      entries: pushEntry(s.entries, {
+        kind: "pending",
+        pending: { speaker, text, command: isCommandLine(text), at: now },
+      }),
+    }))
+    return seq
+  },
+
+  failEcho: (seq) => {
+    set((s) => ({
+      entries: s.entries.map((entry) =>
+        entry.kind === "pending" && entry.seq === seq
+          ? { ...entry, pending: { ...entry.pending, failed: true } }
+          : entry,
+      ),
+    }))
+  },
+
+  expirePendingEchoes: (now) => {
+    set((s) => {
+      const stale = (entry: LogEntry): boolean =>
+        entry.kind === "pending" && !entry.pending.failed && now - entry.pending.at >= PENDING_ECHO_TIMEOUT_MS
+      if (!s.entries.some(stale)) return s
+      return {
+        entries: s.entries.map((entry) =>
+          stale(entry) && entry.kind === "pending"
+            ? { ...entry, pending: { ...entry.pending, failed: true } }
+            : entry,
+        ),
+      }
+    })
   },
 
   requestPackCards: () => {

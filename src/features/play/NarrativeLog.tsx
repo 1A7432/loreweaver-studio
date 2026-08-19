@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { stripControlChars, type NarrativeFrame, type SystemFrame } from "@loreweaver/protocol"
-import { useSessionStore, type LogEntry } from "../../store/session"
+import { useSessionStore, type LogEntry, type PendingEcho } from "../../store/session"
 import DiceLine from "./DiceLine"
 import UiBlocks from "./UiBlocks"
 
@@ -32,6 +32,22 @@ function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boole
   )
 }
 
+/** A line this client sent, dimmed until the table reflects it back. */
+function PendingEntry({ pending }: { pending: PendingEcho }) {
+  const { t } = useTranslation()
+  return (
+    <article className={`log-entry speaker-player pending${pending.failed ? " failed" : ""}`}>
+      <header className="entry-speaker">{stripControlChars(pending.speaker)}</header>
+      <div className="entry-body">
+        <p className="entry-plain">{stripControlChars(pending.text)}</p>
+        <span className="pending-mark">
+          {pending.failed ? t("session.echoFailed") : t("session.echoPending")}
+        </span>
+      </div>
+    </article>
+  )
+}
+
 function SystemEntry({ frame }: { frame: SystemFrame }) {
   return (
     <div className={`system-line level-${frame.level}`}>
@@ -55,15 +71,21 @@ function Entry({ entry }: { entry: LogEntry }) {
           <UiBlocks frame={entry.frame} />
         </div>
       )
+    case "pending":
+      return <PendingEntry pending={entry.pending} />
   }
 }
 
 /** How close to the bottom (px) still counts as "following the stream". */
 export const FOLLOW_SLACK_PX = 48
 
+/** How often the log checks whether an un-echoed line has run out of time. */
+export const ECHO_SWEEP_MS = 5_000
+
 export default function NarrativeLog() {
   const { t } = useTranslation()
   const entries = useSessionStore((s) => s.entries)
+  const expireEchoes = useSessionStore((s) => s.expirePendingEchoes)
   const scroller = useRef<HTMLDivElement>(null)
   // Streaming turns one reply into dozens of updates; only follow when the
   // reader is already pinned at the bottom, so scrolling up to reread history
@@ -79,6 +101,15 @@ export default function NarrativeLog() {
     const el = scroller.current
     if (el && pinned.current) el.scrollTop = el.scrollHeight
   }, [entries])
+
+  // A line the table never reflected back has to say so rather than sit there
+  // looking sent. The sweep only runs while something is actually waiting.
+  const waiting = entries.some((entry) => entry.kind === "pending" && !entry.pending.failed)
+  useEffect(() => {
+    if (!waiting) return
+    const timer = setInterval(() => expireEchoes(Date.now()), ECHO_SWEEP_MS)
+    return () => clearInterval(timer)
+  }, [waiting, expireEchoes])
 
   return (
     <div className="narrative-log" ref={scroller} onScroll={onScroll}>

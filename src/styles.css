@@ -565,6 +565,27 @@ body {
   text-shadow: 0 0 14px rgba(232, 191, 89, 0.35);
 }
 
+/* A line this client sent, waiting for the table to reflect it back. */
+.log-entry.pending .entry-body {
+  opacity: 0.55;
+}
+
+.log-entry.pending.failed {
+  --rail: var(--danger);
+}
+
+.pending-mark {
+  display: inline-block;
+  margin-top: 2px;
+  font: 11px/1.4 var(--font-ui);
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+.log-entry.pending.failed .pending-mark {
+  color: var(--danger);
+}
+
 /* ---- System lines ---- */
 
 .system-line {

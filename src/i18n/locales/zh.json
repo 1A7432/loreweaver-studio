@@ -51,6 +51,8 @@
     "empty": "编年史还是空白。说点什么，让故事开始。",
     "inputPlaceholder": "发言、行动，或输入指令…",
     "send": "发送",
+    "echoPending": "发送中…",
+    "echoFailed": "未送达",
     "turnBusy": "正在结算 {{actor}} 的行动…",
     "turnActivity": {
       "reading": "查阅资料中",

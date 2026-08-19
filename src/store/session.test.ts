@@ -8,7 +8,13 @@ vi.mock("../lib/transport", () => ({
   },
 }))
 
-import { MAX_LOG_ENTRIES, MAX_STREAM_TEXT, TURN_BUSY_TIMEOUT_MS, useSessionStore } from "./session"
+import {
+  MAX_LOG_ENTRIES,
+  MAX_STREAM_TEXT,
+  PENDING_ECHO_TIMEOUT_MS,
+  TURN_BUSY_TIMEOUT_MS,
+  useSessionStore,
+} from "./session"
 
 function narrative(id: string, text: string, extra: Partial<NarrativeFrame> = {}): ServerFrame {
   return { type: "narrative", id, speaker: "kp", text, format: "markdown", ...extra }
@@ -228,5 +234,87 @@ describe("session store — installed-pack cards (v2.2)", () => {
   it("requestPackCards sends the list_pack_cards request through the transport", () => {
     useSessionStore.getState().requestPackCards()
     expect(sent).toEqual([{ type: "list_pack_cards" }])
+  })
+})
+
+describe("pending echoes", () => {
+  beforeEach(() => useSessionStore.getState().clear())
+
+  const echo = (text: string, seat = "Nyx", now = 1_000) =>
+    useSessionStore.getState().echoLocalInput(text, seat, now)
+  const pendings = () => useSessionStore.getState().entries.filter((e) => e.kind === "pending")
+
+  it("shows a sent line immediately, and retires it when the broadcast arrives", () => {
+    echo("I check the ledger.")
+    expect(pendings()).toHaveLength(1)
+
+    ingest(narrative("p1", "I check the ledger.", { speaker: "player", name: "Nyx" }))
+    const { entries } = useSessionStore.getState()
+    // Exactly once: the real line, and no echo beside it.
+    expect(entries).toHaveLength(1)
+    expect(entries[0].kind).toBe("narrative")
+  })
+
+  it("retires the echo even when the server labels the seat differently", () => {
+    echo("I check the ledger.")
+    ingest(narrative("p1", "I check the ledger.", { speaker: "player", name: "林晚" }))
+    expect(pendings()).toHaveLength(0)
+  })
+
+  it("keeps the echo when a different line comes back", () => {
+    echo("I check the ledger.")
+    ingest(narrative("p1", "I light the lantern.", { speaker: "player", name: "Nyx" }))
+    ingest(narrative("k1", "I check the ledger."))
+    expect(pendings()).toHaveLength(1)
+  })
+
+  it("retires a command echo on its receipt, oldest first", () => {
+    echo(".ra spot hidden")
+    echo(".st STR=50")
+    expect(pendings().map((e) => e.kind === "pending" && e.pending.text)).toEqual([
+      ".ra spot hidden",
+      ".st STR=50",
+    ])
+
+    ingest({
+      type: "dice",
+      actor: "Nyx",
+      kind: "check",
+      expr: "1d100",
+      rolls: [12],
+      total: 12,
+    } as ServerFrame)
+    expect(pendings().map((e) => e.kind === "pending" && e.pending.text)).toEqual([".st STR=50"])
+
+    ingest({ type: "system", level: "info", text: "STR = 50" })
+    expect(pendings()).toHaveLength(0)
+  })
+
+  it("a chat echo is not retired by a receipt, only by its own broadcast", () => {
+    echo("I check the ledger.")
+    ingest({ type: "system", level: "info", text: "The keeper is thinking." })
+    expect(pendings()).toHaveLength(1)
+  })
+
+  it("clears every outstanding command echo at the end of the turn", () => {
+    echo(".ra spot hidden")
+    echo("I check the ledger.")
+    ingest({ type: "turn_status", status: "idle" })
+    expect(pendings().map((e) => e.kind === "pending" && e.pending.text)).toEqual(["I check the ledger."])
+  })
+
+  it("marks an echo undelivered after the timeout, and on an outright send failure", () => {
+    const seq = echo("I check the ledger.", "Nyx", 1_000)
+    useSessionStore.getState().expirePendingEchoes(1_000 + PENDING_ECHO_TIMEOUT_MS - 1)
+    const first = pendings()[0]
+    expect(first.kind === "pending" && first.pending.failed).toBeFalsy()
+
+    useSessionStore.getState().expirePendingEchoes(1_000 + PENDING_ECHO_TIMEOUT_MS)
+    expect(pendings()[0]).toMatchObject({ pending: { failed: true } })
+
+    const other = echo("I run.", "Nyx", 9_000)
+    useSessionStore.getState().failEcho(other)
+    expect(pendings().map((e) => e.kind === "pending" && e.pending.failed)).toEqual([true, true])
+    expect(seq).not.toBe(other)
   })
 })

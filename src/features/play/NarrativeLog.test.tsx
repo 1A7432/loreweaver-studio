@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen } from "@testing-library/react"
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import "../../i18n"
-import { useSessionStore } from "../../store/session"
-import NarrativeLog from "./NarrativeLog"
+import { PENDING_ECHO_TIMEOUT_MS, useSessionStore } from "../../store/session"
+import NarrativeLog, { ECHO_SWEEP_MS } from "./NarrativeLog"
 
 const ingest = useSessionStore.getState().ingest
 
@@ -87,6 +87,47 @@ describe("NarrativeLog", () => {
     fireEvent.scroll(log)
     delta("over the pier.")
     expect(log.scrollTop).toBe(1000)
+  })
+
+  it("renders a pending echo dimmed, and stops rendering it once the line lands", () => {
+    act(() => {
+      useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx")
+    })
+    const { container, rerender } = render(<NarrativeLog />)
+    expect(container.querySelector(".log-entry.pending")).not.toBeNull()
+    expect(screen.getByText("sending…")).toBeInTheDocument()
+
+    act(() => {
+      ingest({
+        type: "narrative",
+        id: "p1",
+        speaker: "player",
+        name: "Nyx",
+        text: "I check the ledger.",
+        format: "plain",
+      })
+    })
+    rerender(<NarrativeLog />)
+    expect(container.querySelector(".log-entry.pending")).toBeNull()
+    // Once — never the echo and the real line side by side.
+    expect(screen.getAllByText("I check the ledger.")).toHaveLength(1)
+  })
+
+  it("turns an un-echoed line into a failure notice after the timeout", () => {
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx", Date.now())
+      })
+      const { container } = render(<NarrativeLog />)
+      act(() => {
+        vi.advanceTimersByTime(PENDING_ECHO_TIMEOUT_MS + ECHO_SWEEP_MS)
+      })
+      expect(container.querySelector(".log-entry.pending.failed")).not.toBeNull()
+      expect(screen.getByText("not delivered")).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("renders system spinner notices with an animated spinner element", () => {

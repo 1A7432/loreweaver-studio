@@ -51,6 +51,8 @@
     "empty": "The chronicle is empty. Say something to begin.",
     "inputPlaceholder": "Speak, act, or type a command…",
     "send": "Send",
+    "echoPending": "sending…",
+    "echoFailed": "not delivered",
     "turnBusy": "Resolving {{actor}}'s action…",
     "turnActivity": {
       "reading": "reading the module",
