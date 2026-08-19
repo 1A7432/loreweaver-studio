@@ -52,6 +52,13 @@
     "inputPlaceholder": "发言、行动，或输入指令…",
     "send": "发送",
     "turnBusy": "正在结算 {{actor}} 的行动…",
+    "turnActivity": {
+      "reading": "查阅资料中",
+      "dice": "掷骰中",
+      "cast": "人物开口中",
+      "bookkeeping": "落账中"
+    },
+    "turnRound": "·第 {{n}} 轮",
     "character": "角色",
     "party": "队伍",
     "scene": "场景",

@@ -52,6 +52,13 @@
     "inputPlaceholder": "Speak, act, or type a command…",
     "send": "Send",
     "turnBusy": "Resolving {{actor}}'s action…",
+    "turnActivity": {
+      "reading": "reading the module",
+      "dice": "rolling dice",
+      "cast": "voicing the cast",
+      "bookkeeping": "bookkeeping"
+    },
+    "turnRound": "· round {{n}}",
     "character": "Character",
     "party": "Party",
     "scene": "Scene",

@@ -635,6 +635,13 @@ body {
   font-size: 13px;
 }
 
+/* The 2.3.1 activity hint rides beside the busy line, never louder than it. */
+.turn-activity {
+  color: var(--ink-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---- Input box ---- */
 
 .input-box {

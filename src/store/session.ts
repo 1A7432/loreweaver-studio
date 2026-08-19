@@ -33,11 +33,38 @@ export interface UiPanelRegion {
   frame: UiFrame
 }
 
+/**
+ * What the keeper is doing right now, as protocol 2.3.1 lets a busy
+ * `turn_status` frame say. The pinned `loreweaver-protocol` is still 2.3.0, so
+ * the two hints are read off the frame defensively below rather than typed by
+ * the package — converge on the package's own type once 2.3.1 is published.
+ */
+export const TURN_ACTIVITIES = ["reading", "dice", "cast", "bookkeeping"] as const
+export type TurnActivity = (typeof TURN_ACTIVITIES)[number]
+
 export interface TurnState {
   busy: boolean
   actor: string | null
   /** Epoch ms of the busy frame, for the safety timeout. */
   since: number
+  /** The 2.3.1 activity hint, or null when the server did not send one. */
+  activity: TurnActivity | null
+  /** The 2.3.1 tool round (1-based), or null when the server did not send one. */
+  round: number | null
+}
+
+/** Read the 2.3.1 activity hint, ignoring anything not in the closed set. */
+function readActivity(frame: object): TurnActivity | null {
+  const raw = (frame as { activity?: unknown }).activity
+  return typeof raw === "string" && (TURN_ACTIVITIES as readonly string[]).includes(raw)
+    ? (raw as TurnActivity)
+    : null
+}
+
+/** Read the 2.3.1 round hint; a non-integer or sub-1 value is no hint at all. */
+function readRound(frame: object): number | null {
+  const raw = (frame as { round?: unknown }).round
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 ? raw : null
 }
 
 interface SessionState {
@@ -60,7 +87,7 @@ interface SessionState {
 
 let nextSeq = 1
 
-const IDLE_TURN: TurnState = { busy: false, actor: null, since: 0 }
+const IDLE_TURN: TurnState = { busy: false, actor: null, since: 0, activity: null, round: null }
 
 /** `Omit` that distributes over a union, so variant-only keys (like `draft`) survive. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
@@ -195,7 +222,15 @@ export const useSessionStore = create<SessionState>((set) => ({
       case "turn_status":
         set(
           frame.status === "busy"
-            ? { turn: { busy: true, actor: frame.actor, since: now } }
+            ? {
+                turn: {
+                  busy: true,
+                  actor: frame.actor,
+                  since: now,
+                  activity: readActivity(frame),
+                  round: readRound(frame),
+                },
+              }
             : { turn: IDLE_TURN },
         )
         return
