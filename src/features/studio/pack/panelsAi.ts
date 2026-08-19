@@ -17,6 +17,7 @@ import {
   PANEL_SLOTS,
   documentFromRaw,
   isOpaqueBlock,
+  isOpaquePanel,
   problemsFor,
 } from "./panelsModel"
 import type { LintVariable } from "../lint/model"
@@ -112,6 +113,12 @@ export function gatePanelsDraft(parsed: unknown, variables: LintVariable[]): Pan
   // from a model it is a wrong answer, and it goes back as one.
   const unknown: string[] = []
   for (const panel of document.panels) {
+    if (isOpaquePanel(panel)) {
+      unknown.push(
+        `panel "${panel.id || "(unnamed)"}": draft a modeled panel, not one with its own HTML/entry`,
+      )
+      continue
+    }
     for (const [index, block] of panel.blocks.entries()) {
       if (isOpaqueBlock(block))
         unknown.push(
@@ -146,6 +153,12 @@ export function gatePanelsDraft(parsed: unknown, variables: LintVariable[]): Pan
         return `${params.at}: at most ${params.max} options`
       case "optionIncomplete":
         return `${params.at}: every option needs an id, a label and an input`
+      case "unknownSlot":
+        return `panel "${params.panel}": slot "${params.slot}" is not one of ${PANEL_SLOTS.join("|")}`
+      case "unknownAudience":
+        return `panel "${params.panel}": audience "${params.audience}" is not one of ${PANEL_AUDIENCES.join("|")}`
+      case "unknownKeys":
+        return `${params.at}: unknown keys ${params.keys} — the engine accepts no extra keys`
       default:
         return `${params.at ?? ""} ${problem.key}`.trim()
     }

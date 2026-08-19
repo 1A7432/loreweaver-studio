@@ -157,6 +157,20 @@ describe("PanelsEditor", () => {
     expect((screen.getByLabelText("Show the whole repeat when") as HTMLInputElement).value).toBe("")
   })
 
+  it("keeps a file path a string even when it looks like a number", async () => {
+    const onChange = open(`panels:
+  - id: tide-board
+    title: {en: Tide, zh: 潮汐}
+    slot: sidebar
+    blocks:
+      - {kind: image, src: assets/map.png}
+`)
+    await userEvent.clear(screen.getByLabelText("File"))
+    await userEvent.type(screen.getByLabelText("File"), "12")
+    const written = parseYaml(onChange.mock.calls.at(-1)![0]) as { panels: { blocks: { src: unknown }[] }[] }
+    expect(written.panels[0].blocks[0].src).toBe("12")
+  })
+
   it("adds a panel, and says what is still missing rather than writing it silently", async () => {
     const onChange = open()
     await userEvent.click(screen.getByRole("button", { name: "Add a panel" }))
@@ -189,5 +203,37 @@ describe("PanelsEditor", () => {
     open("panels: [")
     expect(screen.getByText(/cannot be parsed/)).toBeInTheDocument()
     expect(screen.queryByLabelText("Panel id")).not.toBeInTheDocument()
+  })
+
+  it("shows a tier-2 panel in place and writes it back between its neighbors", async () => {
+    const onChange = open(`panels:
+  - id: hud
+    title: HUD
+    slot: sidebar
+    blocks:
+      - {kind: stat, label: A, value: 1}
+  - id: board
+    title: Board
+    slot: sidebar
+    entry: ui/board/index.html
+  - id: map
+    title: Map
+    slot: modal
+    blocks:
+      - {kind: image, src: assets/map.png}
+`)
+    expect(screen.getByText(/Panel “board” ships its own HTML/)).toBeInTheDocument()
+    const ids = screen.getAllByLabelText("Panel id") as HTMLInputElement[]
+    expect(ids.map((box) => box.value)).toEqual(["hud", "map"])
+
+    await userEvent.type(ids[0], "x")
+    const written = parseYaml(onChange.mock.calls.at(-1)![0]) as { panels: { id: string }[] }
+    expect(written.panels.map((panel) => panel.id)).toEqual(["hudx", "board", "map"])
+  })
+
+  it("opens an unknown slot as itself, not as sidebar", () => {
+    open(FILE.replace("slot: sidebar", "slot: overlay"))
+    expect((screen.getByLabelText("Where") as HTMLSelectElement).value).toBe("overlay")
+    expect(screen.getByText(/not a panel slot/)).toBeInTheDocument()
   })
 })

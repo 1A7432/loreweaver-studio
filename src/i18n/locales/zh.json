@@ -1355,6 +1355,7 @@
       "modeYaml": "YAML",
       "unparseable": "这份面板文件解析不了，表单编辑已关闭：{{error}}",
       "opaque": "有 {{count}} 块面板自带 HTML，已原样保留——那些请到 YAML 页改。",
+      "opaquePanel": "面板「{{id}}」自带 HTML，已原样保留——请到 YAML 页改。",
       "opaqueBlocks": "有 {{count}} 个块是本编辑器不认识的类型，已原样保留——那些请到 YAML 页改。",
       "opaqueBlock": "已原样保留——本编辑器不认识这种块；请到 YAML 页改。",
       "addPanel": "添加面板",
@@ -1442,7 +1443,10 @@
         "leafOutsideRepeat": "{{at}}：“{{field}}”用了重复项，但这个块并不重复。",
         "bindingNotAllowed": "{{at}}：“{{field}}”这里只能是普通值——引擎不接受绑定。",
         "tooManyOptions": "{{at}}：最多 {{max}} 个选项。",
-        "optionIncomplete": "{{at}}：每个选项都需要 id、标签和要发送的内容。"
+        "optionIncomplete": "{{at}}：每个选项都需要 id、标签和要发送的内容。",
+        "unknownSlot": "面板「{{panel}}」：「{{slot}}」不是面板位置——引擎只接受 sidebar、tray 或 modal。",
+        "unknownAudience": "面板「{{panel}}」：「{{audience}}」不是可见范围——引擎只接受 all、player 或 keeper。",
+        "unknownKeys": "{{at}}：「{{keys}}」——引擎不接受多余的键；已原样保留，但构建时会被拒绝。"
       }
     }
   }

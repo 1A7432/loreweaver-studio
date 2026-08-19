@@ -12,19 +12,25 @@
 // declared, a max below a min). `--pack` remains the gate a release passes.
 //
 // Two things this model refuses to lose. Tier 2 panels — the ones that ship their own
-// HTML/JS (`entry`/`assets`/`fallback`) — are carried through UNTOUCHED as opaque
-// entries. And a BLOCK this table does not model (a kind the engine grew after this
-// file, or one written in a shape the form cannot hold) is carried through as an
-// opaque block, verbatim, in place — never dropped. An editor that silently ate an
-// author's work on save would be the worst bug it can have.
+// HTML/JS (`entry`/`assets`/`fallback`) — sit in the SAME `panels` list as modeled
+// ones, carried through UNTOUCHED, in place. And a BLOCK this table does not model
+// (a kind the engine grew after this file, or one written in a shape the form cannot
+// hold) is carried through as an opaque block, verbatim, in place — never dropped.
+// Unknown slots, audiences, and extra keys are kept as written, not rewritten to a
+// default. An editor that silently ate an author's work on save would be the worst
+// bug it can have.
 
-import type { PanelSlot as WirePanelSlot, UiBlock } from "@loreweaver/protocol"
+import type {
+  PanelRepeatBlock,
+  PanelSlot as ProtocolPanelSlot,
+  PanelTemplateBlock,
+} from "@loreweaver/protocol"
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
 
-/** `core/panels.py` `PANEL_SLOTS`, pinned to the protocol package's `PanelSlot` (the
- * engine's tests pin THAT to the engine). Not the hook `ui` FRAME's `inline|sidebar` —
- * that is a different vocabulary, for a different thing. */
-export const PANEL_SLOTS = ["sidebar", "tray", "modal"] as const satisfies readonly WirePanelSlot[]
+/** `core/panels.py` `PANEL_SLOTS`, pinned to the protocol package's pack-panel
+ * `PanelSlot` (the engine's tests pin THAT to the engine). Not the hook `ui`
+ * FRAME's `inline|sidebar` — that is a different vocabulary, for a different thing. */
+export const PANEL_SLOTS = ["sidebar", "tray", "modal"] as const satisfies readonly ProtocolPanelSlot[]
 export const PANEL_AUDIENCES = ["all", "player", "keeper"] as const
 export const BADGE_TONES = ["info", "warn", "danger"] as const
 export const TEXT_STYLES = ["quote", "warning"] as const
@@ -32,9 +38,19 @@ export const TEXT_STYLES = ["quote", "warning"] as const
 export const MAX_CHOICE_OPTIONS = 12
 
 export type PanelSlot = (typeof PANEL_SLOTS)[number]
-/** Every block kind the wire knows — the key set `BLOCK_FIELDS` must cover exactly. */
-export type WireBlockKind = UiBlock["kind"]
+/** Every authored block kind — the key set `BLOCK_FIELDS` must cover exactly.
+ * `PanelRepeatBlock` is a wrapper, not a kind; the hook `ui` frame's `UiBlock` is a
+ * different vocabulary (resolved hashes, already-localized strings). */
+export type BlockKind = Exclude<PanelTemplateBlock, PanelRepeatBlock>["kind"]
 export type PanelAudience = (typeof PANEL_AUDIENCES)[number]
+
+export function isPanelSlot(value: string): value is PanelSlot {
+  return (PANEL_SLOTS as readonly string[]).includes(value)
+}
+
+export function isPanelAudience(value: string): value is PanelAudience {
+  return (PANEL_AUDIENCES as readonly string[]).includes(value)
+}
 
 /** A localized string: `{en, zh}`, or a plain string in the YAML (read as `en`). */
 export interface Localized {
@@ -54,10 +70,13 @@ export function isLocalized(value: FieldValue): value is Localized {
 export const LEAF_PARTS = ["id", "label", "value"] as const
 export type LeafPart = (typeof LEAF_PARTS)[number]
 
-/** A scalar field: a literal the author typed, a live binding to a variable, or —
- * inside a `repeat` — one part of the variable the current instance stands for. */
+/** A scalar field: a literal as the file wrote it (string / number / boolean), a
+ * live binding to a variable, or — inside a `repeat` — one part of the variable
+ * the current instance stands for. The serializer does not guess types. */
 export type Scalar =
-  { mode: "literal"; text: string } | { mode: "var"; path: string } | { mode: "leaf"; leaf: LeafPart }
+  | { mode: "literal"; value: string | number | boolean }
+  | { mode: "var"; path: string }
+  | { mode: "leaf"; leaf: LeafPart }
 
 /** One option of a `choices` block: what the client shows, and the input it sends
  * when picked. The label may bind, like any localized field. */
@@ -96,7 +115,7 @@ export interface FieldSpec {
  * (`_validate_block`). Order is render order in the form. Typed over the protocol
  * package's block union, so a kind the engine grows (or drops) fails to COMPILE here
  * rather than silently becoming an opaque block. */
-export const BLOCK_FIELDS: Record<WireBlockKind, readonly FieldSpec[]> = {
+export const BLOCK_FIELDS: Record<BlockKind, readonly FieldSpec[]> = {
   divider: [],
   meter: [
     { name: "label", type: "localized", required: true },
@@ -185,6 +204,8 @@ export interface BlockDraft {
   /** Set when this table does not model the block: the entry exactly as written.
    * Written back verbatim; the form shows it as opaque instead of eating it. */
   raw?: unknown
+  /** Keys this table does not model, written back as-is so an extra field is not eaten. */
+  rest?: Record<string, unknown>
 }
 
 export function isOpaqueBlock(block: BlockDraft): boolean {
@@ -195,9 +216,13 @@ export interface PanelDraft {
   uid: string
   id: string
   title: Localized
-  slot: PanelSlot
-  audience: PanelAudience
+  /** Written back as-is. Unknown values stay unknown — they are not rewritten to `sidebar`. */
+  slot: string
+  /** Written back as-is. Unknown values stay unknown — they are not rewritten to `all`. */
+  audience: string
   blocks: BlockDraft[]
+  /** Keys this editor does not model (`icon`, …), written back as-is. */
+  rest?: Record<string, unknown>
 }
 
 /** A tier-2 panel (or anything else this editor does not model), kept verbatim. */
@@ -207,9 +232,16 @@ export interface OpaquePanel {
   raw: Record<string, unknown>
 }
 
+/** One list, in file order. Splitting modeled and opaque into two arrays
+ * reordered the file on save (tier-2 panels were appended). */
+export type PanelEntry = PanelDraft | OpaquePanel
+
 export interface PanelsDocument {
-  panels: PanelDraft[]
-  opaque: OpaquePanel[]
+  panels: PanelEntry[]
+}
+
+export function isOpaquePanel(panel: PanelEntry): panel is OpaquePanel {
+  return !("blocks" in panel)
 }
 
 let uidCounter = 0
@@ -222,8 +254,20 @@ export function emptyLocalized(): Localized {
   return { en: "", zh: "" }
 }
 
-export function literal(text = ""): Scalar {
-  return { mode: "literal", text }
+export function literal(value: string | number | boolean = ""): Scalar {
+  return { mode: "literal", value }
+}
+
+/** The editor's box is text. Coerce here — not in the serializer — so an
+ * untouched `true` / `12` / `"true"` round-trips as whatever the file had. */
+export function parseLiteralInput(text: string): Scalar {
+  const trimmed = text.trim()
+  if (trimmed === "true") return literal(true)
+  if (trimmed === "false") return literal(false)
+  if (trimmed === "") return literal("")
+  const numeric = Number(trimmed)
+  if (Number.isFinite(numeric) && String(numeric) === trimmed) return literal(numeric)
+  return literal(text)
 }
 
 export function newOption(): ChoiceOptionDraft {
@@ -279,6 +323,20 @@ function readLocalized(raw: unknown): LocalizedField {
   return emptyLocalized()
 }
 
+function leftovers(
+  map: Record<string, unknown>,
+  known: readonly string[],
+): Record<string, unknown> | undefined {
+  const rest: Record<string, unknown> = {}
+  let any = false
+  for (const [key, value] of Object.entries(map)) {
+    if (known.includes(key)) continue
+    rest[key] = value
+    any = true
+  }
+  return any ? rest : undefined
+}
+
 function readScalar(raw: unknown): Scalar {
   if (raw && typeof raw === "object") {
     const map = raw as Record<string, unknown>
@@ -297,6 +355,8 @@ function readScalar(raw: unknown): Scalar {
     }
   }
   if (raw === null || raw === undefined) return literal()
+  if (typeof raw === "boolean") return literal(raw)
+  if (typeof raw === "number" && Number.isFinite(raw)) return literal(raw)
   return literal(String(raw))
 }
 
@@ -354,6 +414,8 @@ function readModeledBlock(raw: unknown): BlockDraft | null {
     block.fields[spec.name] = readField(spec, map[spec.name])
   }
   if (typeof map.visible_when === "string") block.visibleWhen = map.visible_when
+  const rest = leftovers(map, ["kind", "visible_when", ...specs.map((spec) => spec.name)])
+  if (rest) block.rest = rest
   return block
 }
 
@@ -367,7 +429,10 @@ function readBlock(raw: unknown): BlockDraft {
     if (map.repeat && typeof map.repeat === "object") {
       const repeat = map.repeat as Record<string, unknown>
       const inner = readModeledBlock(repeat.block)
-      if (inner !== null && typeof repeat.prefix === "string") {
+      // Extra keys on the wrapper or the `repeat` object itself cannot sit on the
+      // inner block without colliding, so the whole wrapper stays opaque.
+      const extra = leftovers(map, ["repeat", "visible_when"]) || leftovers(repeat, ["prefix", "block"])
+      if (inner !== null && typeof repeat.prefix === "string" && extra === undefined) {
         return {
           ...inner,
           repeatPrefix: repeat.prefix,
@@ -391,7 +456,7 @@ export interface ParseResult {
 }
 
 export function parsePanelsYaml(text: string): ParseResult {
-  const empty: PanelsDocument = { panels: [], opaque: [] }
+  const empty: PanelsDocument = { panels: [] }
   if (!text.trim()) return { document: empty, error: null, opaqueBlocks: 0 }
   try {
     return documentFromRaw(parseYaml(text))
@@ -403,7 +468,7 @@ export function parsePanelsYaml(text: string): ParseResult {
 /** The same reader over an already-parsed value — YAML from a file, JSON from a
  * model. One reader, so a drafted panel and a hand-written one are read alike. */
 export function documentFromRaw(raw: unknown): ParseResult {
-  const empty: PanelsDocument = { panels: [], opaque: [] }
+  const empty: PanelsDocument = { panels: [] }
   if (!raw || typeof raw !== "object" || !Array.isArray((raw as Record<string, unknown>).panels)) {
     return {
       document: empty,
@@ -411,15 +476,14 @@ export function documentFromRaw(raw: unknown): ParseResult {
       opaqueBlocks: 0,
     }
   }
-  const panels: PanelDraft[] = []
-  const opaque: OpaquePanel[] = []
+  const panels: PanelEntry[] = []
   let opaqueBlocks = 0
   for (const entry of (raw as { panels: unknown[] }).panels) {
     if (!entry || typeof entry !== "object") continue
     const map = entry as Record<string, unknown>
     const id = typeof map.id === "string" ? map.id : ""
     if ("entry" in map) {
-      opaque.push({ uid: nextUid(), id, raw: map })
+      panels.push({ uid: nextUid(), id, raw: map })
       continue
     }
     const blocks: BlockDraft[] = []
@@ -428,20 +492,20 @@ export function documentFromRaw(raw: unknown): ParseResult {
       if (isOpaqueBlock(block)) opaqueBlocks += 1
       blocks.push(block)
     }
+    const rest = leftovers(map, ["id", "title", "slot", "audience", "blocks"])
     panels.push({
       uid: nextUid(),
       id,
       // A panel TITLE is strictly text — the schema forbids a binding there
       // ("must be a plain string or en/zh mapping (no bindings)").
       title: readPlainLocalized(map.title),
-      slot: PANEL_SLOTS.includes(map.slot as PanelSlot) ? (map.slot as PanelSlot) : "sidebar",
-      audience: PANEL_AUDIENCES.includes(map.audience as PanelAudience)
-        ? (map.audience as PanelAudience)
-        : "all",
+      slot: typeof map.slot === "string" ? map.slot : "sidebar",
+      audience: typeof map.audience === "string" ? map.audience : "all",
       blocks,
+      ...(rest ? { rest } : {}),
     })
   }
-  return { document: { panels, opaque }, error: null, opaqueBlocks }
+  return { document: { panels }, error: null, opaqueBlocks }
 }
 
 // --- writing ---------------------------------------------------------------
@@ -463,14 +527,7 @@ function writeLocalized(value: LocalizedField): unknown {
 function writeScalar(value: Scalar): unknown {
   if (value.mode === "var") return { $var: value.path }
   if (value.mode === "leaf") return { $leaf: value.leaf }
-  const text = value.text.trim()
-  if (text === "") return ""
-  // What YAML itself would read from the same characters: a number stays a number, a
-  // boolean stays a boolean (a hand-written `value: true` must not come back `"true"`).
-  if (text === "true") return true
-  if (text === "false") return false
-  const numeric = Number(text)
-  return Number.isFinite(numeric) && String(numeric) === text ? numeric : text
+  return value.value
 }
 
 function writeOptions(value: OptionsField): unknown {
@@ -486,12 +543,12 @@ function fieldBlank(value: FieldValue): boolean {
   if (isLocalized(value)) return !value.en.trim() && !value.zh.trim()
   if (value.mode === "var") return !value.path.trim()
   if (value.mode === "leaf") return false
-  return !value.text.trim()
+  return typeof value.value === "string" && !value.value.trim()
 }
 
 function writeBlock(block: BlockDraft): unknown {
   if (block.raw !== undefined) return block.raw
-  const out: Record<string, unknown> = { kind: block.kind }
+  const out: Record<string, unknown> = { ...(block.rest ?? {}), kind: block.kind }
   for (const spec of fieldsFor(block.kind) ?? []) {
     const value = block.fields[spec.name]
     if (value === undefined) continue
@@ -513,6 +570,7 @@ function writeBlock(block: BlockDraft): unknown {
 
 function writePanel(panel: PanelDraft): Record<string, unknown> {
   const out: Record<string, unknown> = {
+    ...(panel.rest ?? {}),
     id: panel.id,
     title: writeLocalized(panel.title),
     slot: panel.slot,
@@ -522,10 +580,13 @@ function writePanel(panel: PanelDraft): Record<string, unknown> {
   return out
 }
 
+function writeEntry(entry: PanelEntry): Record<string, unknown> {
+  return isOpaquePanel(entry) ? entry.raw : writePanel(entry)
+}
+
 export function serializePanelsYaml(document: PanelsDocument): string {
-  const panels = [...document.panels.map(writePanel), ...document.opaque.map((entry) => entry.raw)]
-  if (panels.length === 0) return ""
-  return stringifyYaml({ panels }, { lineWidth: 0 })
+  if (document.panels.length === 0) return ""
+  return stringifyYaml({ panels: document.panels.map(writeEntry) }, { lineWidth: 0 })
 }
 
 // --- checking --------------------------------------------------------------
@@ -567,9 +628,22 @@ export function problemsFor(document: PanelsDocument, declaredVars: Set<string>)
 
   for (const panel of document.panels) {
     const where = panel.id || "(unnamed)"
+    if (isOpaquePanel(panel)) {
+      if (panel.id && seen.has(panel.id)) problems.push({ key: "duplicateId", params: { panel: panel.id } })
+      if (panel.id) seen.add(panel.id)
+      continue
+    }
     if (!SLUG_RE.test(panel.id)) problems.push({ key: "badId", params: { panel: where } })
     else if (seen.has(panel.id)) problems.push({ key: "duplicateId", params: { panel: panel.id } })
     seen.add(panel.id)
+    if (!isPanelSlot(panel.slot))
+      problems.push({ key: "unknownSlot", params: { panel: where, slot: panel.slot } })
+    if (!isPanelAudience(panel.audience))
+      problems.push({ key: "unknownAudience", params: { panel: where, audience: panel.audience } })
+    // Kept as written (never eaten), but the engine's `_require_keys` refuses them
+    // at build — say so here, not first at `--pack`.
+    if (panel.rest)
+      problems.push({ key: "unknownKeys", params: { at: where, keys: Object.keys(panel.rest).join(", ") } })
     if (!panel.title.en.trim() && !panel.title.zh.trim())
       problems.push({ key: "noTitle", params: { panel: where } })
     if (panel.blocks.length === 0) problems.push({ key: "noBlocks", params: { panel: where } })
@@ -578,6 +652,8 @@ export function problemsFor(document: PanelsDocument, declaredVars: Set<string>)
       if (isOpaqueBlock(block)) continue // kept verbatim; the build is its judge
       const at = `${where} #${index + 1}`
       const inRepeat = block.repeatPrefix.trim() !== ""
+      if (block.rest)
+        problems.push({ key: "unknownKeys", params: { at, keys: Object.keys(block.rest).join(", ") } })
       for (const spec of fieldsFor(block.kind) ?? []) {
         const value = block.fields[spec.name]
         const blank = value === undefined || fieldBlank(value)
@@ -603,8 +679,8 @@ export function problemsFor(document: PanelsDocument, declaredVars: Set<string>)
         const min = block.fields.min as Scalar | undefined
         const max = block.fields.max as Scalar | undefined
         if (min?.mode === "literal" && max?.mode === "literal") {
-          const low = Number(min.text)
-          const high = Number(max.text)
+          const low = typeof min.value === "number" ? min.value : Number(min.value)
+          const high = typeof max.value === "number" ? max.value : Number(max.value)
           if (Number.isFinite(low) && Number.isFinite(high) && high <= low)
             problems.push({ key: "meterRange", params: { at } })
         }

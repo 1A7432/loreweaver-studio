@@ -1355,6 +1355,7 @@
       "modeYaml": "YAML",
       "unparseable": "This panels file cannot be parsed, so the field editor is off: {{error}}",
       "opaque": "{{count}} panel(s) ship their own HTML and are kept exactly as written — edit those in the YAML tab.",
+      "opaquePanel": "Panel “{{id}}” ships its own HTML and is kept exactly as written — edit it in the YAML tab.",
       "opaqueBlocks": "{{count}} block(s) are of a kind this editor does not model and are kept exactly as written — edit those in the YAML tab.",
       "opaqueBlock": "Kept exactly as written — this editor does not model this block; edit it in the YAML tab.",
       "addPanel": "Add a panel",
@@ -1442,7 +1443,10 @@
         "leafOutsideRepeat": "{{at}}: “{{field}}” uses a repeat item, but the block does not repeat.",
         "bindingNotAllowed": "{{at}}: “{{field}}” must be a plain value here — the engine takes no binding in this field.",
         "tooManyOptions": "{{at}}: at most {{max}} options.",
-        "optionIncomplete": "{{at}}: every option needs an id, a label and something to send."
+        "optionIncomplete": "{{at}}: every option needs an id, a label and something to send.",
+        "unknownSlot": "Panel “{{panel}}”: “{{slot}}” is not a panel slot — the engine accepts sidebar, tray or modal.",
+        "unknownAudience": "Panel “{{panel}}”: “{{audience}}” is not an audience — the engine accepts all, player or keeper.",
+        "unknownKeys": "{{at}}: “{{keys}}” — the engine accepts no extra keys; kept as written, but the build will refuse it."
       }
     }
   }

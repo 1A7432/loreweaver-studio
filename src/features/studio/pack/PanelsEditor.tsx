@@ -29,6 +29,7 @@ import {
   type LeafPart,
   type Localized,
   type LocalizedField,
+  type OpaquePanel,
   type PanelDraft,
   type PanelsDocument,
   emptyFieldValue,
@@ -37,12 +38,16 @@ import {
   fieldsFor,
   isLocalized,
   isOpaqueBlock,
+  isOpaquePanel,
   isOptions,
+  isPanelAudience,
+  isPanelSlot,
   literal,
   newBlock,
   newOption,
   newPanel,
   nextUid,
+  parseLiteralInput,
   parsePanelsYaml,
   problemsFor,
   serializePanelsYaml,
@@ -55,7 +60,7 @@ interface Props {
   variables: LintVariable[]
 }
 
-const EMPTY_DOC: PanelsDocument = { panels: [], opaque: [] }
+const EMPTY_DOC: PanelsDocument = { panels: [] }
 
 /** ONE control for every localized-or-scalar field. The three sources such a field
  * may have — text an author types, a live variable binding, and (inside a `repeat`)
@@ -125,7 +130,11 @@ function FieldInput({
         ) : null
       ) : value.mode === "literal" ? (
         spec.type === "enum" ? (
-          <select aria-label={label} value={value.text} onChange={(e) => onChange(literal(e.target.value))}>
+          <select
+            aria-label={label}
+            value={String(value.value)}
+            onChange={(e) => onChange(literal(e.target.value))}
+          >
             <option value="">—</option>
             {(spec.options ?? []).map((option) => (
               <option key={option} value={option}>
@@ -136,8 +145,12 @@ function FieldInput({
         ) : (
           <input
             aria-label={label}
-            value={value.text}
-            onChange={(e) => onChange(literal(e.target.value))}
+            value={String(value.value)}
+            // Only a `scalar` field may hold a number or boolean; a `path` is a
+            // string to the engine (`_validated_asset_path`) even when it looks like `12`.
+            onChange={(e) =>
+              onChange(spec.type === "scalar" ? parseLiteralInput(e.target.value) : literal(e.target.value))
+            }
             placeholder={spec.type === "path" ? "assets/map.png" : undefined}
             spellCheck={spec.type === "path" ? false : undefined}
           />
@@ -452,11 +465,11 @@ function PanelCard({
         <select
           aria-label={t("studio.panels.slot")}
           value={panel.slot}
-          onChange={(e) => onChange({ ...panel, slot: e.target.value as PanelDraft["slot"] })}
+          onChange={(e) => onChange({ ...panel, slot: e.target.value })}
         >
-          {PANEL_SLOTS.map((slot) => (
+          {(isPanelSlot(panel.slot) ? PANEL_SLOTS : [...PANEL_SLOTS, panel.slot]).map((slot) => (
             <option key={slot} value={slot}>
-              {t(`studio.panels.slotName.${slot}`)}
+              {isPanelSlot(slot) ? t(`studio.panels.slotName.${slot}`) : slot}
             </option>
           ))}
         </select>
@@ -464,13 +477,15 @@ function PanelCard({
         <select
           aria-label={t("studio.panels.audience")}
           value={panel.audience}
-          onChange={(e) => onChange({ ...panel, audience: e.target.value as PanelDraft["audience"] })}
+          onChange={(e) => onChange({ ...panel, audience: e.target.value })}
         >
-          {PANEL_AUDIENCES.map((audience) => (
-            <option key={audience} value={audience}>
-              {t(`studio.panels.audienceName.${audience}`)}
-            </option>
-          ))}
+          {(isPanelAudience(panel.audience) ? PANEL_AUDIENCES : [...PANEL_AUDIENCES, panel.audience]).map(
+            (audience) => (
+              <option key={audience} value={audience}>
+                {isPanelAudience(audience) ? t(`studio.panels.audienceName.${audience}`) : audience}
+              </option>
+            ),
+          )}
         </select>
       </div>
 
@@ -510,6 +525,18 @@ function PanelCard({
   )
 }
 
+function OpaquePanelCard({ panel, onRemove }: { panel: OpaquePanel; onRemove: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <section className="panel-card">
+      <p className="studio-hint">{t("studio.panels.opaquePanel", { id: panel.id || "?" })}</p>
+      <button type="button" className="ghost-button" onClick={onRemove}>
+        {t("studio.panels.removePanel")}
+      </button>
+    </section>
+  )
+}
+
 export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
   const { t } = useTranslation()
   const [document, setDocument] = useState<PanelsDocument>(EMPTY_DOC)
@@ -545,7 +572,11 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
   const declared = useMemo(() => new Set(variables.map((variable) => variable.id)), [variables])
   const problems = useMemo(() => problemsFor(document, declared), [document, declared])
   const opaqueBlocks = useMemo(
-    () => document.panels.reduce((n, panel) => n + panel.blocks.filter(isOpaqueBlock).length, 0),
+    () =>
+      document.panels.reduce(
+        (n, panel) => n + (isOpaquePanel(panel) ? 0 : panel.blocks.filter(isOpaqueBlock).length),
+        0,
+      ),
     [document],
   )
 
@@ -578,9 +609,9 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
       }
       // Drafted panels are APPENDED with fresh uids — a draft adds to the author's
       // work, it never silently replaces what they already wrote.
+      const additions = drafted.panels.filter((entry): entry is PanelDraft => !isOpaquePanel(entry))
       commit({
-        panels: [...document.panels, ...drafted.panels.map((panel) => ({ ...panel, uid: nextUid() }))],
-        opaque: document.opaque,
+        panels: [...document.panels, ...additions.map((panel) => ({ ...panel, uid: nextUid() }))],
       })
       setDescription("")
     } catch (error) {
@@ -653,30 +684,34 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
         <p className="studio-hint panels-error">{t("studio.panels.unparseable", { error: parseError })}</p>
       ) : (
         <>
-          {document.panels.map((panel, index) => (
-            <PanelCard
-              key={panel.uid}
-              panel={panel}
-              variables={variables}
-              onChange={(next) =>
-                commit({
-                  ...document,
-                  panels: document.panels.map((entry, i) => (i === index ? next : entry)),
-                })
-              }
-              onRemove={() => commit({ ...document, panels: document.panels.filter((_, i) => i !== index) })}
-            />
-          ))}
+          {document.panels.map((panel, index) =>
+            isOpaquePanel(panel) ? (
+              <OpaquePanelCard
+                key={panel.uid}
+                panel={panel}
+                onRemove={() => commit({ panels: document.panels.filter((_, i) => i !== index) })}
+              />
+            ) : (
+              <PanelCard
+                key={panel.uid}
+                panel={panel}
+                variables={variables}
+                onChange={(next) =>
+                  commit({
+                    panels: document.panels.map((entry, i) => (i === index ? next : entry)),
+                  })
+                }
+                onRemove={() => commit({ panels: document.panels.filter((_, i) => i !== index) })}
+              />
+            ),
+          )}
           <button
             type="button"
             className="ghost-button"
-            onClick={() => commit({ ...document, panels: [...document.panels, newPanel()] })}
+            onClick={() => commit({ panels: [...document.panels, newPanel()] })}
           >
             {t("studio.panels.addPanel")}
           </button>
-          {document.opaque.length > 0 ? (
-            <p className="studio-hint">{t("studio.panels.opaque", { count: document.opaque.length })}</p>
-          ) : null}
           {opaqueBlocks > 0 ? (
             <p className="studio-hint">{t("studio.panels.opaqueBlocks", { count: opaqueBlocks })}</p>
           ) : null}

@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml"
 import {
   BLOCK_FIELDS,
   PANEL_SLOTS,
+  isOpaquePanel,
   literal,
   newBlock,
   newPanel,
@@ -49,8 +50,10 @@ describe("reading a panels file", () => {
     expect(error).toBeNull()
     expect(opaqueBlocks).toBe(0)
     expect(document.panels.map((panel) => panel.id)).toEqual(["tide-board", "suspicions"])
+    expect(document.panels.every((panel) => !isOpaquePanel(panel))).toBe(true)
 
     const [tide, suspicions] = document.panels
+    if (isOpaquePanel(tide) || isOpaquePanel(suspicions)) throw new Error("expected modeled panels")
     expect(tide.title).toEqual({ en: "Tide", zh: "潮汐" })
     expect(tide.slot).toBe("sidebar")
     expect(tide.audience).toBe("all")
@@ -70,7 +73,7 @@ describe("reading a panels file", () => {
     expect(suspicions.blocks[0].visibleWhen).toBe("")
     // zh-only text, a boolean literal, and a choices block are all engine-valid shapes.
     expect(suspicions.blocks[1].fields.label).toEqual({ en: "", zh: "已报警" })
-    expect(suspicions.blocks[1].fields.value).toEqual({ mode: "literal", text: "true" })
+    expect(suspicions.blocks[1].fields.value).toEqual({ mode: "literal", value: true })
     expect(suspicions.blocks[2].kind).toBe("choices")
     expect(suspicions.blocks[2].fields.options).toMatchObject({
       mode: "options",
@@ -117,8 +120,10 @@ describe("reading a panels file", () => {
 `
     const { document, opaqueBlocks } = parsePanelsYaml(yaml)
     expect(opaqueBlocks).toBe(1)
-    expect(document.panels[0].blocks.map((block) => block.kind)).toEqual(["stat", "hologram", "stat"])
-    expect(document.panels[0].blocks[1].raw).toEqual({ kind: "hologram", depth: 3, label: { en: "Ghost" } })
+    const hud = document.panels[0]
+    if (isOpaquePanel(hud)) throw new Error("expected modeled panel")
+    expect(hud.blocks.map((block) => block.kind)).toEqual(["stat", "hologram", "stat"])
+    expect(hud.blocks[1].raw).toEqual({ kind: "hologram", depth: 3, label: { en: "Ghost" } })
     expect(problemsFor(document, new Set())).toEqual([])
 
     const written = parseYaml(serializePanelsYaml(document)) as { panels: { blocks: unknown[] }[] }
@@ -145,12 +150,106 @@ describe("reading a panels file", () => {
     fallback: null
 `
     const { document } = parsePanelsYaml(yaml)
-    expect(document.panels).toHaveLength(0)
-    expect(document.opaque).toHaveLength(1)
+    expect(document.panels).toHaveLength(1)
+    expect(isOpaquePanel(document.panels[0])).toBe(true)
 
     const written = parseYaml(serializePanelsYaml(document)) as { panels: Record<string, unknown>[] }
     expect(written.panels[0].entry).toBe("ui/board/index.html")
     expect(written.panels[0].assets).toEqual(["ui/board/app.js"])
+  })
+
+  it("keeps a tier-2 panel between modeled ones — order is the file's, not modeled-then-opaque", () => {
+    const yaml = `panels:
+  - id: hud
+    title: HUD
+    slot: sidebar
+    blocks:
+      - {kind: stat, label: A, value: 1}
+  - id: board
+    title: Board
+    slot: sidebar
+    entry: ui/board/index.html
+    assets: [ui/board/app.js]
+  - id: map
+    title: Map
+    slot: modal
+    blocks:
+      - {kind: image, src: assets/map.png}
+`
+    const { document } = parsePanelsYaml(yaml)
+    expect(document.panels.map((panel) => panel.id)).toEqual(["hud", "board", "map"])
+    expect(isOpaquePanel(document.panels[0])).toBe(false)
+    expect(isOpaquePanel(document.panels[1])).toBe(true)
+    expect(isOpaquePanel(document.panels[2])).toBe(false)
+
+    const written = parseYaml(serializePanelsYaml(document)) as { panels: { id: string }[] }
+    expect(written.panels.map((panel) => panel.id)).toEqual(["hud", "board", "map"])
+    expect(written.panels[1]).toMatchObject({ id: "board", entry: "ui/board/index.html" })
+  })
+
+  it("keeps an unknown slot as written instead of rewriting it to sidebar", () => {
+    const yaml = `panels:
+  - id: hud
+    title: HUD
+    slot: overlay
+    blocks:
+      - {kind: stat, label: A, value: 1}
+`
+    const { document } = parsePanelsYaml(yaml)
+    const panel = document.panels[0]
+    if (isOpaquePanel(panel)) throw new Error("expected modeled panel")
+    expect(panel.slot).toBe("overlay")
+    expect(problemsFor(document, new Set()).map((problem) => problem.key)).toContain("unknownSlot")
+
+    const written = parseYaml(serializePanelsYaml(document)) as { panels: { slot: string }[] }
+    expect(written.panels[0].slot).toBe("overlay")
+  })
+
+  it("writes extra keys back instead of dropping them", () => {
+    const yaml = `panels:
+  - id: hud
+    title: HUD
+    slot: sidebar
+    icon: lantern
+    blocks:
+      - {kind: stat, label: A, value: 1, tooltip: hi}
+`
+    const { document } = parsePanelsYaml(yaml)
+    const panel = document.panels[0]
+    if (isOpaquePanel(panel)) throw new Error("expected modeled panel")
+    expect(panel.rest).toEqual({ icon: "lantern" })
+    expect(panel.blocks[0].rest).toEqual({ tooltip: "hi" })
+    // Kept, but reported: the engine's `_require_keys` refuses them at build.
+    expect(problemsFor(document, new Set()).filter((problem) => problem.key === "unknownKeys")).toEqual([
+      { key: "unknownKeys", params: { at: "hud", keys: "icon" } },
+      { key: "unknownKeys", params: { at: "hud #1", keys: "tooltip" } },
+    ])
+
+    const written = parseYaml(serializePanelsYaml(document)) as {
+      panels: { icon?: unknown; blocks: { tooltip?: unknown }[] }[]
+    }
+    expect(written.panels[0].icon).toBe("lantern")
+    expect(written.panels[0].blocks[0].tooltip).toBe("hi")
+  })
+
+  it("keeps a quoted YAML string a string — the serializer does not guess", () => {
+    const yaml = `panels:
+  - id: hud
+    title: HUD
+    slot: sidebar
+    blocks:
+      - {kind: stat, label: A, value: "true"}
+      - {kind: stat, label: B, value: "12"}
+`
+    const { document } = parsePanelsYaml(yaml)
+    const panel = document.panels[0]
+    if (isOpaquePanel(panel)) throw new Error("expected modeled panel")
+    expect(panel.blocks[0].fields.value).toEqual({ mode: "literal", value: "true" })
+    expect(panel.blocks[1].fields.value).toEqual({ mode: "literal", value: "12" })
+
+    const written = parseYaml(serializePanelsYaml(document)) as { panels: { blocks: { value: unknown }[] }[] }
+    expect(written.panels[0].blocks[0].value).toBe("true")
+    expect(written.panels[0].blocks[1].value).toBe("12")
   })
 
   it("reports a broken file instead of silently emptying it", () => {
@@ -167,10 +266,10 @@ describe("writing a panels file", () => {
     panel.title = { en: "HUD", zh: "" }
     const block = newBlock("stat")
     block.fields.label = { en: "Lanterns", zh: "" }
-    block.fields.value = literal("3")
+    block.fields.value = literal(3)
     panel.blocks = [block]
 
-    const written = parseYaml(serializePanelsYaml({ panels: [panel], opaque: [] })) as {
+    const written = parseYaml(serializePanelsYaml({ panels: [panel] })) as {
       panels: { title: unknown; blocks: { value: unknown }[] }[]
     }
     expect(written.panels[0].title).toBe("HUD")
@@ -184,10 +283,10 @@ describe("writing a panels file", () => {
     panel.title = { en: "", zh: "状态板" }
     const block = newBlock("stat")
     block.fields.label = { en: "", zh: "灯笼" }
-    block.fields.value = literal("3")
+    block.fields.value = literal(3)
     panel.blocks = [block]
 
-    const written = parseYaml(serializePanelsYaml({ panels: [panel], opaque: [] })) as {
+    const written = parseYaml(serializePanelsYaml({ panels: [panel] })) as {
       panels: { title: unknown; blocks: { label: unknown }[] }[]
     }
     expect(written.panels[0].title).toEqual({ zh: "状态板" })
@@ -200,9 +299,9 @@ describe("writing a panels file", () => {
     panel.title = { en: "HUD", zh: "" }
     const block = newBlock("stat")
     block.fields.label = { en: "Alarm", zh: "" }
-    block.fields.value = literal("false")
+    block.fields.value = literal(false)
     panel.blocks = [block]
-    const written = parseYaml(serializePanelsYaml({ panels: [panel], opaque: [] })) as {
+    const written = parseYaml(serializePanelsYaml({ panels: [panel] })) as {
       panels: { blocks: { value: unknown }[] }[]
     }
     expect(written.panels[0].blocks[0].value).toBe(false)
@@ -216,14 +315,14 @@ describe("writing a panels file", () => {
       { ...newBlock("badge"), fields: { ...newBlock("badge").fields, label: { en: "Alert", zh: "" } } },
     ]
 
-    const written = parseYaml(serializePanelsYaml({ panels: [panel], opaque: [] })) as {
+    const written = parseYaml(serializePanelsYaml({ panels: [panel] })) as {
       panels: { blocks: Record<string, unknown>[] }[]
     }
     expect(written.panels[0].blocks[0]).toEqual({ kind: "badge", label: "Alert" })
   })
 
   it("writes nothing at all for an empty document", () => {
-    expect(serializePanelsYaml({ panels: [], opaque: [] })).toBe("")
+    expect(serializePanelsYaml({ panels: [] })).toBe("")
   })
 })
 
@@ -244,7 +343,9 @@ describe("what an author can fix while typing", () => {
 
   it("leaves a repeat's own {$leaf} substitution alone — it names no variable", () => {
     const document = parsePanelsYaml(HAND_WRITTEN).document
-    const repeated = document.panels[1].blocks[0]
+    const suspicions = document.panels[1]
+    if (isOpaquePanel(suspicions)) throw new Error("expected modeled panel")
+    const repeated = suspicions.blocks[0]
     expect(repeated.fields.label).toEqual({ mode: "leaf", leaf: "label" })
     expect(repeated.fields.value).toEqual({ mode: "leaf", leaf: "value" })
     expect(problemsFor(document, declared)).toEqual([])
@@ -266,12 +367,12 @@ describe("what an author can fix while typing", () => {
     panel.id = "Tide Board"
     panel.title = { en: "", zh: "" }
     const meter = newBlock("meter")
-    meter.fields.min = literal("10")
-    meter.fields.max = literal("2")
-    meter.fields.value = literal("5")
+    meter.fields.min = literal(10)
+    meter.fields.max = literal(2)
+    meter.fields.value = literal(5)
     panel.blocks = [meter]
 
-    const keys = problemsFor({ panels: [panel], opaque: [] }, declared).map((problem) => problem.key)
+    const keys = problemsFor({ panels: [panel] }, declared).map((problem) => problem.key)
     expect(keys).toContain("badId")
     expect(keys).toContain("noTitle")
     expect(keys).toContain("missingField") // the meter's label
@@ -280,7 +381,7 @@ describe("what an author can fix while typing", () => {
     const empty = newPanel()
     empty.id = "hud"
     empty.title = { en: "HUD", zh: "" }
-    expect(problemsFor({ panels: [empty], opaque: [] }, declared).map((p) => p.key)).toContain("noBlocks")
+    expect(problemsFor({ panels: [empty] }, declared).map((p) => p.key)).toContain("noBlocks")
   })
 
   it("flags a repeat item outside a repeat, and a binding where the engine takes none", () => {
@@ -321,10 +422,9 @@ describe("what an author can fix while typing", () => {
 
 describe("the field table", () => {
   it("is the whole wire vocabulary — every block kind and slot the engine has", () => {
-    // `BLOCK_FIELDS` is typed over the protocol package's `UiBlock["kind"]` and
-    // `PANEL_SLOTS` over its `PanelSlot`, so a kind or slot the engine grows fails to
-    // COMPILE here; this pins the runtime lists to `core/hooks.py` `UI_BLOCK_KINDS`
-    // and `core/panels.py` `PANEL_SLOTS` for the reader.
+    // `BLOCK_FIELDS` is typed over the protocol package's `PanelTemplateBlock` kinds
+    // and `PANEL_SLOTS` over its pack-panel `PanelSlot`, so a kind or slot the engine
+    // grows fails to COMPILE here; this pins the runtime lists to `core/panels.py`.
     expect(Object.keys(BLOCK_FIELDS).sort()).toEqual([
       "badge",
       "choices",
