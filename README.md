@@ -67,8 +67,9 @@ Two modes, one app:
 
 - **Play mode**: complete against protocol 2.3 — narrative / dice / state / presence / turn
   status, tier-1 and tier-2 module panels, the keeper screens, one-click local host, audio and
-  media. The engine's `.panel` text fallback and this client's panel rendering are being pinned
-  to one shared vector table (in progress, engine side).
+  media. Tier-1 panel instantiation is the reference client's resolver, ported rule for
+  rule and pinned by the shared vector table (`fixtures/panel_template_vectors.json`) that
+  the engine and the reference client run too.
 - **Desktop (macOS)**: verified — release build + `.app` bundle succeed (`bun tauri build`;
   the final DMG script needs a GUI session).
 - **Windows / Linux**: CI compiles and tests the full workspace on Linux; no bundles built yet.
@@ -124,7 +125,9 @@ output and the engine's real parsers drift apart. It pins four things:
   rulepack, a lorebook, tier-1/2 panels, a presentation kit, assets, and a
   prep-phase plan script, and a keeper prompt preset;
 - **the engine's conformance suites** for the pinned fixtures
-  (`test_studio_export_fixture`, `test_lorecard`, `test_visible_when_vectors`);
+  (`test_studio_export_fixture`, `test_lorecard`, `test_visible_when_vectors`,
+  `test_panel_template_vectors`), and the two vector tables this repo vendors must be
+  byte-identical to the engine's;
 - **the live-connect smoke gate** (`scripts/check_live_connect.sh`) — the three
   above are all static formats, so they cannot notice that the two _processes_
   stopped talking. This stage spawns a real `python -m app --serve` engine in a

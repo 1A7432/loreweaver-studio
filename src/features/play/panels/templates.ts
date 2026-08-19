@@ -1,13 +1,19 @@
-// Tier-1 panel templates → concrete UI blocks (spec M15/M19, protocol 2.1).
+// Tier-1 panel templates → concrete UI blocks (spec M15/M19, protocol 2.1+).
 //
-// The resolver substitutes `{$var}` / `{$leaf}` bindings from the viewer's OWN
-// `state.variables`, localizes `{en,zh}` text, and applies each block's
-// `visible_when` gate BEFORE resolving it. It is deliberately fail-closed: a
-// variable that is absent or hidden for this viewer, a binding that resolves
-// to a type the block cannot hold, or a condition that errors or cannot be
-// evaluated omits the WHOLE block. A panel template can therefore never widen
-// visibility beyond what the state wire filter already granted — and a gate
-// the client cannot decide never draws (the one NORMATIVE versioning rule).
+// THIS FILE IS A PORT OF THE REFERENCE CLIENT'S RESOLVER — the engine repo's
+// `clients/tui/src/panelTemplates.ts` — rule for rule, and it stays one by the shared
+// conformance table: `fixtures/panel_template_vectors.json` (vendored verbatim from
+// `trpg_kp/tests/fixtures/panel_template_vectors.json`) runs here in
+// `panelTemplateVectors.test.ts`, in the reference client, and in the engine (the
+// `.panel` text fallback). A panel is instantiated per viewer in every client AND on
+// the server; a row that moves breaks every suite at once. When the reference resolver
+// changes, port the change and refresh the fixture — do not "improve" this copy on its
+// own: an improvement that is not a row in the table is a third opinion.
+//
+// Fail-closed is the load-bearing rule: a `{$var}` binding whose variable is absent
+// from this viewer's state omits the WHOLE block — a panel can never widen
+// visibility; the server-side state filter stays the single choke point. The same
+// discipline applies to malformed shapes: resolve to nothing, never to a guess.
 
 import {
   isVisible,
@@ -15,25 +21,261 @@ import {
   type ModuleVariable,
   type PanelTemplateBlock,
   type PanelText,
-  type Resolver,
   type UiBadgeTone,
   type UiBlock,
   type UiChoiceOption,
 } from "@loreweaver/protocol"
 
-/** Mirror of the server-side cap: ≤ 32 template blocks per panel. */
+const BADGE_TONES: ReadonlySet<string> = new Set(["info", "warn", "danger"])
+
+// The M19 performance templates' text fields, mirroring `core.panels._PERFORMANCE_KINDS`.
+// `map_pin`'s hash/x/y are handled separately (they are not localized text).
+const PERFORMANCE_REQUIRED: Record<string, readonly string[]> = {
+  letter: ["body"],
+  clipping: ["headline", "body"],
+  map_pin: ["label"],
+  title_card: ["title"],
+}
+const PERFORMANCE_OPTIONAL: Record<string, readonly string[]> = {
+  letter: ["from", "to", "date"],
+  clipping: ["source", "date"],
+  map_pin: ["note"],
+  title_card: ["subtitle", "act"],
+}
+
+type Resolved = { ok: true; value: unknown } | { ok: false }
+
+const MISS: Resolved = { ok: false }
+
+/** One condexpr reference: the viewer's own variable of that id, `null` when absent.
+ * Nothing else is addressable — the conformance table (`tests/fixtures/
+ * visible_when_vectors.json`) pins this exact rule for every implementation. */
+function variableValue(variables: readonly ModuleVariable[], path: string): unknown {
+  const match = variables.find((entry) => entry.id === path)
+  return match === undefined ? null : match.value
+}
+
+function isVarBinding(value: unknown): value is { $var: string } {
+  return typeof value === "object" && value !== null && "$var" in value
+}
+
+function isLeafBinding(value: unknown): value is { $leaf: string } {
+  return typeof value === "object" && value !== null && "$leaf" in value
+}
+
+/** Resolve one scalar template field: literals pass through; `$var` looks up the
+ * viewer's variables (miss -> the block is omitted); `$leaf` reads the repeat
+ * instance's matched variable (invalid outside a repeat). */
+function resolveScalar(
+  value: unknown,
+  variables: readonly ModuleVariable[],
+  leaf?: ModuleVariable,
+): Resolved {
+  if (isVarBinding(value)) {
+    const id = value.$var
+    const match = typeof id === "string" ? variables.find((entry) => entry.id === id) : undefined
+    return match === undefined ? MISS : { ok: true, value: match.value }
+  }
+  if (isLeafBinding(value)) {
+    if (!leaf) return MISS
+    if (value.$leaf === "id") return { ok: true, value: leaf.id }
+    if (value.$leaf === "label") return { ok: true, value: leaf.label }
+    if (value.$leaf === "value") return { ok: true, value: leaf.value }
+    return MISS
+  }
+  return { ok: true, value }
+}
+
+/** Localized text pick: this locale, else `en`, else any value the map carries. */
+export function pickPanelText(value: PanelText | string | undefined, locale?: string): string | undefined {
+  if (typeof value === "string") return value
+  if (typeof value !== "object" || value === null) return undefined
+  const map = value as Record<string, unknown>
+  const short = (locale ?? "en").slice(0, 2)
+  for (const candidate of [map[short], map.en, ...Object.values(map)]) {
+    if (typeof candidate === "string" && candidate) return candidate
+  }
+  return undefined
+}
+
+function resolveText(
+  value: unknown,
+  variables: readonly ModuleVariable[],
+  locale?: string,
+  leaf?: ModuleVariable,
+): string | undefined {
+  const resolved = resolveScalar(value, variables, leaf)
+  if (!resolved.ok) return undefined
+  const raw = resolved.value
+  if (typeof raw === "number" || typeof raw === "boolean") return String(raw)
+  return pickPanelText(raw as PanelText | string | undefined, locale)
+}
+
+function finiteNumber(resolved: Resolved): number | undefined {
+  if (!resolved.ok || typeof resolved.value !== "number" || !Number.isFinite(resolved.value)) return undefined
+  return resolved.value
+}
+
+function resolveOne(
+  block: PanelTemplateBlock,
+  variables: readonly ModuleVariable[],
+  locale?: string,
+  leaf?: ModuleVariable,
+): UiBlock | undefined {
+  if ("repeat" in block) return undefined // expanded by resolvePanelBlocks; nesting resolves to nothing
+  // `visible_when` (protocol 2.1): the value gate `$var`'s absent-means-hide cannot
+  // express. Evaluated against the SAME visible variable set every binding sees, so a
+  // condition can never widen visibility past the server's wire filter, and an
+  // undecidable condition hides its block (fail-closed, like every other miss here).
+  if (!isVisible(block.visible_when, (path) => variableValue(variables, path))) return undefined
+  if (block.kind === "divider") return { kind: "divider" }
+  if (block.kind === "meter") {
+    const label = resolveText(block.label, variables, locale, leaf)
+    const value = finiteNumber(resolveScalar(block.value, variables, leaf))
+    const min = finiteNumber(resolveScalar(block.min, variables, leaf))
+    const max = finiteNumber(resolveScalar(block.max, variables, leaf))
+    if (label === undefined || value === undefined || min === undefined || max === undefined || max <= min) {
+      return undefined
+    }
+    return { kind: "meter", label, value, min, max }
+  }
+  if (block.kind === "stat") {
+    const label = resolveText(block.label, variables, locale, leaf)
+    const resolved = resolveScalar(block.value, variables, leaf)
+    if (label === undefined || !resolved.ok) return undefined
+    const value = resolved.value
+    if (typeof value !== "number" && typeof value !== "boolean") {
+      const text = typeof value === "string" ? value : pickPanelText(value as PanelText, locale)
+      return text === undefined ? undefined : { kind: "stat", label, value: text }
+    }
+    return { kind: "stat", label, value }
+  }
+  if (block.kind === "badge") {
+    const label = resolveText(block.label, variables, locale, leaf)
+    if (label === undefined) return undefined
+    const badge: UiBlock = { kind: "badge", label }
+    if (block.tone !== undefined) {
+      const tone = resolveScalar(block.tone, variables, leaf)
+      // v1.7 stance for optional enums: an invalid tone strips, the badge stays.
+      if (tone.ok && typeof tone.value === "string" && BADGE_TONES.has(tone.value)) {
+        badge.tone = tone.value as UiBadgeTone
+      }
+    }
+    return badge
+  }
+  if (block.kind === "text") {
+    const text = resolveText(block.text, variables, locale, leaf)
+    if (text === undefined) return undefined
+    return block.style === undefined ? { kind: "text", text } : { kind: "text", text, style: block.style }
+  }
+  if (block.kind === "image") {
+    // Content-addressed by the pack build — nothing to resolve against state, but a
+    // manifest hand-edited into a hashless block would render as a dead fetch.
+    if (typeof block.hash !== "string" || !block.hash) return undefined
+    const image: UiBlock = { kind: "image", hash: block.hash, mime: block.mime, size: block.size }
+    const caption = resolveText(block.caption, variables, locale, leaf)
+    if (caption !== undefined) image.caption = caption
+    const alt = resolveText(block.alt, variables, locale, leaf)
+    if (alt !== undefined) image.alt = alt
+    return image
+  }
+  if (
+    block.kind === "letter" ||
+    block.kind === "clipping" ||
+    block.kind === "title_card" ||
+    block.kind === "map_pin"
+  ) {
+    // The M19 performance templates: localized text fields, plus `map_pin`'s
+    // content-addressed map and its (bindable) fractional coordinates. Required
+    // fields resolve or the whole block drops, same fail-closed rule as everywhere.
+    const required = PERFORMANCE_REQUIRED[block.kind]
+    const resolved: Record<string, unknown> = { kind: block.kind }
+    for (const name of required) {
+      const text = resolveText((block as unknown as Record<string, unknown>)[name], variables, locale, leaf)
+      if (text === undefined) return undefined
+      resolved[name] = text
+    }
+    for (const name of PERFORMANCE_OPTIONAL[block.kind]) {
+      const text = resolveText((block as unknown as Record<string, unknown>)[name], variables, locale, leaf)
+      if (text !== undefined) resolved[name] = text
+    }
+    if (block.kind === "map_pin") {
+      const x = finiteNumber(resolveScalar(block.x, variables, leaf))
+      const y = finiteNumber(resolveScalar(block.y, variables, leaf))
+      if (typeof block.hash !== "string" || !block.hash || x === undefined || y === undefined)
+        return undefined
+      resolved.hash = block.hash
+      resolved.mime = block.mime
+      resolved.size = block.size
+      resolved.x = Math.min(1, Math.max(0, x))
+      resolved.y = Math.min(1, Math.max(0, y))
+    }
+    return resolved as unknown as UiBlock
+  }
+  if (block.kind === "choices") {
+    const options: UiChoiceOption[] = []
+    for (const option of block.options ?? []) {
+      const label = resolveText(option.label, variables, locale, leaf)
+      if (label === undefined || typeof option.input !== "string" || typeof option.id !== "string") continue
+      options.push({ id: option.id, label, input: option.input })
+    }
+    if (options.length === 0) return undefined
+    const prompt = block.prompt === undefined ? undefined : resolveText(block.prompt, variables, locale, leaf)
+    return prompt === undefined ? { kind: "choices", options } : { kind: "choices", prompt, options }
+  }
+  return undefined
+}
+
+/** Instantiate a panel's template blocks for this viewer. Repeat constructs expand to
+ * one instance per visible variable whose id starts with the prefix (capped); every
+ * unresolved binding drops its whole block (fail-closed), so an empty result is a
+ * legitimate outcome — the caller collapses the panel section entirely. */
+export function resolvePanelBlocks(
+  blocks: readonly PanelTemplateBlock[] | undefined,
+  variables: readonly ModuleVariable[] | undefined,
+  locale?: string,
+): UiBlock[] {
+  // `hidden` variables are dropped BEFORE any binding resolves, so a `$var` pointing at
+  // one misses and fail-closes its whole block, and `repeat` never instantiates over
+  // one. Protocol: "the variable being absent/hidden for this viewer omits the WHOLE
+  // block"; `repeat` expands "one instance per VISIBLE variable". Hidden leaves only
+  // reach keeper connections (an imported-card MVU leaf before `.var expose`), so this
+  // is not a player-facing leak — but a pack-authored panel must not be able to surface
+  // un-exposed module internals as ordinary panel content on any screen.
+  const visible = (variables ?? []).filter((entry) => !entry.hidden)
+  const resolved: UiBlock[] = []
+  for (const block of blocks ?? []) {
+    if ("repeat" in block) {
+      // A repeat may carry its own `visible_when` (the author gating the WHOLE list, not
+      // each instance). `resolveOne` never sees a repeat, so the gate is checked here —
+      // undecidable hides the whole expansion, same fail-closed rule as everywhere else.
+      if (!isVisible(block.visible_when, (path) => variableValue(visible, path))) continue
+      const prefix = block.repeat?.prefix
+      const inner = block.repeat?.block
+      if (typeof prefix !== "string" || !prefix || !inner || "repeat" in inner) continue
+      for (const match of visible
+        .filter((entry) => entry.id.startsWith(prefix))
+        .slice(0, MAX_PANEL_REPEAT_INSTANCES)) {
+        const instance = resolveOne(inner, visible, locale, match)
+        if (instance) resolved.push(instance)
+      }
+      continue
+    }
+    const instance = resolveOne(block, visible, locale)
+    if (instance) resolved.push(instance)
+  }
+  return resolved
+}
+
+/** Mirror of the server-side cap: ≤ 32 template blocks per panel (author-time lint
+ * lives in `packSource.ts`; the resolver itself does not cap, exactly like the
+ * reference client — the pack build already refused a longer panel). */
 export const MAX_PANEL_BLOCKS = 32
 
-/** Omission sentinel: any binding that fails closes over its whole block. */
-const OMIT = Symbol("omit")
-type Resolved<T> = T | typeof OMIT
-
-/**
- * The variables this viewer may bind against. A keeper connection receives
- * unexposed variables flagged `hidden:true` (rendered under 🔒 in the state
- * panel); panels bind only against EXPOSED variables so a template renders
- * identically for every role a variable is visible to.
- */
+/** The variables this viewer may bind against: `hidden:true` rows (an unexposed MVU
+ * leaf a keeper connection receives, shown under 🔒 in the state panel) are dropped
+ * BEFORE anything resolves, so a template renders identically for every role a
+ * variable is visible to. The same filter `resolvePanelBlocks` applies internally. */
 export function visibleVariables(variables: readonly ModuleVariable[]): ModuleVariable[] {
   return variables.filter((variable) => variable.hidden !== true)
 }
@@ -42,285 +284,6 @@ export function isZhLocale(locale: string | undefined): boolean {
   return (locale ?? "").toLowerCase().startsWith("zh")
 }
 
-/** Localized template text: `{en,zh}` maps, plain strings pass through. */
-export function pickText(
-  text: PanelText | string | undefined,
-  locale: string | undefined,
-): string | undefined {
-  if (text === undefined) return undefined
-  if (typeof text === "string") return text
-  if (typeof text !== "object" || text === null) return undefined
-  const map = text as PanelText
-  return isZhLocale(locale) ? (map.zh ?? map.en) : (map.en ?? map.zh)
-}
-
-function isVarBinding(value: unknown): value is { $var: string } {
-  return typeof value === "object" && value !== null && typeof (value as { $var?: unknown }).$var === "string"
-}
-
-function isLeafBinding(value: unknown): value is { $leaf: string } {
-  return (
-    typeof value === "object" && value !== null && typeof (value as { $leaf?: unknown }).$leaf === "string"
-  )
-}
-
-type Scalar = string | number | boolean
-
-/**
- * One binding step: `{$var}` → the visible variable's value, `{$leaf}` → the
- * repeat-context variable's field, `{en,zh}` → localized string, primitives →
- * themselves. Everything else fails closed.
- */
-function resolveScalar(
-  value: unknown,
-  vars: ReadonlyMap<string, ModuleVariable>,
-  locale: string | undefined,
-  leaf: ModuleVariable | null,
-): Resolved<Scalar | undefined> {
-  if (value === undefined || value === null) return undefined
-  if (isVarBinding(value)) {
-    const variable = vars.get(value.$var)
-    if (!variable) return OMIT
-    return variable.value as Scalar
-  }
-  if (isLeafBinding(value)) {
-    if (!leaf) return OMIT
-    switch (value.$leaf) {
-      case "id":
-        return leaf.id
-      case "label":
-        return leaf.label
-      case "value":
-        return leaf.value as Scalar
-      default:
-        return OMIT
-    }
-  }
-  if (typeof value === "object") {
-    const text = pickText(value as PanelText, locale)
-    return text === undefined ? OMIT : text
-  }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value
-  }
-  return OMIT
-}
-
-function asText(resolved: Resolved<Scalar | undefined>): Resolved<string | undefined> {
-  if (resolved === OMIT || resolved === undefined) return resolved
-  return String(resolved)
-}
-
-function asNumber(resolved: Resolved<Scalar | undefined>): Resolved<number> {
-  if (resolved === OMIT) return OMIT
-  if (typeof resolved !== "number" || !Number.isFinite(resolved)) return OMIT
-  return resolved
-}
-
-const BADGE_TONES: readonly UiBadgeTone[] = ["info", "warn", "danger"]
-
-/**
- * The `visible_when` variable scope (protocol 2.1): the viewer's own VISIBLE
- * variables by id — hidden ones were dropped before the map was built, so a
- * condition can never surface what the wire filter withheld. An absent id
- * resolves to `null`, exactly like the reference evaluator's resolver.
- */
-function conditionResolver(vars: ReadonlyMap<string, ModuleVariable>): Resolver {
-  return (path) => {
-    const variable = vars.get(path)
-    return variable === undefined ? null : variable.value
-  }
-}
-
-/** The wire triple every hash-addressed block carries once the pack build has
- * rewritten the author's pack-relative `src`. A hand-built fixture may still
- * carry only `src` — tolerated, but unaddressable, so it fails closed. */
-function wireAsset(block: object): { hash: string; mime?: string; size?: number } | null {
-  const raw = block as { hash?: unknown; mime?: unknown; size?: unknown }
-  if (typeof raw.hash !== "string" || !raw.hash) return null
-  const mime = typeof raw.mime === "string" && raw.mime ? raw.mime : undefined
-  const size = typeof raw.size === "number" && Number.isFinite(raw.size) ? raw.size : undefined
-  return { hash: raw.hash, ...(mime !== undefined ? { mime } : {}), ...(size !== undefined ? { size } : {}) }
-}
-
-/** A localized/bindable text field the block REQUIRES to resolve. */
-function requiredText(resolved: Resolved<Scalar | undefined>): Resolved<string> {
-  if (resolved === OMIT || resolved === undefined) return OMIT
-  return String(resolved)
-}
-
-/** Resolve one template block; OMIT is the fail-closed outcome. */
-function resolveBlock(
-  block: PanelTemplateBlock,
-  vars: ReadonlyMap<string, ModuleVariable>,
-  locale: string | undefined,
-  leaf: ModuleVariable | null,
-): Resolved<UiBlock> {
-  if (typeof block !== "object" || block === null) return OMIT
-  if ("repeat" in block) return OMIT // repeat does not nest; top level expands it
-  // `visible_when` (2.1) gates BEFORE anything resolves. Every failure fails
-  // CLOSED — `isVisible` swallows CondExprError, malformed (non-string)
-  // conditions and resolver blow-ups into "hidden": a gate this client cannot
-  // decide must never draw the block it guards.
-  if (!isVisible(block.visible_when, conditionResolver(vars))) return OMIT
-  const scalar = (value: unknown) => resolveScalar(value, vars, locale, leaf)
-  switch (block.kind) {
-    case "meter": {
-      const label = asText(scalar(block.label))
-      const value = asNumber(scalar(block.value))
-      const min = asNumber(scalar(block.min))
-      const max = asNumber(scalar(block.max))
-      if (label === OMIT || value === OMIT || min === OMIT || max === OMIT) return OMIT
-      return { kind: "meter", label: label ?? "", value, min, max }
-    }
-    case "stat": {
-      const label = asText(scalar(block.label))
-      const value = scalar(block.value)
-      if (label === OMIT || value === OMIT || value === undefined) return OMIT
-      return { kind: "stat", label: label ?? "", value }
-    }
-    case "badge": {
-      const label = asText(scalar(block.label))
-      const tone = scalar(block.tone)
-      if (label === OMIT || label === undefined || tone === OMIT) return OMIT
-      if (tone !== undefined && !BADGE_TONES.includes(tone as UiBadgeTone)) return OMIT
-      return { kind: "badge", label, ...(tone !== undefined ? { tone: tone as UiBadgeTone } : {}) }
-    }
-    case "text": {
-      const text = asText(scalar(block.text))
-      if (text === OMIT || text === undefined) return OMIT
-      const style = block.style === "quote" || block.style === "warning" ? block.style : undefined
-      return { kind: "text", text, ...(style ? { style } : {}) }
-    }
-    case "divider":
-      return { kind: "divider" }
-    case "choices": {
-      if (!Array.isArray(block.options)) return OMIT
-      const prompt = asText(scalar(block.prompt))
-      if (prompt === OMIT) return OMIT
-      const options: UiChoiceOption[] = []
-      for (const option of block.options) {
-        if (typeof option !== "object" || option === null) return OMIT
-        const label = asText(scalar(option.label))
-        if (label === OMIT || label === undefined) return OMIT
-        if (typeof option.id !== "string" || typeof option.input !== "string") return OMIT
-        options.push({ id: option.id, label, input: option.input })
-      }
-      return { kind: "choices", ...(prompt !== undefined ? { prompt } : {}), options }
-    }
-    // ---- M19 (protocol 2.1): image + the four performance templates ----
-    case "image": {
-      const asset = wireAsset(block)
-      if (!asset) return OMIT
-      const caption = asText(scalar(block.caption))
-      const alt = asText(scalar(block.alt))
-      if (caption === OMIT || alt === OMIT) return OMIT
-      return {
-        kind: "image",
-        ...asset,
-        ...(caption !== undefined ? { caption } : {}),
-        ...(alt !== undefined ? { alt } : {}),
-      }
-    }
-    case "letter": {
-      const body = requiredText(scalar(block.body))
-      const from = asText(scalar(block.from))
-      const to = asText(scalar(block.to))
-      const date = asText(scalar(block.date))
-      if (body === OMIT || from === OMIT || to === OMIT || date === OMIT) return OMIT
-      return {
-        kind: "letter",
-        body,
-        ...(from !== undefined ? { from } : {}),
-        ...(to !== undefined ? { to } : {}),
-        ...(date !== undefined ? { date } : {}),
-      }
-    }
-    case "clipping": {
-      const headline = requiredText(scalar(block.headline))
-      const body = requiredText(scalar(block.body))
-      const source = asText(scalar(block.source))
-      const date = asText(scalar(block.date))
-      if (headline === OMIT || body === OMIT || source === OMIT || date === OMIT) return OMIT
-      return {
-        kind: "clipping",
-        headline,
-        body,
-        ...(source !== undefined ? { source } : {}),
-        ...(date !== undefined ? { date } : {}),
-      }
-    }
-    case "map_pin": {
-      const asset = wireAsset(block)
-      if (!asset) return OMIT
-      const label = requiredText(scalar(block.label))
-      const note = asText(scalar(block.note))
-      const x = asNumber(scalar(block.x))
-      const y = asNumber(scalar(block.y))
-      if (label === OMIT || note === OMIT || x === OMIT || y === OMIT) return OMIT
-      return {
-        kind: "map_pin",
-        ...asset,
-        label,
-        // Fractions of the map's own box — clamped like the wire sanitizer.
-        x: Math.min(1, Math.max(0, x)),
-        y: Math.min(1, Math.max(0, y)),
-        ...(note !== undefined ? { note } : {}),
-      }
-    }
-    case "title_card": {
-      const title = requiredText(scalar(block.title))
-      const subtitle = asText(scalar(block.subtitle))
-      const act = asText(scalar(block.act))
-      if (title === OMIT || subtitle === OMIT || act === OMIT) return OMIT
-      return {
-        kind: "title_card",
-        title,
-        ...(subtitle !== undefined ? { subtitle } : {}),
-        ...(act !== undefined ? { act } : {}),
-      }
-    }
-    default:
-      // Additive protocol: template kinds we don't know yet are skipped.
-      return OMIT
-  }
-}
-
-/**
- * Render a tier-1 template against the viewer's variables. Absent/hidden
- * bindings drop their block; a `visible_when` gate that says hide — or that
- * fails to evaluate — drops it too (fail-closed, protocol 2.1); `repeat`
- * expands to at most {@link MAX_PANEL_REPEAT_INSTANCES} instances over the
- * visible variables whose id starts with the prefix.
- */
-export function resolvePanelBlocks(
-  blocks: readonly PanelTemplateBlock[] | undefined,
-  variables: readonly ModuleVariable[] | undefined,
-  locale: string | undefined,
-): UiBlock[] {
-  if (!Array.isArray(blocks)) return []
-  const visible = visibleVariables(variables ?? [])
-  const vars = new Map(visible.map((variable) => [variable.id, variable]))
-  const out: UiBlock[] = []
-  for (const block of blocks.slice(0, MAX_PANEL_BLOCKS)) {
-    if (typeof block === "object" && block !== null && "repeat" in block) {
-      // A gate on the repeat itself suppresses the WHOLE expansion; a gate on
-      // its inner template suppresses each instance (checked in resolveBlock).
-      if (!isVisible(block.visible_when, conditionResolver(vars))) continue
-      const repeat = block.repeat
-      if (typeof repeat !== "object" || repeat === null) continue
-      if (typeof repeat.prefix !== "string" || typeof repeat.block !== "object") continue
-      const matches = visible
-        .filter((variable) => variable.id.startsWith(repeat.prefix))
-        .slice(0, MAX_PANEL_REPEAT_INSTANCES)
-      for (const leaf of matches) {
-        const resolved = resolveBlock(repeat.block, vars, locale, leaf)
-        if (resolved !== OMIT) out.push(resolved)
-      }
-      continue
-    }
-    const resolved = resolveBlock(block, vars, locale, null)
-    if (resolved !== OMIT) out.push(resolved)
-  }
-  return out
-}
+/** Localized panel text for the chrome around a panel (titles, menu entries): the
+ * reference client's `pickPanelText` — this locale, else `en`, else any value. */
+export const pickText = pickPanelText

@@ -8,7 +8,8 @@
 #      must build clean through the engine's REAL parsers, with the expected
 #      detection results (world card, hooks, presentation kit) in `trust`
 #   3. the engine's own conformance suites for the pinned fixtures
-#      (studio_export + lorecard + visible_when golden vectors)
+#      (studio_export + lorecard + visible_when + panel template golden vectors),
+#      and the two vendored vector tables are byte-identical to the engine's
 # Prerequisite: the engine's optional `ejs` extra (`uv sync --extra ejs`) — the
 # fixture ships a stage-E rules-script rulepack, which compiles through QuickJS
 # at pack-build time.
@@ -114,11 +115,19 @@ print(f"    trust={json.dumps(trust, sort_keys=True)}")
 PY
 )
 
-say "4/5 engine conformance suites (fixtures + lorecard + visible_when vectors)"
+say "4/5 engine conformance suites (fixtures + lorecard + visible_when + panel template vectors)"
 (
   cd "$ENGINE_REPO"
-  uv run pytest tests/core/test_studio_export_fixture.py tests/core/test_lorecard.py tests/core/test_visible_when_vectors.py -q
+  uv run pytest tests/core/test_studio_export_fixture.py tests/core/test_lorecard.py tests/core/test_visible_when_vectors.py tests/core/test_panel_template_vectors.py -q
 )
+# The two vector tables this repo vendors must be the engine's BYTES — a refresh that was
+# forgotten is exactly the drift the tables exist to catch.
+for table in visible_when_vectors.json panel_template_vectors.json; do
+  if ! cmp -s "$ENGINE_REPO/tests/fixtures/$table" "$STUDIO_ROOT/src/features/play/panels/fixtures/$table"; then
+    echo "vendored $table differs from the engine's copy — refresh it: cp $ENGINE_REPO/tests/fixtures/$table src/features/play/panels/fixtures/" >&2
+    exit 1
+  fi
+done
 
 say "5/5 live connect: a real --serve engine through the real transport"
 if [ "${LIVE_CONNECT:-1}" = "0" ]; then

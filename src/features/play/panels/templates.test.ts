@@ -136,11 +136,14 @@ describe("resolvePanelBlocks", () => {
     ])
   })
 
-  it("caps a panel at 32 template blocks", () => {
+  it("does not cap blocks at render time — the pack build already refused a longer panel", () => {
+    // The reference client renders every block it is handed (the ≤32 cap is the pack
+    // build's and the author-time validator's, `packSource.ts`); a render-time cap here
+    // was a third opinion the shared vector table does not have a row for.
     const blocks: PanelTemplateBlock[] = Array.from({ length: 40 }, () => ({
       kind: "divider" as const,
     }))
-    expect(resolvePanelBlocks(blocks, VARS, "en")).toHaveLength(32)
+    expect(resolvePanelBlocks(blocks, VARS, "en")).toHaveLength(40)
   })
 
   it("skips unknown template kinds (additive protocol)", () => {
