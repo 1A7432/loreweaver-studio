@@ -246,6 +246,35 @@ fn drain_sse_data_lines(buffer: &mut Vec<u8>) -> Vec<String> {
     lines
 }
 
+/// Bytes kept for the non-streaming fallback. Accumulation stops the moment a
+/// real SSE `data:` line shows up (a streaming peer never needs the fallback),
+/// and the cap only guards against a peer pouring out garbage that is neither
+/// SSE nor a completion — a real completion body sits far under it. The buffer
+/// stays BYTES until the end: one lossy conversion over the whole body, so a
+/// chunk boundary that split a multi-byte character heals instead of turning
+/// into replacement characters that break the JSON parse.
+struct RawBody {
+    bytes: Vec<u8>,
+}
+
+const RAW_BODY_CAP: usize = 8 * 1024 * 1024;
+
+impl RawBody {
+    fn new() -> Self {
+        Self { bytes: Vec::new() }
+    }
+
+    fn push(&mut self, chunk: &[u8]) {
+        let room = RAW_BODY_CAP.saturating_sub(self.bytes.len());
+        self.bytes
+            .extend_from_slice(&chunk[..chunk.len().min(room)]);
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+}
+
 /// Recover the text from a peer that ignored `stream: true` and answered with
 /// one ordinary JSON completion body (either API shape).
 fn non_streaming_text(body: &str) -> Option<String> {
@@ -295,7 +324,7 @@ async fn post_sse(
     let started = tokio::time::Instant::now();
     let mut response = response;
     let mut buffer: Vec<u8> = Vec::new();
-    let mut raw_body = String::new();
+    let mut raw_body = RawBody::new();
     let mut assembled = String::new();
     let mut saw_data_line = false;
     loop {
@@ -310,8 +339,8 @@ async fn post_sse(
             .map_err(|_| format!("stream went silent for {}s", IDLE_TIMEOUT.as_secs()))?
             .map_err(|err| format!("stream failed: {err}"))?;
         let Some(bytes) = chunk else { break };
-        if raw_body.len() < MAX_ERROR_BODY_CHARS * 4 {
-            raw_body.push_str(&String::from_utf8_lossy(&bytes));
+        if !saw_data_line {
+            raw_body.push(&bytes);
         }
         buffer.extend_from_slice(&bytes);
         for data in drain_sse_data_lines(&mut buffer) {
@@ -333,11 +362,20 @@ async fn post_sse(
         return Ok(assembled);
     }
     // No streamed text at all. A gateway that ignored `stream: true` answered
-    // with one plain JSON completion — recover it rather than failing a reply
-    // that arrived whole.
+    // with one plain JSON completion — recover it, WHOLE, rather than failing a
+    // reply that arrived intact. (An early cut of this parsed a 2400-byte error
+    // snippet instead of the body: every card-sized completion overflowed it,
+    // and the fallback died exactly where it was meant to save the draft.)
     if !saw_data_line {
-        if let Some(text) = non_streaming_text(&raw_body) {
+        let body = raw_body.text();
+        if let Some(text) = non_streaming_text(&body) {
             return Ok(text);
+        }
+        if !body.trim().is_empty() {
+            return Err(format!(
+                "stream ended without any text; the body was not a completion either: {}",
+                error_snippet(&body)
+            ));
         }
     }
     Err("stream ended without any text".to_owned())
@@ -593,6 +631,38 @@ mod tests {
         let other = anthropic_stream_piece(r#"{"type":"message_start"}"#).unwrap();
         assert!(matches!(other, StreamPiece::Nothing));
         assert!(anthropic_stream_piece(r#"{"type":"error","error":{"message":"boom"}}"#).is_err());
+    }
+
+    #[test]
+    fn the_fallback_buffer_keeps_a_card_sized_body_whole() {
+        // The fallback parses the WHOLE body: an early cut kept only a
+        // 2400-byte snippet, so every card-sized completion overflowed it and
+        // the recovery failed exactly where it was meant to help. Feed a body
+        // far past that size in awkward chunks — one of them splitting a CJK
+        // character — and the parse must still see one intact document.
+        let long_card = format!("{}「夜航灯塔」{}", "x".repeat(3000), "y".repeat(3000));
+        let body = format!("{{\"choices\":[{{\"message\":{{\"content\":\"{long_card}\"}}}}]}}");
+        let bytes = body.as_bytes();
+        let mut raw = super::RawBody::new();
+        let mut at = 0;
+        for size in [7usize, 3001, 1, 2, 4096] {
+            let end = (at + size).min(bytes.len());
+            raw.push(&bytes[at..end]);
+            at = end;
+        }
+        raw.push(&bytes[at..]);
+        let recovered = non_streaming_text(&raw.text()).expect("whole body parses");
+        assert_eq!(recovered, long_card);
+    }
+
+    #[test]
+    fn the_fallback_buffer_is_capped_not_unbounded() {
+        let mut raw = super::RawBody::new();
+        let chunk = vec![b'a'; 1024 * 1024];
+        for _ in 0..10 {
+            raw.push(&chunk);
+        }
+        assert_eq!(raw.text().len(), super::RAW_BODY_CAP);
     }
 
     #[test]
