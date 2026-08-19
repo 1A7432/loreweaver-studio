@@ -32,7 +32,7 @@ Two modes, one app:
 - **Play** (default): the full table — markdown narrative log with colour-coded dice, live
   character / party / variables panels (the keeper view shows unexposed variables dimmed and
   locked), presence and AI-keeper turn status, a module's own panels — tier-1 template blocks
-  *and* tier-2 rich pages, each in a locked-down sandboxed frame with no network — and the
+  _and_ tier-2 rich pages, each in a locked-down sandboxed frame with no network — and the
   keeper screens: rooms & invites, model, module, rules, KP skills, character creation, room
   lifecycle (reset / save / undo), audio deck and media.
 - **Studio**: a local-first card forge with three benches:
