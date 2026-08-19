@@ -15,6 +15,8 @@ import { useTranslation } from "react-i18next"
 import type { LintVariable } from "../lint/model"
 import { useActivePreset } from "../ai/presetStore"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
+import { StreamPreview } from "../ai/StreamPreview"
+import { useDraftStream } from "../ai/useDraftStream"
 import { assembleSystemPrompt, toLlmSampling } from "../ai/stPreset"
 import { gatePanelsDraft, panelsSystemPrompt } from "./panelsAi"
 import {
@@ -544,6 +546,7 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
   const [mode, setMode] = useState<"visual" | "yaml">("visual")
   const [description, setDescription] = useState("")
   const [drafting, setDrafting] = useState(false)
+  const stream = useDraftStream()
   const [draftProblems, setDraftProblems] = useState<string[]>([])
   const aiSettings = useAiStore()
   const activePreset = useActivePreset()
@@ -601,6 +604,7 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
         (parsed) => gatePanelsDraft(parsed, variables),
         3,
         sampling && Object.keys(sampling).length > 0 ? sampling : undefined,
+        stream.onStream,
       )
       const drafted = result.value
       if (drafted === null) {
@@ -644,6 +648,7 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
           </button>
           {!aiReady(aiSettings) ? <span className="studio-hint">{t("studio.panels.aiUnset")}</span> : null}
         </div>
+        <StreamPreview text={stream.text} busy={drafting} />
         {draftProblems.length > 0 ? (
           <ul className="issue-list">
             {draftProblems.map((problem) => (

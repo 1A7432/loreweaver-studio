@@ -9,6 +9,8 @@ import { stringify as yamlStringify } from "yaml"
 import type { LlmMessage } from "../../../lib/native"
 import type { ForgeProject } from "../model"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
+import { StreamPreview } from "../ai/StreamPreview"
+import { useDraftStream } from "../ai/useDraftStream"
 import DraftEditor from "./DraftEditors"
 import { lintFields, lintProblems, type LintHit } from "./lint"
 import { contextDigest, guidanceSystem, stageSystem } from "./prompts"
@@ -73,6 +75,7 @@ export default function StagePanel({ session, project }: { session: WizardSessio
   const ready = aiReady(aiSettings)
 
   const [busy, setBusy] = useState(false)
+  const stream = useDraftStream()
   const [problems, setProblems] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [guidance, setGuidance] = useState<GuidanceDraft | null>(null)
@@ -102,6 +105,9 @@ export default function StagePanel({ session, project }: { session: WizardSessio
         stageSystem(stage as Exclude<StageId, "exegesis">, digest),
         history,
         stageGate(stage, ctx),
+        3,
+        undefined,
+        stream.onStream,
       )
       if (result.value !== null) {
         setDraft(session.projectUid, stage, carryManualSlots(draft, result.value))
@@ -257,6 +263,8 @@ export default function StagePanel({ session, project }: { session: WizardSessio
         ) : null}
         {!ready && meta.aiAssisted ? <span className="studio-hint">{t("studio.ai.needsSetup")}</span> : null}
       </div>
+
+      <StreamPreview text={stream.text} busy={busy} />
 
       {error !== null ? (
         <p className="studio-notice split-error" role="alert">

@@ -10,6 +10,8 @@ import type { ForgeProject } from "../model"
 import { useActivePreset, usePresetStore } from "./presetStore"
 import { CHARACTER_CARD_SYSTEM, WORLD_CARD_SYSTEM } from "./prompts"
 import { aiReady, draftWithRetries, useAiStore } from "./provider"
+import { StreamPreview } from "./StreamPreview"
+import { useDraftStream } from "./useDraftStream"
 import { deepseekProTemperatureConflict } from "./providerPresets"
 import { draftToProject } from "./schemas"
 import { assembleSystemPrompt, toLlmSampling, type MarkerSlot } from "./stPreset"
@@ -40,6 +42,7 @@ export default function AiPanel({
   const [problems, setProblems] = useState<string[]>([])
   const [attempts, setAttempts] = useState(0)
   const [busy, setBusy] = useState(false)
+  const stream = useDraftStream()
   const [error, setError] = useState<string | null>(null)
 
   const builtinSystem = mode === "world" ? WORLD_CARD_SYSTEM : CHARACTER_CARD_SYSTEM
@@ -85,6 +88,7 @@ export default function AiPanel({
         },
         3,
         sampling,
+        stream.onStream,
       )
       setAttempts(result.attempts)
       if (result.value !== null) {
@@ -212,6 +216,8 @@ export default function AiPanel({
                 : t("studio.ai.regenerate")}
           </button>
         </div>
+
+        <StreamPreview text={stream.text} busy={busy} />
 
         {error !== null ? (
           <p className="studio-notice split-error" role="alert">

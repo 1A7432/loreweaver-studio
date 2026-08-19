@@ -5,6 +5,7 @@
 // the native side reports unavailability instead of pretending.
 
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { isTauri } from "./transport"
 
@@ -235,12 +236,32 @@ export interface LlmMessage {
   content: string
 }
 
+/** Streamed text deltas from `llm_chat` ride this event: `{ requestId, text }`. */
+export const LLM_STREAM_EVENT = "loreweaver://llm-stream"
+
+/** One chat completion. The Rust side ALWAYS streams (SSE) — a buffering
+ * gateway holding a whole unbounded generation is how a card draft died as an
+ * instant 408 — and forwards text deltas as `LLM_STREAM_EVENT` events, matched
+ * back to this call by `requestId`. The promise still resolves with the full
+ * assembled text; `onDelta` is the live view, not the result. */
 export async function llmChat(
   config: LlmProviderConfig,
   system: string | null,
   messages: LlmMessage[],
+  onDelta?: (text: string) => void,
 ): Promise<string> {
-  return invoke<string>("llm_chat", { config, system, messages })
+  if (onDelta === undefined) {
+    return invoke<string>("llm_chat", { config, system, messages, requestId: null })
+  }
+  const requestId = crypto.randomUUID()
+  const unlisten = await listen<{ requestId: string; text: string }>(LLM_STREAM_EVENT, (event) => {
+    if (event.payload.requestId === requestId) onDelta(event.payload.text)
+  })
+  try {
+    return await invoke<string>("llm_chat", { config, system, messages, requestId })
+  } finally {
+    unlisten()
+  }
 }
 
 /** AI features need the native proxy + credential store. */

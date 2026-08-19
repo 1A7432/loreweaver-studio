@@ -1533,6 +1533,22 @@ body {
   border-radius: 6px;
 }
 
+/* Raw model output on its way to the validation gate — monospace tail-follow,
+   deliberately not parsed or styled as content. */
+.ai-stream-preview {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink-dim);
+}
+
 .ai-problems,
 .ai-draft-summary {
   border: 1px solid var(--border-soft);

@@ -93,24 +93,40 @@ function currentConfig(sampling?: LlmSamplingParams): LlmProviderConfig {
   }
 }
 
-/** Hard ceiling on ONE model call. The Rust side already timeouts the HTTP
- * request (180s), but a hung invoke must never leave the UI in a busy state
- * forever — this is the belt to that brace. */
+/** IDLE ceiling on ONE model call: the timer re-arms on every streamed delta,
+ * so a long generation that keeps ticking lives as long as it needs, while a
+ * hung invoke (the thing this guards against — it once left the pack wizard
+ * "working…" for 18+ minutes) still settles. The Rust side carries its own
+ * stream-shaped timeouts; this is the belt to that brace. */
 export const CHAT_CALL_TIMEOUT_MS = 240_000
 
 export async function chatOnce(
   system: string,
   messages: LlmMessage[],
   sampling?: LlmSamplingParams,
+  onDelta?: (text: string) => void,
 ): Promise<string> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let expire: () => void = () => {}
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error("LLM call timed out — check the provider endpoint and model"))
-    }, CHAT_CALL_TIMEOUT_MS)
+    expire = () => reject(new Error("LLM call timed out — check the provider endpoint and model"))
   })
+  const arm = () => {
+    clearTimeout(timer)
+    timer = setTimeout(expire, CHAT_CALL_TIMEOUT_MS)
+  }
+  arm()
   try {
-    return await Promise.race([llmChat(currentConfig(sampling), system, messages), timeout])
+    // The delta callback is always passed down — even with no listener of our
+    // own — because a ticking stream is what distinguishes "still generating"
+    // from "hung", and that distinction is exactly this timer.
+    return await Promise.race([
+      llmChat(currentConfig(sampling), system, messages, (text) => {
+        arm()
+        onDelta?.(text)
+      }),
+      timeout,
+    ])
   } finally {
     clearTimeout(timer)
   }
@@ -125,20 +141,29 @@ export interface DraftLoopResult<T> {
   attempts: number
 }
 
+/** What a live-draft view receives: `start` opens attempt N (clear the pane —
+ * a retry replaces the rejected draft, not appends to it), `delta` is text. */
+export type DraftStreamEvent = { kind: "start"; attempt: number } | { kind: "delta"; text: string }
+
 /** The draft → deterministic-validate → retry loop. `gate` is pure code; its
- * problem list is appended as a user turn so the model can self-correct. */
+ * problem list is appended as a user turn so the model can self-correct.
+ * `onStream` mirrors the generation live; the RESULT is still only what
+ * survives the gate — streaming changes what the author watches, never what
+ * lands. */
 export async function draftWithRetries<T>(
   system: string,
   history: LlmMessage[],
   gate: (parsed: unknown) => { value: T | null; problems: string[] },
   maxAttempts = 3,
   sampling?: LlmSamplingParams,
+  onStream?: (event: DraftStreamEvent) => void,
 ): Promise<DraftLoopResult<T>> {
   const messages: LlmMessage[] = [...history]
   let problems: string[] = []
   let reply = ""
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    reply = await chatOnce(system, messages, sampling)
+    onStream?.({ kind: "start", attempt })
+    reply = await chatOnce(system, messages, sampling, (text) => onStream?.({ kind: "delta", text }))
     const parsed = extractJsonBlock(reply)
     const gated =
       parsed === null

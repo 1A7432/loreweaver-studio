@@ -5,6 +5,19 @@
 //! (the configured `base_url` includes its version prefix, e.g. `…/v1`), and
 //! native Anthropic `/v1/messages`.
 //!
+//! Every call STREAMS (`stream: true` + SSE). This is not a cosmetic choice:
+//! a drafted card is one long unbounded generation, and the proxies people
+//! actually put in front of these APIs buffer a non-streaming response until
+//! their own patience runs out — one real gateway converted the upstream call
+//! to a stream, lost it mid-generation, and wrapped the loss as an instant
+//! `408 "stream disconnected before response.completed"`. Streaming end to end
+//! means nobody between here and the model ever has to hold a whole reply.
+//! Deltas are forwarded to the WebView as `loreweaver://llm-stream` events
+//! (matched by `requestId`); the command still resolves with the full text.
+//! A gateway that ignores `stream: true` and answers with one JSON body is
+//! detected and parsed as such — the stream path degrades, never fails, on
+//! a non-streaming peer.
+//!
 //! The API key arrives in the config, from the frontend's own settings. It used
 //! to come from the OS credential store; that cost a per-platform integration
 //! the app cannot finish (the `keyring` crate has nothing for Android, and its
@@ -16,8 +29,17 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+/// Streamed text deltas ride this event: `{ requestId, text }`.
+pub const LLM_STREAM_EVENT: &str = "loreweaver://llm-stream";
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// A live stream ticks at least this often (providers send keep-alive comments
+/// between tokens); silence this long means the peer is gone.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+/// Ceiling on one whole generation, ticking or not.
+const TOTAL_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_ERROR_BODY_CHARS: usize = 600;
 /// The Anthropic Messages API REQUIRES `max_tokens`, so that shape alone needs a
 /// number when the caller names none. The engine picks its own the same way
@@ -76,34 +98,6 @@ fn error_snippet(body: &str) -> String {
     snippet
 }
 
-async fn post_json(
-    url: &str,
-    headers: Vec<(&'static str, String)>,
-    body: Value,
-) -> Result<Value, String> {
-    let client = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(|err| err.to_string())?;
-    let mut request = client.post(url).json(&body);
-    for (name, value) in headers {
-        request = request.header(name, value);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|err| format!("request failed: {err}"))?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|err| format!("reading response failed: {err}"))?;
-    if !status.is_success() {
-        return Err(format!("{status}: {}", error_snippet(&text)));
-    }
-    serde_json::from_str(&text).map_err(|err| format!("non-JSON response: {err}"))
-}
-
 fn openai_payload(
     config: &LlmProviderConfig,
     system: &Option<String>,
@@ -119,6 +113,7 @@ fn openai_payload(
     let mut body = json!({
         "model": config.model,
         "messages": wire_messages,
+        "stream": true,
     });
     // No `max_tokens` unless the caller asked for one. It is optional on this
     // shape, and omitting it means the provider applies ITS OWN maximum — which
@@ -163,6 +158,7 @@ fn anthropic_payload(
         "model": config.model,
         "max_tokens": config.max_tokens.unwrap_or(ANTHROPIC_DEFAULT_MAX_TOKENS),
         "messages": wire_messages,
+        "stream": true,
     });
     if let Some(system_text) = system {
         body["system"] = json!(system_text);
@@ -181,62 +177,221 @@ fn anthropic_payload(
     body
 }
 
-fn extract_openai_text(payload: &Value) -> Result<String, String> {
-    payload["choices"][0]["message"]["content"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| "response carried no choices[0].message.content".to_owned())
+/// One parsed SSE `data:` payload, reduced to what the assembler needs.
+/// `Nothing` still proves the peer is alive — a reasoning model can think for
+/// minutes emitting only `reasoning_content` deltas before the first visible
+/// token, and that heartbeat must reach the WebView's own idle timer.
+enum StreamPiece {
+    Text(String),
+    Done,
+    Nothing,
 }
 
-fn extract_anthropic_text(payload: &Value) -> Result<String, String> {
-    let blocks = payload["content"]
-        .as_array()
-        .ok_or_else(|| "response carried no content blocks".to_owned())?;
+/// OpenAI-compatible stream chunk → piece. A `data:` line is either the
+/// `[DONE]` sentinel, an error object (some gateways report mid-stream failure
+/// as a data line, not an HTTP status), or a chunk whose delta MAY carry text
+/// (role-only and finish_reason-only chunks are normal and carry none).
+fn openai_stream_piece(data: &str) -> Result<StreamPiece, String> {
+    if data.trim() == "[DONE]" {
+        return Ok(StreamPiece::Done);
+    }
+    let value: Value =
+        serde_json::from_str(data).map_err(|err| format!("bad stream chunk: {err}"))?;
+    if let Some(error) = value.get("error") {
+        return Err(format!(
+            "provider error mid-stream: {}",
+            error_snippet(&error.to_string())
+        ));
+    }
+    match value["choices"][0]["delta"]["content"].as_str() {
+        Some(text) if !text.is_empty() => Ok(StreamPiece::Text(text.to_owned())),
+        _ => Ok(StreamPiece::Nothing),
+    }
+}
+
+/// Anthropic stream event → piece. Only `content_block_delta`'s `text_delta`
+/// carries text; `message_stop` ends the stream; an `error` event is fatal.
+fn anthropic_stream_piece(data: &str) -> Result<StreamPiece, String> {
+    let value: Value =
+        serde_json::from_str(data).map_err(|err| format!("bad stream chunk: {err}"))?;
+    match value["type"].as_str() {
+        Some("content_block_delta") => match value["delta"]["text"].as_str() {
+            Some(text) if !text.is_empty() => Ok(StreamPiece::Text(text.to_owned())),
+            _ => Ok(StreamPiece::Nothing),
+        },
+        Some("message_stop") => Ok(StreamPiece::Done),
+        Some("error") => Err(format!(
+            "provider error mid-stream: {}",
+            error_snippet(&value["error"].to_string())
+        )),
+        _ => Ok(StreamPiece::Nothing),
+    }
+}
+
+/// Drain complete lines out of the byte buffer and return SSE `data:` payloads.
+/// Splitting at `\n` is UTF-8-safe (no multi-byte sequence contains 0x0A), so a
+/// network chunk that cuts a CJK character in half heals at the line boundary.
+/// Comment lines (`:` keep-alives) and `event:` lines are dropped here — the
+/// per-provider piece parsers read the JSON, not the event name.
+fn drain_sse_data_lines(buffer: &mut Vec<u8>) -> Vec<String> {
+    let mut lines = Vec::new();
+    while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+        let raw: Vec<u8> = buffer.drain(..=newline).collect();
+        let line = String::from_utf8_lossy(&raw);
+        let line = line.trim_end_matches(['\n', '\r']);
+        if let Some(data) = line.strip_prefix("data:") {
+            lines.push(data.trim_start().to_owned());
+        }
+    }
+    lines
+}
+
+/// Recover the text from a peer that ignored `stream: true` and answered with
+/// one ordinary JSON completion body (either API shape).
+fn non_streaming_text(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    if let Some(text) = value["choices"][0]["message"]["content"].as_str() {
+        return Some(text.to_owned());
+    }
+    let blocks = value["content"].as_array()?;
     let text: String = blocks
         .iter()
         .filter(|block| block["type"] == "text")
         .filter_map(|block| block["text"].as_str())
         .collect();
-    if text.is_empty() {
-        return Err("response carried no text blocks".to_owned());
-    }
-    Ok(text)
+    (!text.is_empty()).then_some(text)
 }
 
-/// One non-streaming chat completion. Returns the assistant text.
+/// POST, then consume the SSE stream: each text delta goes to `sink`, the
+/// assembled full text is the return value. Timeouts are stream-shaped — a
+/// connect cap, an idle cap between chunks, and a total ceiling — because one
+/// fixed whole-request timeout is wrong in both directions for a generation
+/// whose length nobody here can predict.
+async fn post_sse(
+    url: &str,
+    headers: Vec<(&'static str, String)>,
+    body: Value,
+    parse: fn(&str) -> Result<StreamPiece, String>,
+    mut sink: impl FnMut(&str),
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let mut request = client.post(url).json(&body);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    let response = tokio::time::timeout(IDLE_TIMEOUT, request.send())
+        .await
+        .map_err(|_| "request timed out before the provider answered".to_owned())?
+        .map_err(|err| format!("request failed: {err}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("{status}: {}", error_snippet(&text)));
+    }
+
+    let started = tokio::time::Instant::now();
+    let mut response = response;
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut raw_body = String::new();
+    let mut assembled = String::new();
+    let mut saw_data_line = false;
+    loop {
+        if started.elapsed() > TOTAL_TIMEOUT {
+            return Err(format!(
+                "generation exceeded {}s — giving up on this stream",
+                TOTAL_TIMEOUT.as_secs()
+            ));
+        }
+        let chunk = tokio::time::timeout(IDLE_TIMEOUT, response.chunk())
+            .await
+            .map_err(|_| format!("stream went silent for {}s", IDLE_TIMEOUT.as_secs()))?
+            .map_err(|err| format!("stream failed: {err}"))?;
+        let Some(bytes) = chunk else { break };
+        if raw_body.len() < MAX_ERROR_BODY_CHARS * 4 {
+            raw_body.push_str(&String::from_utf8_lossy(&bytes));
+        }
+        buffer.extend_from_slice(&bytes);
+        for data in drain_sse_data_lines(&mut buffer) {
+            saw_data_line = true;
+            match parse(&data)? {
+                StreamPiece::Text(text) => {
+                    sink(&text);
+                    assembled.push_str(&text);
+                }
+                StreamPiece::Done => return Ok(assembled),
+                // An empty delta is a heartbeat: it re-arms the frontend's idle
+                // belt (reasoning deltas carry no text but prove liveness) and
+                // adds nothing to the draft.
+                StreamPiece::Nothing => sink(""),
+            }
+        }
+    }
+    if !assembled.is_empty() {
+        return Ok(assembled);
+    }
+    // No streamed text at all. A gateway that ignored `stream: true` answered
+    // with one plain JSON completion — recover it rather than failing a reply
+    // that arrived whole.
+    if !saw_data_line {
+        if let Some(text) = non_streaming_text(&raw_body) {
+            return Ok(text);
+        }
+    }
+    Err("stream ended without any text".to_owned())
+}
+
+/// One chat completion, streamed. Text deltas are emitted as
+/// `loreweaver://llm-stream` events carrying `{ requestId, text }`; the command
+/// resolves with the full assembled text.
 #[tauri::command]
 pub async fn llm_chat(
+    app: AppHandle,
     config: LlmProviderConfig,
     system: Option<String>,
     messages: Vec<ChatMessage>,
+    request_id: Option<String>,
 ) -> Result<String, String> {
     let key = config.api_key.trim().to_owned();
     if key.is_empty() {
         return Err("no API key configured".to_owned());
     }
     let base = trimmed_base(&config.base_url);
+    let request_id = request_id.unwrap_or_default();
+    let sink = |text: &str| {
+        if !request_id.is_empty() {
+            let _ = app.emit(
+                LLM_STREAM_EVENT,
+                json!({ "requestId": request_id, "text": text }),
+            );
+        }
+    };
 
     match config.kind.as_str() {
         "openai" => {
-            let payload = post_json(
+            post_sse(
                 &format!("{base}/chat/completions"),
                 vec![("authorization", format!("Bearer {key}"))],
                 openai_payload(&config, &system, &messages),
+                openai_stream_piece,
+                sink,
             )
-            .await?;
-            extract_openai_text(&payload)
+            .await
         }
         "anthropic" => {
-            let payload = post_json(
+            post_sse(
                 &format!("{base}/v1/messages"),
                 vec![
                     ("x-api-key", key),
                     ("anthropic-version", "2023-06-01".to_owned()),
                 ],
                 anthropic_payload(&config, &system, &messages),
+                anthropic_stream_piece,
+                sink,
             )
-            .await?;
-            extract_anthropic_text(&payload)
+            .await
         }
         other => Err(format!("unknown provider kind {other:?}")),
     }
@@ -245,8 +400,9 @@ pub async fn llm_chat(
 #[cfg(test)]
 mod tests {
     use super::{
-        anthropic_payload, extract_anthropic_text, extract_openai_text, openai_payload,
-        trimmed_base, ChatMessage, LlmProviderConfig, SamplingParams, ANTHROPIC_DEFAULT_MAX_TOKENS,
+        anthropic_payload, anthropic_stream_piece, drain_sse_data_lines, non_streaming_text,
+        openai_payload, openai_stream_piece, trimmed_base, ChatMessage, LlmProviderConfig,
+        SamplingParams, StreamPiece, ANTHROPIC_DEFAULT_MAX_TOKENS,
     };
     use serde_json::json;
 
@@ -270,6 +426,21 @@ mod tests {
             presence_penalty: Some(0.2),
             seed: Some(42),
         }
+    }
+
+    #[test]
+    fn both_payloads_ask_for_a_stream() {
+        // The whole point of this module's shape: a non-streaming POST makes a
+        // buffering gateway hold an unbounded generation, and one real proxy
+        // answered that with an instant 408. Never regress to stream-less.
+        let messages = vec![ChatMessage {
+            role: "user".to_owned(),
+            content: "hi".to_owned(),
+        }];
+        let openai = openai_payload(&config("openai", None), &None, &messages);
+        assert_eq!(openai["stream"], json!(true));
+        let anthropic = anthropic_payload(&config("anthropic", None), &None, &messages);
+        assert_eq!(anthropic["stream"], json!(true));
     }
 
     #[test]
@@ -366,20 +537,72 @@ mod tests {
     }
 
     #[test]
-    fn openai_text_extracts() {
-        let payload = json!({"choices": [{"message": {"content": "hi"}}]});
-        assert_eq!(extract_openai_text(&payload).unwrap(), "hi");
-        assert!(extract_openai_text(&json!({})).is_err());
+    fn sse_lines_survive_chunks_that_split_multibyte_text() {
+        // A network chunk may cut a CJK character in half; the line buffer heals
+        // it because 0x0A never appears inside a UTF-8 sequence.
+        let mut buffer: Vec<u8> = Vec::new();
+        let whole = "data: {\"t\":\"夜航灯塔\"}\n".as_bytes();
+        let (first, second) = whole.split_at(12); // mid-way through the CJK bytes
+        buffer.extend_from_slice(first);
+        assert!(
+            drain_sse_data_lines(&mut buffer).is_empty(),
+            "no full line yet"
+        );
+        buffer.extend_from_slice(second);
+        let lines = drain_sse_data_lines(&mut buffer);
+        assert_eq!(lines, vec!["{\"t\":\"夜航灯塔\"}".to_owned()]);
     }
 
     #[test]
-    fn anthropic_text_joins_blocks() {
-        let payload = json!({"content": [
-            {"type": "text", "text": "a"},
-            {"type": "tool_use"},
-            {"type": "text", "text": "b"}
-        ]});
-        assert_eq!(extract_anthropic_text(&payload).unwrap(), "ab");
-        assert!(extract_anthropic_text(&json!({"content": []})).is_err());
+    fn sse_lines_skip_comments_events_and_crlf() {
+        let mut buffer =
+            b": keep-alive\r\nevent: message_start\r\ndata: {\"a\":1}\r\n\r\n".to_vec();
+        let lines = drain_sse_data_lines(&mut buffer);
+        assert_eq!(lines, vec!["{\"a\":1}".to_owned()]);
+    }
+
+    #[test]
+    fn openai_pieces_extract_text_done_and_errors() {
+        let text = openai_stream_piece(r#"{"choices":[{"delta":{"content":"hi"}}]}"#).unwrap();
+        assert!(matches!(text, StreamPiece::Text(t) if t == "hi"));
+        let role_only = openai_stream_piece(r#"{"choices":[{"delta":{"role":"assistant"}}]}"#);
+        assert!(matches!(role_only.unwrap(), StreamPiece::Nothing));
+        // A reasoning model thinks in `reasoning_content` deltas long before
+        // the first visible token: not text, but a liveness heartbeat.
+        let reasoning = openai_stream_piece(
+            r#"{"choices":[{"delta":{"role":"assistant","reasoning_content":"The"}}]}"#,
+        );
+        assert!(matches!(reasoning.unwrap(), StreamPiece::Nothing));
+        assert!(matches!(
+            openai_stream_piece("[DONE]").unwrap(),
+            StreamPiece::Done
+        ));
+        let error = openai_stream_piece(r#"{"error":{"message":"boom"}}"#);
+        assert!(error.is_err(), "a data-line error is fatal, not text");
+    }
+
+    #[test]
+    fn anthropic_pieces_extract_text_stop_and_errors() {
+        let text = anthropic_stream_piece(
+            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}"#,
+        )
+        .unwrap();
+        assert!(matches!(text, StreamPiece::Text(t) if t == "hi"));
+        let stop = anthropic_stream_piece(r#"{"type":"message_stop"}"#).unwrap();
+        assert!(matches!(stop, StreamPiece::Done));
+        let other = anthropic_stream_piece(r#"{"type":"message_start"}"#).unwrap();
+        assert!(matches!(other, StreamPiece::Nothing));
+        assert!(anthropic_stream_piece(r#"{"type":"error","error":{"message":"boom"}}"#).is_err());
+    }
+
+    #[test]
+    fn a_non_streaming_peer_is_recovered_not_failed() {
+        // `stream: true` is a request, not a contract: an OpenAI-compatible
+        // gateway may answer with one ordinary completion body. Both shapes.
+        let openai = r#"{"choices":[{"message":{"content":"whole"}}]}"#;
+        assert_eq!(non_streaming_text(openai).unwrap(), "whole");
+        let anthropic = r#"{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}"#;
+        assert_eq!(non_streaming_text(anthropic).unwrap(), "ab");
+        assert!(non_streaming_text("not json").is_none());
     }
 }

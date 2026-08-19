@@ -1,20 +1,69 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 // A hung invoke is exactly what we're guarding against: llmChat never settles.
+type DeltaSink = ((text: string) => void) | undefined
+
+const llmChatMock = vi.fn<(...args: [unknown, unknown, unknown, DeltaSink]) => Promise<string>>(
+  () => new Promise<string>(() => {}),
+)
+
 vi.mock("../../../lib/native", () => ({
   aiAvailable: () => false,
-  llmChat: vi.fn(() => new Promise(() => {})),
+  llmChat: (...args: [unknown, unknown, unknown, DeltaSink]) => llmChatMock(...args),
 }))
 
 import { CHAT_CALL_TIMEOUT_MS, chatOnce, aiReady, useAiStore } from "./provider"
 
 describe("chatOnce", () => {
-  beforeEach(() => vi.useFakeTimers())
+  beforeEach(() => {
+    vi.useFakeTimers()
+    llmChatMock.mockReset()
+    llmChatMock.mockImplementation(() => new Promise<string>(() => {}))
+  })
   afterEach(() => vi.useRealTimers())
 
   it("rejects instead of leaving the UI busy forever", async () => {
     // Found live: a hung call left the pack wizard's AI-draft button
     // "working…" for 18+ minutes. Whatever the cause, the invoke must settle.
+    const call = chatOnce("sys", [{ role: "user", content: "hi" }])
+    const assertion = expect(call).rejects.toThrow(/timed out/i)
+    await vi.advanceTimersByTimeAsync(CHAT_CALL_TIMEOUT_MS + 1)
+    await assertion
+  })
+
+  it("treats a ticking stream as alive: each delta re-arms the belt", async () => {
+    // A long generation legitimately outlives any fixed whole-call ceiling —
+    // that fixed ceiling is exactly how a card draft used to die. The belt is
+    // idle-shaped now: five deltas spaced just inside the window add up to far
+    // more than one window, and the call still resolves.
+    llmChatMock.mockImplementation(
+      (_config, _system, _messages, onDelta) =>
+        new Promise<string>((resolve) => {
+          let ticks = 0
+          const interval = setInterval(() => {
+            onDelta?.("token ")
+            if (++ticks === 5) {
+              clearInterval(interval)
+              resolve("token token token token token")
+            }
+          }, CHAT_CALL_TIMEOUT_MS - 1000)
+        }),
+    )
+    const seen: string[] = []
+    const call = chatOnce("sys", [{ role: "user", content: "hi" }], undefined, (text) => seen.push(text))
+    await vi.advanceTimersByTimeAsync((CHAT_CALL_TIMEOUT_MS - 1000) * 5 + 1)
+    await expect(call).resolves.toMatch(/^token /)
+    expect(seen).toHaveLength(5)
+  })
+
+  it("a stream that goes silent after a few deltas still settles", async () => {
+    llmChatMock.mockImplementation(
+      (_config, _system, _messages, onDelta) =>
+        new Promise<string>(() => {
+          onDelta?.("only ")
+          onDelta?.("this")
+        }),
+    )
     const call = chatOnce("sys", [{ role: "user", content: "hi" }])
     const assertion = expect(call).rejects.toThrow(/timed out/i)
     await vi.advanceTimersByTimeAsync(CHAT_CALL_TIMEOUT_MS + 1)
