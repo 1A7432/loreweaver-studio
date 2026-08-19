@@ -3001,6 +3001,14 @@ body {
   width: 100%;
 }
 
+.play-form-title {
+  margin: 0;
+  font: 600 12px/1.4 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
 .play-mint-row {
   display: flex;
   gap: 10px;

@@ -182,6 +182,14 @@
       "generateOk": "{{name}} — {{detail}}",
       "generateError": "Generation failed: {{error}}"
     },
+    "pack": {
+      "title": "Install a community pack",
+      "ref": "Pack reference",
+      "refPlaceholder": "gh:owner/repo@v1.0.0, an https:// link, or a server path",
+      "install": "Install (.pack install)",
+      "hint": "The server installs it, enables it for this room, and answers in the game log — read its notice before playing.",
+      "sent": "Sent — the result lands as a system line in the game log."
+    },
     "rules": {
       "builtIn": "built-in",
       "empty": "No rule systems reported."

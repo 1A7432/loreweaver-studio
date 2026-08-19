@@ -1,12 +1,18 @@
 // Import module — the TUI KeeperModule pair of flows: install from a server
 // path (`.module <path>` over the input channel; the reply is a system line in
 // the chronicle) and describe→generate via the forge (admin_generate, answered
-// by admin_generated with the per-room install outcome in `detail`).
+// by admin_generated with the per-room install outcome in `detail`) — plus the
+// community-pack entry: installing a whole published work is the person who
+// opened the table doing it, not the author in Studio, so `.pack install <ref>`
+// goes out from HERE, as ordinary command text over the same input channel.
+// Everything the player is told about the result — what it installed, what it
+// is allowed to do — is the server's receipt; this screen invents none of it.
 
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { transportSend } from "../../../lib/transport"
 import { useAdminStore } from "../../../store/admin"
+import { useConnectionStore } from "../../../store/connection"
 import ScreenShell from "./ScreenShell"
 
 export default function ModuleScreen({ onBack }: { onBack: () => void }) {
@@ -15,9 +21,13 @@ export default function ModuleScreen({ onBack }: { onBack: () => void }) {
   const busy = useAdminStore((s) => s.busy)
   const generateModule = useAdminStore((s) => s.generateModule)
 
+  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
+
   const [path, setPath] = useState("")
   const [description, setDescription] = useState("")
   const [pathSent, setPathSent] = useState(false)
+  const [packRef, setPackRef] = useState("")
+  const [packSent, setPackSent] = useState(false)
 
   const install = () => {
     const value = path.trim()
@@ -25,6 +35,14 @@ export default function ModuleScreen({ onBack }: { onBack: () => void }) {
     void transportSend({ type: "input", text: `.module ${value}` }).catch(() => {})
     setPathSent(true)
     setPath("")
+  }
+
+  const installPack = () => {
+    const value = packRef.trim()
+    if (!value) return
+    void transportSend({ type: "input", text: `.pack install ${value}` }).catch(() => {})
+    setPackSent(true)
+    setPackRef("")
   }
 
   return (
@@ -44,6 +62,26 @@ export default function ModuleScreen({ onBack }: { onBack: () => void }) {
         </button>
         {pathSent ? <p className="studio-hint">{t("play.module.sent")}</p> : null}
       </div>
+
+      {isKeeper ? (
+        <div className="play-form">
+          <h3 className="play-form-title">{t("play.pack.title")}</h3>
+          <label className="field">
+            {t("play.pack.ref")}
+            <input
+              value={packRef}
+              onChange={(e) => setPackRef(e.target.value)}
+              placeholder={t("play.pack.refPlaceholder")}
+              spellCheck={false}
+            />
+          </label>
+          <p className="studio-hint">{t("play.pack.hint")}</p>
+          <button type="button" className="primary-button" disabled={!packRef.trim()} onClick={installPack}>
+            {t("play.pack.install")}
+          </button>
+          {packSent ? <p className="studio-hint">{t("play.pack.sent")}</p> : null}
+        </div>
+      ) : null}
 
       <div className="play-form">
         <label className="field">

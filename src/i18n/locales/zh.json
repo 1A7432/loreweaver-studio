@@ -182,6 +182,14 @@
       "generateOk": "{{name}}——{{detail}}",
       "generateError": "生成失败：{{error}}"
     },
+    "pack": {
+      "title": "安装社区包",
+      "ref": "包引用",
+      "refPlaceholder": "gh:owner/repo@v1.0.0、https:// 直链，或服务器本地路径",
+      "install": "安装（.pack install）",
+      "hint": "由服务器完成安装并在本房启用，回执出现在游戏日志里——开局前先看它的提示。",
+      "sent": "已提交——结果会以系统消息出现在游戏日志里。"
+    },
     "rules": {
       "builtIn": "内置",
       "empty": "服务器未报告任何规则系统。"
