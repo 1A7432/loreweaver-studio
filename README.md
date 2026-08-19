@@ -1,17 +1,40 @@
 # Loreweaver Studio
 
-> **Early stage.** Layout, formats, and internals change without notice.
+The desktop client for [Loreweaver](https://github.com/1A7432/loreweaver) — the self-hosted AI
+gamemaster engine — and its card-authoring studio. **This is the recommended way to play**; the
+engine's terminal client is the one-line-install alternative for anywhere with a terminal. Built
+with Tauri 2 (Rust core + TypeScript/React UI), targeting desktop (macOS / Windows / Linux) and,
+later, mobile (iOS / Android). It speaks the engine's open wire protocol (2.3) and nothing else,
+so it runs against any Loreweaver server — the one it can start for you with one click, or a
+friend's, or a VPS.
 
-A cross-platform rich client and card-authoring studio for
-[Loreweaver](https://github.com/1A7432/loreweaver) — the self-hosted AI gamemaster engine.
-Built with Tauri 2 (Rust core + TypeScript/React UI), targeting desktop
-(macOS / Windows / Linux) and mobile (iOS / Android).
+> Formats and internals still move; the protocol's major version is the compatibility contract.
+
+## Install
+
+There are no release bundles yet — the app builds from source (macOS build verified; Windows and
+Linux compile and test in CI, installers are the next step). You need Rust stable and
+[Bun](https://bun.sh):
+
+```sh
+git clone https://github.com/1A7432/loreweaver-studio && cd loreweaver-studio
+bun install
+bun tauri build          # a .app / bundle for your platform
+bun tauri dev            # or run it unbundled, with hot reload
+```
+
+Then open the app, and on the connect screen either paste the **ticket** and **invite key** your
+Keeper sent you, or click **Host locally & play**: it fetches a prebuilt engine server for your OS
+(SHA-256 verified), starts it, and signs you in as the Keeper. No Python, no environment setup.
 
 Two modes, one app:
 
-- **Play** (default): a rich client for the open Loreweaver wire protocol — markdown
-  narrative log, color-coded dice, live character/party/variables panels (keeper view
-  shows unexposed variables dimmed + locked), presence, and AI-keeper turn status.
+- **Play** (default): the full table — markdown narrative log with colour-coded dice, live
+  character / party / variables panels (the keeper view shows unexposed variables dimmed and
+  locked), presence and AI-keeper turn status, a module's own panels — tier-1 template blocks
+  *and* tier-2 rich pages, each in a locked-down sandboxed frame with no network — and the
+  keeper screens: rooms & invites, model, module, rules, KP skills, character creation, room
+  lifecycle (reset / save / undo), audio deck and media.
 - **Studio**: a local-first card forge with three benches:
   - **Forge** — typed module variables, worldbook entries, and hooks, exported as a
     native Loreweaver bundle or a SillyTavern-compatible card;
@@ -42,9 +65,15 @@ Two modes, one app:
 
 ## Status
 
+- **Play mode**: complete against protocol 2.3 — narrative / dice / state / presence / turn
+  status, tier-1 and tier-2 module panels, the keeper screens, one-click local host, audio and
+  media. The engine's `.panel` text fallback and this client's panel rendering are being pinned
+  to one shared vector table (in progress, engine side).
 - **Desktop (macOS)**: verified — release build + `.app` bundle succeed (`bun tauri build`;
   the final DMG script needs a GUI session).
 - **Windows / Linux**: CI compiles and tests the full workspace on Linux; no bundles built yet.
+  **Release bundles for all three desktops are the next milestone** — until then, install from
+  source (above).
 - **iOS**: `src-tauri/gen/apple` is generated (Tauri 2 + CocoaPods). Compiling for the
   `aarch64-apple-ios` target currently requires accepting the Xcode license
   (`sudo xcodebuild -license accept`) on this machine; signing needs a development team.
