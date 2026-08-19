@@ -4,6 +4,7 @@ import {
   buildBootstrapJs,
   buildThemeCss,
   MAX_INTENT_VALUE_CHARS,
+  MAX_PANEL_ERROR_CHARS,
   MAX_QUEUED_EVENTS,
   mintSecret,
   PanelBridge,
@@ -85,6 +86,30 @@ describe("PanelBridge", () => {
     expect(intents).toHaveLength(2)
   })
 
+  it("reports an authenticated panel crash once, capped to one line", () => {
+    const crashes: string[] = []
+    const { message } = makeBridge({ onPanelError: (line) => crashes.push(line) })
+    const crash = (data: Record<string, unknown>, source?: unknown) =>
+      message({ lw: "1", nonce: "n".repeat(32), type: "panel_error", ...data }, source)
+
+    crash({ message: "TypeError: map is not a function" })
+    expect(crashes).toEqual(["TypeError: map is not a function"])
+
+    crash({ message: "x".repeat(MAX_PANEL_ERROR_CHARS + 50) })
+    expect(crashes[1]).toHaveLength(MAX_PANEL_ERROR_CHARS)
+
+    crash({ message: 42 })
+    expect(crashes[2]).toBe("")
+  })
+
+  it("drops a forged crash from a foreign source or a wrong nonce", () => {
+    const crashes: string[] = []
+    const { message } = makeBridge({ onPanelError: (line) => crashes.push(line) })
+    message({ lw: "1", nonce: "n".repeat(32), type: "panel_error", message: "boom" }, { tag: "evil" })
+    message({ lw: "1", nonce: "x".repeat(32), type: "panel_error", message: "boom" })
+    expect(crashes).toEqual([])
+  })
+
   it("pushes state only after ready, and queues events (bounded) before ready", () => {
     const { bridge, posts, message } = makeBridge()
     bridge.pushState({ variables: [], party: [], initiative: [], online: 1 })
@@ -149,5 +174,14 @@ describe("host-injected assets", () => {
     expect(js).toContain('version: "1"')
     // The bootstrap authenticates its host exactly like the host authenticates it.
     expect(js).toContain("event.source !== window.parent")
+  })
+
+  it("wires the panel's uncaught errors and rejections to one crash report", () => {
+    const js = buildBootstrapJs("abc123", "pack/panel", "tauri://localhost")
+    expect(js).toContain('window.addEventListener("error"')
+    expect(js).toContain('window.addEventListener("unhandledrejection"')
+    expect(js).toContain('type: "panel_error"')
+    // Reported once — a broken render loop must not flood the host.
+    expect(js).toContain("if (crashed) return;")
   })
 })

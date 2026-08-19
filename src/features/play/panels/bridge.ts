@@ -29,6 +29,8 @@ export const BRIDGE_VERSION = "1"
 export const MAX_INTENT_VALUE_CHARS = 2000
 /** Events queued for a panel that has not completed `ready()` yet. */
 export const MAX_QUEUED_EVENTS = 32
+/** A panel's crash report is one line; anything longer is truncated here. */
+export const MAX_PANEL_ERROR_CHARS = 200
 
 const INTENT_KINDS: readonly PanelIntentKind[] = ["choice", "input", "roll"]
 
@@ -78,6 +80,7 @@ interface BridgeEnvelope {
   type: string
   kind?: unknown
   value?: unknown
+  message?: unknown
 }
 
 function parseEnvelope(data: unknown): BridgeEnvelope | null {
@@ -102,6 +105,12 @@ export interface PanelBridgeOptions {
    * its document loaded AND its script ran. The host uses it to tell a live
    * panel from a blank box (a sandbox/asset failure the iframe swallows). */
   onReady?: () => void
+  /** The panel's own bootstrap caught the first uncaught error or rejection
+   * inside the iframe. It arrives long before the handshake deadline, so a
+   * panel that dies on load stops being a blank box the player stares at.
+   * Authenticated exactly like every other inbound message — version, nonce
+   * and the mounted iframe's window — so nothing else can forge a crash. */
+  onPanelError?: (message: string) => void
 }
 
 export class PanelBridge {
@@ -144,6 +153,11 @@ export class PanelBridge {
       for (const payload of this.queuedEvents.splice(0)) {
         this.post({ type: "event", payload })
       }
+      return
+    }
+    if (envelope.type === "panel_error") {
+      const message = typeof envelope.message === "string" ? envelope.message : ""
+      this.opts.onPanelError?.(message.slice(0, MAX_PANEL_ERROR_CHARS))
       return
     }
     if (envelope.type === "intent") {
@@ -248,6 +262,26 @@ export function buildBootstrapJs(nonce: string, panelId: string, parentOrigin: s
     message.nonce = NONCE;
     window.parent.postMessage(message, PARENT || "*");
   }
+
+  // A panel that throws before ready() would otherwise be a silent blank box
+  // until the host's handshake deadline. Report the FIRST failure only — a
+  // broken render loop must not turn into a postMessage flood — as one line.
+  var crashed = false;
+  function reportCrash(text) {
+    if (crashed) return;
+    crashed = true;
+    try {
+      post({ type: "panel_error", message: String(text).replace(/\\s+/g, " ").slice(0, ${MAX_PANEL_ERROR_CHARS}) });
+    } catch (err) { /* the host is gone; nothing left to tell */ }
+  }
+  window.addEventListener("error", function (event) {
+    var detail = (event && event.message) || (event && event.error && event.error.message);
+    reportCrash(detail || "uncaught error");
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    var reason = event && event.reason;
+    reportCrash((reason && reason.message) || reason || "unhandled rejection");
+  });
 
   window.addEventListener("message", function (event) {
     var data = event.data;

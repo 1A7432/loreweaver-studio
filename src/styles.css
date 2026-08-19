@@ -2244,6 +2244,17 @@ body {
   margin: 0;
 }
 
+/* The panel's own crash line, quieter than the verdict it explains. */
+.panel-frame-crash {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+}
+
 .panel-fallback-null {
   font: italic 12px/1.5 var(--font-ui);
   color: var(--ink-faint);

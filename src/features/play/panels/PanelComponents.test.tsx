@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { StateFrame, UiManifestPanel, WelcomeFrame } from "@loreweaver/protocol"
@@ -192,6 +192,52 @@ describe("Tier2Frame", () => {
     expect(registration.assets).toEqual([{ path: "app.js", hash: "a".repeat(64), mime: "text/javascript" }])
     expect(registration.bootstrapJs).toContain("window.loreweaver")
     expect(registration.themeCss).toContain(":root {")
+  })
+
+  it("shows the fallback the moment the panel reports a crash, with its own line", async () => {
+    const { container } = render(<Tier2Frame panel={MANOR_MAP} />)
+    const iframe = await waitFor(() => {
+      const el = container.querySelector("iframe")
+      if (!el) throw new Error("iframe not mounted yet")
+      return el
+    })
+    // The mount's nonce is only ever handed to the panel — read it back out of
+    // the bootstrap the host registered, exactly as the iframe would.
+    const registration = vi.mocked(panelServeRegister).mock.calls.at(-1)![0]
+    const nonce = /var NONCE = "([0-9a-f]{32})"/.exec(registration.bootstrapJs)![1]
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { lw: "1", nonce, type: "panel_error", message: "TypeError: x is not a function" },
+          source: iframe.contentWindow,
+        }),
+      )
+    })
+
+    // No waiting out the 6s handshake deadline: stalled, now.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The panel reported: TypeError: x is not a function",
+    )
+    expect(screen.getByText("Map available in the rich client.")).toBeInTheDocument()
+  })
+
+  it("ignores a crash forged with the wrong nonce", async () => {
+    const { container } = render(<Tier2Frame panel={MANOR_MAP} />)
+    await waitFor(() => {
+      const el = container.querySelector("iframe")
+      if (!el) throw new Error("iframe not mounted yet")
+      return el
+    })
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { lw: "1", nonce: "0".repeat(32), type: "panel_error", message: "boom" },
+          source: container.querySelector("iframe")!.contentWindow,
+        }),
+      )
+    })
+    expect(screen.queryByRole("alert")).toBeNull()
   })
 
   it("falls back with a retry line when assets fail", async () => {

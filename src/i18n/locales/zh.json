@@ -96,6 +96,7 @@
     "richOnly": "此面板请在富客户端查看。",
     "loading": "面板加载中…",
     "stalled": "该面板没有启动（代码可能被拦截），下面显示它的降级内容。",
+    "crashDetail": "面板报错：{{message}}",
     "assetError": "面板资源加载失败。",
     "imageLoading": "图片加载中…",
     "imageUnavailable": "图片不可用",

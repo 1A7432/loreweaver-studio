@@ -17,7 +17,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import type { UiManifestPanel } from "@loreweaver/protocol"
+import { stripControlChars, type UiManifestPanel } from "@loreweaver/protocol"
 import { transportSend } from "../../../lib/transport"
 import { useSessionStore } from "../../../store/session"
 import { subscribePanelEvents } from "../../../store/panels"
@@ -49,6 +49,7 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
   const [phase, setPhase] = useState<Phase>("loading")
   const [src, setSrc] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [crash, setCrash] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -61,6 +62,21 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
         if (cancelled) return
         clearTimeout(handshakeTimer)
         setPhase("live")
+      },
+      // A crash before the handshake IS the stalled verdict, arriving early:
+      // stop waiting out the deadline and show the fallback now, with the
+      // panel's own line so the keeper can tell a broken pack from a blocked
+      // one. After ready the panel owns its own recovery — an error in one
+      // render must not yank a working panel out from under the player.
+      onPanelError: (message) => {
+        if (cancelled) return
+        if (bridge.isReady()) {
+          console.warn(`panel ${panel.id}: ${message}`)
+          return
+        }
+        clearTimeout(handshakeTimer)
+        setCrash(message)
+        setPhase("stalled")
       },
       panelId: panel.id,
       nonce,
@@ -83,6 +99,7 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
 
     setPhase("loading")
     setSrc(null)
+    setCrash(null)
     void (async () => {
       try {
         await ensurePanelAssets(panel)
@@ -140,6 +157,11 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
       {phase === "stalled" ? (
         <p className="panel-frame-error-line" role="alert">
           {t("panels.stalled")}
+          {crash ? (
+            <span className="panel-frame-crash">
+              {t("panels.crashDetail", { message: stripControlChars(crash) })}
+            </span>
+          ) : null}
           <button type="button" className="ghost-button" onClick={() => setAttempt((n) => n + 1)}>
             {t("panels.retry")}
           </button>

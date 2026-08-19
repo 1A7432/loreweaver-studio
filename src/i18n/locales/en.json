@@ -96,6 +96,7 @@
     "richOnly": "This panel is available in the rich client.",
     "loading": "Loading panel…",
     "stalled": "This panel never started (its code may be blocked). Showing its fallback.",
+    "crashDetail": "The panel reported: {{message}}",
     "assetError": "Panel assets failed to load.",
     "imageLoading": "Loading image…",
     "imageUnavailable": "image unavailable",
