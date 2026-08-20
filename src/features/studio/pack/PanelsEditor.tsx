@@ -675,6 +675,11 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
         </button>
       </div>
 
+      {/* Field editing round-trips the file through parse + stringify, so the
+          first edit it commits REPRINTS the whole document: comments, blank
+          lines and quoting style are gone. Say so where the choice is made. */}
+      <p className="studio-hint">{t("studio.panels.rewriteNotice")}</p>
+
       {mode === "yaml" ? (
         <label className="field">
           {t("studio.pack.panels.yaml")}

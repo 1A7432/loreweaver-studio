@@ -50,6 +50,14 @@ describe("PanelsEditor", () => {
     expect((screen.getByLabelText("Value") as HTMLSelectElement).value).toBe("tide")
   })
 
+  // "Keeps the author's file as written" is true of the four things it models —
+  // NOT of comments, blank lines or quoting style, which the parse+stringify
+  // round-trip drops on the first committed edit. The editor says so up front.
+  it("warns that field editing reprints the file", () => {
+    open()
+    expect(screen.getByText(/reprints the whole file/)).toBeInTheDocument()
+  })
+
   it("writes the file back as YAML the schema accepts", async () => {
     const onChange = open()
     await userEvent.clear(screen.getByLabelText("Max"))

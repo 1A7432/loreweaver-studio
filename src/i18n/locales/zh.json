@@ -1373,6 +1373,7 @@
       "mode": "编辑方式",
       "modeVisual": "表单",
       "modeYaml": "YAML",
+      "rewriteNotice": "用字段编辑会重排整份文件——注释、空行和引号写法都不会保留。想按原样改，用 YAML 标签页。",
       "unparseable": "这份面板文件解析不了，表单编辑已关闭：{{error}}",
       "opaque": "有 {{count}} 块面板自带 HTML，已原样保留——那些请到 YAML 页改。",
       "opaquePanel": "面板「{{id}}」自带 HTML，已原样保留——请到 YAML 页改。",

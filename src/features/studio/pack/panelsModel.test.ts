@@ -225,11 +225,16 @@ describe("reading a panels file", () => {
       { key: "unknownKeys", params: { at: "hud #1", keys: "tooltip" } },
     ])
 
-    const written = parseYaml(serializePanelsYaml(document)) as {
+    const text = serializePanelsYaml(document)
+    const written = parseYaml(text) as {
       panels: { icon?: unknown; blocks: { tooltip?: unknown }[] }[]
     }
     expect(written.panels[0].icon).toBe("lantern")
     expect(written.panels[0].blocks[0].tooltip).toBe("hi")
+    // …and they stay BEHIND the keys the editor models, rather than jumping to
+    // the front of every mapping they appear in.
+    expect(Object.keys(written.panels[0])).toEqual(["id", "title", "slot", "blocks", "icon"])
+    expect(Object.keys(written.panels[0].blocks[0])).toEqual(["kind", "label", "value", "tooltip"])
   })
 
   it("keeps a quoted YAML string a string — the serializer does not guess", () => {

@@ -68,7 +68,8 @@ Two modes, one app:
 - **Play mode**: complete against protocol 2.3 — narrative / dice / state / presence / turn
   status, tier-1 and tier-2 module panels, the keeper screens, one-click local host, audio and
   media. Tier-1 panel instantiation is the reference client's resolver, ported rule for
-  rule and pinned by the shared vector table (`fixtures/panel_template_vectors.json`) that
+  rule and pinned by the shared vector table
+  (`src/features/play/panels/fixtures/panel_template_vectors.json`) that
   the engine and the reference client run too.
 - **Desktop (macOS)**: verified — release build + `.app` bundle succeed (`bun tauri build`;
   the final DMG script needs a GUI session).

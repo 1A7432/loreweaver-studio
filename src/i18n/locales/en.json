@@ -1373,6 +1373,7 @@
       "mode": "Editor mode",
       "modeVisual": "Fields",
       "modeYaml": "YAML",
+      "rewriteNotice": "Editing fields reprints the whole file — comments, blank lines and quoting style are not kept. Use the YAML tab to edit it as written.",
       "unparseable": "This panels file cannot be parsed, so the field editor is off: {{error}}",
       "opaque": "{{count}} panel(s) ship their own HTML and are kept exactly as written — edit those in the YAML tab.",
       "opaquePanel": "Panel “{{id}}” ships its own HTML and is kept exactly as written — edit it in the YAML tab.",

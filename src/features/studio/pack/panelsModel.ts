@@ -546,9 +546,20 @@ function fieldBlank(value: FieldValue): boolean {
   return typeof value.value === "string" && !value.value.trim()
 }
 
+/**
+ * Keys this table does not model are written back AFTER the ones it does, in
+ * the author's own order. Spreading them first put them ahead of `kind` and
+ * `id` — an author's `icon:` jumping to the top of every mapping it appears
+ * in — which is the kind of churn the round-trip is supposed to avoid.
+ * `leftovers` never collects a known key, so nothing here can be shadowed.
+ */
+function writeRest(out: Record<string, unknown>, rest: Record<string, unknown> | undefined): void {
+  if (rest) Object.assign(out, rest)
+}
+
 function writeBlock(block: BlockDraft): unknown {
   if (block.raw !== undefined) return block.raw
-  const out: Record<string, unknown> = { ...(block.rest ?? {}), kind: block.kind }
+  const out: Record<string, unknown> = { kind: block.kind }
   for (const spec of fieldsFor(block.kind) ?? []) {
     const value = block.fields[spec.name]
     if (value === undefined) continue
@@ -558,6 +569,7 @@ function writeBlock(block: BlockDraft): unknown {
     else out[spec.name] = writeScalar(value as Scalar)
   }
   if (block.visibleWhen.trim()) out.visible_when = block.visibleWhen.trim()
+  writeRest(out, block.rest)
   if (block.repeatPrefix.trim()) {
     const wrapper: Record<string, unknown> = {
       repeat: { prefix: block.repeatPrefix.trim(), block: out },
@@ -570,13 +582,13 @@ function writeBlock(block: BlockDraft): unknown {
 
 function writePanel(panel: PanelDraft): Record<string, unknown> {
   const out: Record<string, unknown> = {
-    ...(panel.rest ?? {}),
     id: panel.id,
     title: writeLocalized(panel.title),
     slot: panel.slot,
   }
   if (panel.audience !== "all") out.audience = panel.audience
   out.blocks = panel.blocks.map(writeBlock)
+  writeRest(out, panel.rest)
   return out
 }
 
