@@ -317,7 +317,13 @@ async fn post_sse(
         .map_err(|err| format!("request failed: {err}"))?;
     let status = response.status();
     if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
+        // The error body gets the same idle cap as the stream. A 5xx whose body
+        // never arrives is exactly the shape that used to hang the whole call
+        // forever, now that there is no client-level whole-request timeout.
+        let text = tokio::time::timeout(IDLE_TIMEOUT, response.text())
+            .await
+            .map_err(|_| format!("{status}: the error body never arrived"))?
+            .unwrap_or_default();
         return Err(format!("{status}: {}", error_snippet(&text)));
     }
 
@@ -328,19 +334,41 @@ async fn post_sse(
     let mut assembled = String::new();
     let mut saw_data_line = false;
     loop {
-        if started.elapsed() > TOTAL_TIMEOUT {
+        // The total ceiling is what is LEFT of it, not a check between chunks:
+        // waiting a whole idle window after the ceiling had already passed made
+        // the real cap `TOTAL_TIMEOUT + IDLE_TIMEOUT`.
+        let Some(remaining) = TOTAL_TIMEOUT.checked_sub(started.elapsed()) else {
             return Err(format!(
                 "generation exceeded {}s — giving up on this stream",
                 TOTAL_TIMEOUT.as_secs()
             ));
-        }
-        let chunk = tokio::time::timeout(IDLE_TIMEOUT, response.chunk())
+        };
+        let chunk = tokio::time::timeout(IDLE_TIMEOUT.min(remaining), response.chunk())
             .await
-            .map_err(|_| format!("stream went silent for {}s", IDLE_TIMEOUT.as_secs()))?
+            .map_err(|_| {
+                if remaining <= IDLE_TIMEOUT {
+                    format!(
+                        "generation exceeded {}s — giving up on this stream",
+                        TOTAL_TIMEOUT.as_secs()
+                    )
+                } else {
+                    format!("stream went silent for {}s", IDLE_TIMEOUT.as_secs())
+                }
+            })?
             .map_err(|err| format!("stream failed: {err}"))?;
         let Some(bytes) = chunk else { break };
         if !saw_data_line {
             raw_body.push(&bytes);
+        }
+        // The SSE line buffer carries the same 8 MB ceiling the fallback body
+        // does: a peer that never emits a newline must not be able to grow it
+        // without bound, and a silent truncation would hand the parser half a
+        // frame, so this fails out loud instead.
+        if buffer.len() + bytes.len() > RAW_BODY_CAP {
+            return Err(format!(
+                "stream sent more than {} MB without a line break",
+                RAW_BODY_CAP / (1024 * 1024)
+            ));
         }
         buffer.extend_from_slice(&bytes);
         for data in drain_sse_data_lines(&mut buffer) {
