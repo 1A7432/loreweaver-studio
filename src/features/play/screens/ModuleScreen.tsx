@@ -15,6 +15,9 @@ import { useAdminStore } from "../../../store/admin"
 import { useConnectionStore } from "../../../store/connection"
 import ScreenShell from "./ScreenShell"
 
+/** Nothing typed yet / the line reached the transport / it never left. */
+type SendStatus = "idle" | "sent" | "failed"
+
 export default function ModuleScreen({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation()
   const generated = useAdminStore((s) => s.generated)
@@ -25,24 +28,35 @@ export default function ModuleScreen({ onBack }: { onBack: () => void }) {
 
   const [path, setPath] = useState("")
   const [description, setDescription] = useState("")
-  const [pathSent, setPathSent] = useState(false)
   const [packRef, setPackRef] = useState("")
-  const [packSent, setPackSent] = useState(false)
+  // A send that never left the app must not say "submitted": the reply this
+  // screen promises comes from the server, and there is no server in that case.
+  // A failed send keeps what was typed, so the retry is one click.
+  const [pathStatus, setPathStatus] = useState<SendStatus>("idle")
+  const [packStatus, setPackStatus] = useState<SendStatus>("idle")
+
+  const send = async (line: string, mark: (status: SendStatus) => void, clear: () => void): Promise<void> => {
+    mark("idle")
+    try {
+      await transportSend({ type: "input", text: line })
+    } catch {
+      mark("failed")
+      return
+    }
+    mark("sent")
+    clear()
+  }
 
   const install = () => {
     const value = path.trim()
     if (!value) return
-    void transportSend({ type: "input", text: `.module ${value}` }).catch(() => {})
-    setPathSent(true)
-    setPath("")
+    void send(`.module ${value}`, setPathStatus, () => setPath(""))
   }
 
   const installPack = () => {
     const value = packRef.trim()
     if (!value) return
-    void transportSend({ type: "input", text: `.pack install ${value}` }).catch(() => {})
-    setPackSent(true)
-    setPackRef("")
+    void send(`.pack install ${value}`, setPackStatus, () => setPackRef(""))
   }
 
   return (
@@ -60,7 +74,12 @@ export default function ModuleScreen({ onBack }: { onBack: () => void }) {
         <button type="button" className="primary-button" disabled={!path.trim()} onClick={install}>
           {t("play.module.install")}
         </button>
-        {pathSent ? <p className="studio-hint">{t("play.module.sent")}</p> : null}
+        {pathStatus === "sent" ? <p className="studio-hint">{t("play.module.sent")}</p> : null}
+        {pathStatus === "failed" ? (
+          <p className="connect-error" role="status">
+            {t("play.sendFailed")}
+          </p>
+        ) : null}
       </div>
 
       {isKeeper ? (
@@ -79,7 +98,12 @@ export default function ModuleScreen({ onBack }: { onBack: () => void }) {
           <button type="button" className="primary-button" disabled={!packRef.trim()} onClick={installPack}>
             {t("play.pack.install")}
           </button>
-          {packSent ? <p className="studio-hint">{t("play.pack.sent")}</p> : null}
+          {packStatus === "sent" ? <p className="studio-hint">{t("play.pack.sent")}</p> : null}
+          {packStatus === "failed" ? (
+            <p className="connect-error" role="status">
+              {t("play.sendFailed")}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

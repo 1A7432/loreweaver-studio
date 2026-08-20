@@ -128,6 +128,7 @@
   "play": {
     "back": "← Menu",
     "busy": "Working…",
+    "sendFailed": "Nothing was sent — the app could not reach the room. Check the connection and try again.",
     "menuButton": "Menu",
     "menu": {
       "label": "Main menu",
