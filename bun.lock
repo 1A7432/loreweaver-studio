@@ -5,7 +5,7 @@
     "": {
       "name": "loreweaver-studio",
       "dependencies": {
-        "@loreweaver/protocol": "npm:loreweaver-protocol@2.3.0",
+        "@loreweaver/protocol": "npm:loreweaver-protocol@2.3.1",
         "@tauri-apps/api": "^2.11.1",
         "@tauri-apps/plugin-dialog": "^2.7.2",
         "i18next": "^26.3.6",
@@ -139,7 +139,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "https://registry.npmmirror.com/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@loreweaver/protocol": ["loreweaver-protocol@2.3.0", "", {}, "sha512-arQMxPqjxjGmEN2ELmdqlUFgsla6r9D3hkIT4wi8aUkoNk6ki+Ac3W1RlDEkL3N7QWKsgDjAlXXGzXDYjN/8Pg=="],
+    "@loreweaver/protocol": ["loreweaver-protocol@2.3.1", "https://registry.npmmirror.com/loreweaver-protocol/-/loreweaver-protocol-2.3.1.tgz", {}, "sha512-G64mlgoMsdgewSFs8yCFSRtkHxF/FBHzAZbRmMYpRoeUUBM7aTukCD4cAf0ddpegTUa08h60o9aQRh3NFdBDUA=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.2.0", "https://registry.npmmirror.com/@napi-rs/wasm-runtime/-/wasm-runtime-1.2.0.tgz", { "dependencies": { "@tybys/wasm-util": "^0.10.3" }, "peerDependencies": { "@emnapi/core": "^2.0.0-alpha.3", "@emnapi/runtime": "^2.0.0-alpha.3" } }, "sha512-kDoONqMa+VnZ4vvvu/ZUurpJ4gkZU57e7g69qpNgWhYcZFPUHZM2CEMKm+cG6ufDVALbjMvfmMjFVqaK7uEMnA=="],
 

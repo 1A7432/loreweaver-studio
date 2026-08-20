@@ -9,6 +9,7 @@ import type {
   ServerFrame,
   StateFrame,
   SystemFrame,
+  TurnActivity,
   UiFrame,
 } from "@loreweaver/protocol"
 import { transportSend } from "../lib/transport"
@@ -60,13 +61,13 @@ export interface UiPanelRegion {
 }
 
 /**
- * What the keeper is doing right now, as protocol 2.3.1 lets a busy
- * `turn_status` frame say. The pinned `loreweaver-protocol` is still 2.3.0, so
- * the two hints are read off the frame defensively below rather than typed by
- * the package — converge on the package's own type once 2.3.1 is published.
+ * The activity words this client has a label for — the protocol's own closed
+ * set, typed against it, so a word a later protocol adds fails the BUILD here
+ * rather than showing a raw translation key at the table. The set stays a
+ * runtime check as well: the frame validator does not police these two hints,
+ * and a newer server is exactly who would send an unfamiliar one.
  */
-export const TURN_ACTIVITIES = ["reading", "dice", "cast", "bookkeeping"] as const
-export type TurnActivity = (typeof TURN_ACTIVITIES)[number]
+const TURN_ACTIVITIES: readonly TurnActivity[] = ["reading", "dice", "cast", "bookkeeping"]
 
 export interface TurnState {
   busy: boolean
@@ -79,18 +80,14 @@ export interface TurnState {
   round: number | null
 }
 
-/** Read the 2.3.1 activity hint, ignoring anything not in the closed set. */
-function readActivity(frame: object): TurnActivity | null {
-  const raw = (frame as { activity?: unknown }).activity
-  return typeof raw === "string" && (TURN_ACTIVITIES as readonly string[]).includes(raw)
-    ? (raw as TurnActivity)
-    : null
+/** The 2.3.1 activity hint, ignoring anything outside the set we can label. */
+function readActivity(activity: TurnActivity | undefined): TurnActivity | null {
+  return activity !== undefined && TURN_ACTIVITIES.includes(activity) ? activity : null
 }
 
-/** Read the 2.3.1 round hint; a non-integer or sub-1 value is no hint at all. */
-function readRound(frame: object): number | null {
-  const raw = (frame as { round?: unknown }).round
-  return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 ? raw : null
+/** The 2.3.1 round hint; a non-integer or sub-1 value is no hint at all. */
+function readRound(round: number | undefined): number | null {
+  return round !== undefined && Number.isInteger(round) && round >= 1 ? round : null
 }
 
 interface SessionState {
@@ -308,8 +305,8 @@ export const useSessionStore = create<SessionState>((set) => ({
                   busy: true,
                   actor: frame.actor,
                   since: now,
-                  activity: readActivity(frame),
-                  round: readRound(frame),
+                  activity: readActivity(frame.activity),
+                  round: readRound(frame.round),
                 },
               }
             : { turn: IDLE_TURN },
