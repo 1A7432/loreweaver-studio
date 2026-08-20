@@ -69,6 +69,44 @@ describe("chatOnce", () => {
     await vi.advanceTimersByTimeAsync(CHAT_CALL_TIMEOUT_MS + 1)
     await assertion
   })
+
+  it("ignores the deltas of a call that already gave up", async () => {
+    // The timeout settles the promise; it cannot cancel the invoke behind it,
+    // and the native bridge keeps its stream listener until Rust returns. So a
+    // call abandoned at the belt can still be emitting text while the author is
+    // watching the NEXT draft — the preview would interleave two generations.
+    let strayDelta: ((text: string) => void) | undefined
+    llmChatMock.mockImplementationOnce(
+      (_config, _system, _messages, onDelta) =>
+        new Promise<string>(() => {
+          strayDelta = onDelta
+        }),
+    )
+    const abandoned: string[] = []
+    const first = chatOnce("sys", [{ role: "user", content: "hi" }], undefined, (text) =>
+      abandoned.push(text),
+    )
+    const assertion = expect(first).rejects.toThrow(/timed out/i)
+    await vi.advanceTimersByTimeAsync(CHAT_CALL_TIMEOUT_MS + 1)
+    await assertion
+
+    const fresh: string[] = []
+    llmChatMock.mockImplementationOnce(
+      (_config, _system, _messages, onDelta) =>
+        new Promise<string>((resolve) => {
+          onDelta?.("the new draft")
+          resolve("the new draft")
+        }),
+    )
+    const second = chatOnce("sys", [{ role: "user", content: "again" }], undefined, (text) =>
+      fresh.push(text),
+    )
+    await expect(second).resolves.toBe("the new draft")
+
+    strayDelta?.("late text from the dead call")
+    expect(abandoned).toEqual([])
+    expect(fresh).toEqual(["the new draft"])
+  })
 })
 
 describe("the API key", () => {

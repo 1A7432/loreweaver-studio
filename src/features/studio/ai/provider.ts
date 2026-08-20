@@ -100,12 +100,21 @@ function currentConfig(sampling?: LlmSamplingParams): LlmProviderConfig {
  * stream-shaped timeouts; this is the belt to that brace. */
 export const CHAT_CALL_TIMEOUT_MS = 240_000
 
+/** Every `chatOnce` takes the next number; only the newest call's deltas are
+ * forwarded. The timeout below settles THIS promise but cannot cancel the
+ * invoke behind it — the native bridge keeps its listener until the Rust side
+ * returns — so without this, a call abandoned at 240s could still be pushing
+ * text into the preview of the draft that replaced it. */
+let latestCall = 0
+
 export async function chatOnce(
   system: string,
   messages: LlmMessage[],
   sampling?: LlmSamplingParams,
   onDelta?: (text: string) => void,
 ): Promise<string> {
+  const call = (latestCall += 1)
+  let settled = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let expire: () => void = () => {}
   const timeout = new Promise<never>((_, reject) => {
@@ -122,12 +131,14 @@ export async function chatOnce(
     // from "hung", and that distinction is exactly this timer.
     return await Promise.race([
       llmChat(currentConfig(sampling), system, messages, (text) => {
+        if (settled || call !== latestCall) return
         arm()
         onDelta?.(text)
       }),
       timeout,
     ])
   } finally {
+    settled = true
     clearTimeout(timer)
   }
 }

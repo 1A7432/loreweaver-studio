@@ -280,10 +280,6 @@ export function visibleVariables(variables: readonly ModuleVariable[]): ModuleVa
   return variables.filter((variable) => variable.hidden !== true)
 }
 
-export function isZhLocale(locale: string | undefined): boolean {
-  return (locale ?? "").toLowerCase().startsWith("zh")
-}
-
 /** Localized panel text for the chrome around a panel (titles, menu entries): the
  * reference client's `pickPanelText` — this locale, else `en`, else any value. */
 export const pickText = pickPanelText

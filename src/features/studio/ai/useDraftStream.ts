@@ -10,13 +10,11 @@ import type { DraftStreamEvent } from "./provider"
 export function useDraftStream(): {
   text: string
   onStream: (event: DraftStreamEvent) => void
-  reset: () => void
 } {
   const [text, setText] = useState("")
   const onStream = useCallback((event: DraftStreamEvent) => {
     if (event.kind === "start") setText("")
     else setText((previous) => previous + event.text)
   }, [])
-  const reset = useCallback(() => setText(""), [])
-  return { text, onStream, reset }
+  return { text, onStream }
 }
