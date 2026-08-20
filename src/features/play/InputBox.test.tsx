@@ -48,7 +48,7 @@ describe("InputBox", () => {
     expect(entries).toHaveLength(1)
     expect(entries[0]).toMatchObject({
       kind: "pending",
-      pending: { speaker: "Nyx", text: "I check the ledger.", command: false },
+      pending: { speaker: "Nyx", text: "I check the ledger." },
     })
   })
 
@@ -62,7 +62,7 @@ describe("InputBox", () => {
       if (!(entry.kind === "pending" && entry.pending.failed)) throw new Error("not failed yet")
     })
     const entry = useSessionStore.getState().entries[0]
-    expect(entry).toMatchObject({ kind: "pending", pending: { command: true, failed: true } })
+    expect(entry).toMatchObject({ kind: "pending", pending: { text: ".ra spot hidden", failed: true } })
   })
 
   it("does not send blank input", async () => {

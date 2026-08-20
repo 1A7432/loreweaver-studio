@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { FrameType } from "@loreweaver/protocol"
 import type {
   DiceFrame,
+  ErrorFrame,
   NarrativeDeltaFrame,
   NarrativeFrame,
   PackCardEntry,
@@ -33,14 +34,17 @@ export const PENDING_ECHO_TIMEOUT_MS = 120_000
  * strictly a VIEW of what we sent: it never enters the chronicle the server
  * owns, and it is removed the moment the real line arrives, so the player is
  * never shown the same words twice.
+ *
+ * A dot/slash command is no different. The server echoes one back too — for a
+ * matched command to the sender alone (`gateway/turn.py`: `origin.deliver` of
+ * the same `player_action`), for anything else to the whole room — so ONE rule
+ * retires every held line: the server's own `narrative{speaker:"player"}`.
  */
 export interface PendingEcho {
   /** The seat that typed it, for the speaker header. */
   speaker: string
   /** Exactly the text that went on the wire — the key the broadcast matches. */
   text: string
-  /** A `.`/`/` line is answered by a receipt, not by an echo of itself. */
-  command: boolean
   /** Epoch ms, for the delivery timeout. */
   at: number
   /** The send itself failed, or nothing came back in time. */
@@ -52,6 +56,7 @@ export type LogEntry =
   | { seq: number; kind: "dice"; frame: DiceFrame }
   | { seq: number; kind: "system"; frame: SystemFrame }
   | { seq: number; kind: "ui"; frame: UiFrame }
+  | { seq: number; kind: "error"; frame: ErrorFrame }
   | { seq: number; kind: "pending"; pending: PendingEcho }
 
 /** One named sidebar region fed by `ui` frames (later same-key frames replace it). */
@@ -191,13 +196,17 @@ function ingestInlineUi(entries: LogEntry[], frame: UiFrame): LogEntry[] {
   return pushEntry(entries, { kind: "ui", frame })
 }
 
-/** Is this a slash/dot command rather than something the table will echo back? */
-export function isCommandLine(text: string): boolean {
-  return text.startsWith(".") || text.startsWith("/")
-}
-
 /**
- * The broadcast of a player line retires its local echo.
+ * The server's echo of a player line retires the local one — commands too.
+ *
+ * Every line the server accepts comes back as a `narrative{speaker:"player"}`
+ * carrying the exact text that went out: broadcast for ordinary talk, unicast
+ * to the sender for a matched dot/slash command (the arguments of a command
+ * are never shown to the rest of the room). Nothing else retires a held line.
+ * A dice roll, a system line or a `ui` block is NOT a receipt for it: those
+ * arrive from other members' turns and from the server's own notices — the
+ * mid-turn "your input is queued" line is a `system` frame — and each of them
+ * used to cut a still-waiting line loose.
  *
  * Matching is on the WORDS, preferring this seat's own pending line and
  * falling back to any pending line with the same text. A server that labels
@@ -212,31 +221,34 @@ function retireEcho(entries: LogEntry[], frame: NarrativeFrame): LogEntry[] {
   const text = frame.text.trim()
   const name = frame.name ?? ""
   const matches = (entry: LogEntry, seat: boolean): boolean =>
-    entry.kind === "pending" &&
-    !entry.pending.command &&
-    entry.pending.text === text &&
-    (!seat || entry.pending.speaker === name)
+    entry.kind === "pending" && entry.pending.text === text && (!seat || entry.pending.speaker === name)
   let index = entries.findIndex((entry) => matches(entry, true))
   if (index === -1) index = entries.findIndex((entry) => matches(entry, false))
   return index === -1 ? entries : entries.filter((_, i) => i !== index)
 }
 
 /**
- * A command's echo is retired by its RECEIPT — the system line, dice roll or
- * `ui` block the server answers with — because the server never echoes the
- * command text itself. The oldest outstanding command goes first: commands
- * from one client are answered in the order they were sent.
+ * An `error` frame is the server refusing something. When that something is a
+ * line this client typed — a rate limit, a lost privilege, a turn that threw —
+ * no echo is ever coming, so the oldest line still waiting is failed NOW
+ * instead of sitting there looking sent for the full two minutes.
+ *
+ * The media/avatar codes are the exception: they answer an upload exchange,
+ * which the media deck tracks on its own and which no chronicle line is
+ * waiting on.
  */
-function retireCommandEcho(entries: LogEntry[]): LogEntry[] {
-  const index = entries.findIndex((entry) => entry.kind === "pending" && entry.pending.command)
-  return index === -1 ? entries : entries.filter((_, i) => i !== index)
+function answersTypedInput(code: string): boolean {
+  return !code.startsWith("media_") && code !== "avatar_no_character"
 }
 
-/** End of turn: every command sent into it has been answered, or never will be. */
-function retireAllCommandEchoes(entries: LogEntry[]): LogEntry[] {
-  return entries.some((entry) => entry.kind === "pending" && entry.pending.command)
-    ? entries.filter((entry) => !(entry.kind === "pending" && entry.pending.command))
-    : entries
+function failOldestPending(entries: LogEntry[]): LogEntry[] {
+  const index = entries.findIndex((entry) => entry.kind === "pending" && !entry.pending.failed)
+  if (index === -1) return entries
+  const entry = entries[index]
+  if (entry.kind !== "pending") return entries
+  const next = [...entries]
+  next[index] = { ...entry, pending: { ...entry.pending, failed: true } }
+  return next
 }
 
 /** A later sidebar frame with the same id replaces that region; no id = one anonymous region. */
@@ -263,7 +275,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         if (frame.panel === "sidebar") {
           set((s) => ({ uiPanels: upsertUiPanel(s.uiPanels, frame) }))
         } else {
-          set((s) => ({ entries: ingestInlineUi(retireCommandEcho(s.entries), frame) }))
+          set((s) => ({ entries: ingestInlineUi(s.entries, frame) }))
         }
         return
       case "narrative":
@@ -273,10 +285,20 @@ export const useSessionStore = create<SessionState>((set) => ({
         set((s) => ({ entries: ingestDelta(s.entries, frame) }))
         return
       case "dice":
-        set((s) => ({ entries: pushEntry(retireCommandEcho(s.entries), { kind: "dice", frame }) }))
+        set((s) => ({ entries: pushEntry(s.entries, { kind: "dice", frame }) }))
         return
       case "system":
-        set((s) => ({ entries: pushEntry(retireCommandEcho(s.entries), { kind: "system", frame }) }))
+        set((s) => ({ entries: pushEntry(s.entries, { kind: "system", frame }) }))
+        return
+      case "error":
+        // The refusal belongs in the chronicle beside every other thing the
+        // player is told, and it settles the line it refused straight away.
+        set((s) => ({
+          entries: pushEntry(answersTypedInput(frame.code) ? failOldestPending(s.entries) : s.entries, {
+            kind: "error",
+            frame,
+          }),
+        }))
         return
       case "state":
         // `reset:true` marks the snapshot right after a campaign wipe: the
@@ -311,7 +333,6 @@ export const useSessionStore = create<SessionState>((set) => ({
               }
             : { turn: IDLE_TURN },
         )
-        if (frame.status === "idle") set((s) => ({ entries: retireAllCommandEchoes(s.entries) }))
         return
       default:
         // Media, audio, admin, pong… are no-ops here; unknown frame types
@@ -325,7 +346,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((s) => ({
       entries: pushEntry(s.entries, {
         kind: "pending",
-        pending: { speaker, text, command: isCommandLine(text), at: now },
+        pending: { speaker, text, at: now },
       }),
     }))
     return seq

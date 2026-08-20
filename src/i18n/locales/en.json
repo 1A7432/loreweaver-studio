@@ -53,6 +53,7 @@
     "send": "Send",
     "echoPending": "sending…",
     "echoFailed": "not delivered",
+    "serverRefused": "The server refused it: {{message}}",
     "turnBusy": "Resolving {{actor}}'s action…",
     "turnActivity": {
       "reading": "reading the module",

@@ -600,6 +600,10 @@ body {
   color: var(--warn);
 }
 
+.system-line.level-error {
+  color: var(--danger);
+}
+
 /* ---- Spinner (the one loud element) ---- */
 
 .spinner {

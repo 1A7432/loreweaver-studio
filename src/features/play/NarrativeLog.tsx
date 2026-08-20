@@ -2,7 +2,12 @@ import { useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { stripControlChars, type NarrativeFrame, type SystemFrame } from "@loreweaver/protocol"
+import {
+  stripControlChars,
+  type ErrorFrame,
+  type NarrativeFrame,
+  type SystemFrame,
+} from "@loreweaver/protocol"
 import { useSessionStore, type LogEntry, type PendingEcho } from "../../store/session"
 import DiceLine from "./DiceLine"
 import UiBlocks from "./UiBlocks"
@@ -57,6 +62,17 @@ function SystemEntry({ frame }: { frame: SystemFrame }) {
   )
 }
 
+/** The server refusing something, told where the player is already looking. */
+function ErrorEntry({ frame }: { frame: ErrorFrame }) {
+  const { t } = useTranslation()
+  const detail = stripControlChars(frame.message).trim()
+  return (
+    <div className="system-line level-error" role="status">
+      <span>{t("session.serverRefused", { message: detail || frame.code })}</span>
+    </div>
+  )
+}
+
 function Entry({ entry }: { entry: LogEntry }) {
   switch (entry.kind) {
     case "narrative":
@@ -65,6 +81,8 @@ function Entry({ entry }: { entry: LogEntry }) {
       return <DiceLine frame={entry.frame} />
     case "system":
       return <SystemEntry frame={entry.frame} />
+    case "error":
+      return <ErrorEntry frame={entry.frame} />
     case "ui":
       return (
         <div className="log-ui">

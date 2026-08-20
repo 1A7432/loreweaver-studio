@@ -268,39 +268,65 @@ describe("pending echoes", () => {
     expect(pendings()).toHaveLength(1)
   })
 
-  it("retires a command echo on its receipt, oldest first", () => {
-    echo(".ra spot hidden")
-    echo(".st STR=50")
-    expect(pendings().map((e) => e.kind === "pending" && e.pending.text)).toEqual([
-      ".ra spot hidden",
-      ".st STR=50",
-    ])
+  // The server DOES echo a matched command back — to the sender alone, as a
+  // `narrative{speaker:"player"}` carrying the command line (`gateway/turn.py`:
+  // `origin.deliver(action_event)`). Its REPLY is a system-speaker narrative,
+  // and a command turn never publishes `turn_status idle`, so the echo is the
+  // only thing that can retire the held line.
+  it("retires a command echo on the server's own echo of the command line", () => {
+    echo(".pack install gh:1A7432/antu@v1.0.0")
+    ingest(
+      narrative("e1", ".pack install gh:1A7432/antu@v1.0.0", {
+        speaker: "player",
+        name: "Nyx",
+        format: "plain",
+      }),
+    )
+    expect(pendings()).toHaveLength(0)
 
+    // The reply lands after it, and is the only other line in the log.
+    ingest(narrative("r1", "Installed 安土 — 5 skills enabled.", { speaker: "system" }))
+    const kinds = useSessionStore.getState().entries.map((e) => e.kind)
+    expect(kinds).toEqual(["narrative", "narrative"])
+  })
+
+  it("retires two identical commands one echo at a time", () => {
+    echo(".undo")
+    echo(".undo")
+    expect(pendings()).toHaveLength(2)
+
+    ingest(narrative("e1", ".undo", { speaker: "player", name: "Nyx", format: "plain" }))
+    expect(pendings()).toHaveLength(1)
+    ingest(narrative("e2", ".undo", { speaker: "player", name: "Nyx", format: "plain" }))
+    expect(pendings()).toHaveLength(0)
+  })
+
+  it("keeps a queued command waiting: the queue receipt is a system frame, not an echo", () => {
+    echo(".pack install gh:1A7432/antu@v1.0.0")
+    // `net/session.py: notify_turn_queued` — sent while someone else's turn holds
+    // the room lock, long before this command runs.
+    ingest({ type: "system", level: "info", text: "Your input is queued behind the running turn." })
+    expect(pendings()).toHaveLength(1)
+  })
+
+  it("keeps a waiting line through another member's dice, system and idle frames", () => {
+    echo(".st STR=50")
+    echo("I check the ledger.")
     ingest({
       type: "dice",
-      actor: "Nyx",
+      actor: "Ash",
       kind: "check",
       expr: "1d100",
       rolls: [12],
       total: 12,
     } as ServerFrame)
-    expect(pendings().map((e) => e.kind === "pending" && e.pending.text)).toEqual([".st STR=50"])
-
-    ingest({ type: "system", level: "info", text: "STR = 50" })
-    expect(pendings()).toHaveLength(0)
-  })
-
-  it("a chat echo is not retired by a receipt, only by its own broadcast", () => {
-    echo("I check the ledger.")
-    ingest({ type: "system", level: "info", text: "The keeper is thinking." })
-    expect(pendings()).toHaveLength(1)
-  })
-
-  it("clears every outstanding command echo at the end of the turn", () => {
-    echo(".ra spot hidden")
-    echo("I check the ledger.")
+    ingest({ type: "system", level: "info", text: "Ash spends a luck point." })
     ingest({ type: "turn_status", status: "idle" })
-    expect(pendings().map((e) => e.kind === "pending" && e.pending.text)).toEqual(["I check the ledger."])
+    ingest({ type: "ui", panel: "inline", blocks: [{ kind: "badge", label: "omen" }] } as ServerFrame)
+    expect(pendings().map((e) => e.kind === "pending" && e.pending.text)).toEqual([
+      ".st STR=50",
+      "I check the ledger.",
+    ])
   })
 
   it("marks an echo undelivered after the timeout, and on an outright send failure", () => {
@@ -316,5 +342,45 @@ describe("pending echoes", () => {
     useSessionStore.getState().failEcho(other)
     expect(pendings().map((e) => e.kind === "pending" && e.pending.failed)).toEqual([true, true])
     expect(seq).not.toBe(other)
+  })
+
+  // Every path that accepts a line echoes it, and every path that refuses one
+  // sends an `error` frame — so the timeout is the last resort it was meant to
+  // be (a dropped connection, a server that answers neither way).
+  it("falls back to the timeout for a command nothing ever came back for", () => {
+    echo(".skill enable keeper-only", "Nyx", 1_000)
+    ingest(narrative("r1", "Only the keeper can do that.", { speaker: "system" }))
+    expect(pendings()[0]).not.toMatchObject({ pending: { failed: true } })
+
+    useSessionStore.getState().expirePendingEchoes(1_000 + PENDING_ECHO_TIMEOUT_MS)
+    expect(pendings()[0]).toMatchObject({ pending: { failed: true } })
+  })
+
+  it("fails the oldest waiting line the moment the server refuses one", () => {
+    echo("I check the ledger.", "Nyx", 1_000)
+    echo("I run.", "Nyx", 2_000)
+    ingest({ type: "error", code: "rate_limited", message: "Slow down." })
+
+    expect(pendings().map((e) => e.kind === "pending" && Boolean(e.pending.failed))).toEqual([true, false])
+    // …and the refusal is shown, where the player is already looking.
+    const last = useSessionStore.getState().entries.at(-1)
+    expect(last).toMatchObject({ kind: "error", frame: { code: "rate_limited" } })
+  })
+
+  // Nothing survives a wipe or a redial: `.reset` publishes `state{reset:true}`
+  // and a fresh dial calls `clear()` (`store/connection.ts`), so a line held
+  // from before cannot outlive the log it belonged to.
+  it("drops held lines with the scrollback on a campaign wipe", () => {
+    echo(".pack install gh:1A7432/antu@v1.0.0")
+    echo("I check the ledger.")
+    ingest({ type: "state", party: [], initiative: [], online: 1, reset: true })
+    expect(useSessionStore.getState().entries).toHaveLength(0)
+  })
+
+  it("leaves waiting lines alone for a media refusal — the upload deck owns those", () => {
+    echo("I check the ledger.", "Nyx", 1_000)
+    ingest({ type: "error", code: "media_disabled", message: "Uploads are off here." })
+    expect(pendings().map((e) => e.kind === "pending" && Boolean(e.pending.failed))).toEqual([false])
+    expect(useSessionStore.getState().entries.at(-1)).toMatchObject({ kind: "error" })
   })
 })
