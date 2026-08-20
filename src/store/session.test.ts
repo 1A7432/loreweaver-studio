@@ -307,6 +307,14 @@ describe("pending echoes", () => {
     // the room lock, long before this command runs.
     ingest({ type: "system", level: "info", text: "Your input is queued behind the running turn." })
     expect(pendings()).toHaveLength(1)
+    // The notice itself is not just swallowed on the way past the pending echo —
+    // it lands in the chronicle as its own visible line, beside the still-held one.
+    const { entries } = useSessionStore.getState()
+    const system = entries.find((e) => e.kind === "system")
+    expect(system?.kind === "system" && system.frame.text).toBe(
+      "Your input is queued behind the running turn.",
+    )
+    expect(entries.map((e) => e.kind)).toEqual(["pending", "system"])
   })
 
   it("keeps a waiting line through another member's dice, system and idle frames", () => {

@@ -135,4 +135,25 @@ describe("NarrativeLog", () => {
     const { container } = render(<NarrativeLog />)
     expect(container.querySelector(".spinner")).not.toBeNull()
   })
+
+  it("shows the turn-queued notice as a visible info line beside the still-pending echo", () => {
+    // `net/session.py: notify_turn_queued` — sent privately to a member whose
+    // input arrived while someone else's turn holds the room lock, well before
+    // the queued line itself runs. The exact wire shape the engine sends.
+    act(() => {
+      useSessionStore.getState().echoLocalInput(".pack install gh:1A7432/antu@v1.0.0", "Nyx")
+    })
+    act(() => {
+      ingest({ type: "system", level: "info", text: "Your input is queued behind the running turn." })
+    })
+    const { container } = render(<NarrativeLog />)
+
+    // The held line is still there, dimmed…
+    expect(container.querySelector(".log-entry.pending")).not.toBeNull()
+    // …and the queue notice is its own visible line beside it, not swallowed.
+    expect(screen.getByText("Your input is queued behind the running turn.")).toBeInTheDocument()
+    const notice = container.querySelector(".system-line")
+    expect(notice?.className).toContain("level-info")
+    expect(notice?.className).not.toContain("level-error")
+  })
 })
