@@ -12,9 +12,16 @@ friend's, or a VPS.
 
 ## Install
 
-There are no release bundles yet — the app builds from source (macOS build verified; Windows and
-Linux compile and test in CI, installers are the next step). You need Rust stable and
-[Bun](https://bun.sh):
+Grab an installer from the [latest release](https://github.com/1A7432/loreweaver-studio/releases/latest):
+
+- **macOS** — `.dmg` (separate Apple-silicon and Intel builds). The builds are not
+  yet notarized, so the first launch needs one extra step: right-click the app →
+  **Open** (or `xattr -cr "/Applications/Loreweaver Studio.app"` once).
+- **Windows** — the NSIS `-setup.exe`. Unsigned for now: if SmartScreen interjects,
+  choose **More info → Run anyway**.
+- **Linux** — `.AppImage` (`chmod +x` and run) or `.deb`.
+
+Or build from source with Rust stable and [Bun](https://bun.sh):
 
 ```sh
 git clone https://github.com/1A7432/loreweaver-studio && cd loreweaver-studio

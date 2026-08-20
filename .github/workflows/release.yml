@@ -1,0 +1,94 @@
+name: Release
+
+# Installer builds for the three desktop platforms, attached to a DRAFT GitHub
+# release — a human reads the draft and publishes it; CI never publishes alone.
+# Trigger with a version tag (`git tag v0.1.0 && git push origin v0.1.0`), or
+# re-run a flaky day's build by hand via workflow_dispatch: the dispatch path
+# rebuilds the draft for whatever version tauri.conf.json currently declares.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Same doctrine as ci.yml: every ref finishes its own run; queue, don't cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version-gate:
+    name: One version, everywhere the bundle reads one
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: tauri.conf.json, package.json, Cargo workspace — and the tag — agree
+        run: |
+          CONF=$(jq -r .version src-tauri/tauri.conf.json)
+          PKG=$(jq -r .version package.json)
+          CARGO=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          echo "tauri.conf.json=$CONF package.json=$PKG Cargo.toml(workspace)=$CARGO ref=$GITHUB_REF_NAME"
+          test "$CONF" = "$PKG"
+          test "$CONF" = "$CARGO"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            test "$CONF" = "${GITHUB_REF_NAME#v}"
+          fi
+
+  build:
+    name: ${{ matrix.name }}
+    needs: version-gate
+    permissions:
+      contents: write # tauri-action creates the draft release and uploads assets
+    strategy:
+      fail-fast: false # one platform's flake must not cancel the other two
+      matrix:
+        include:
+          - name: macOS (Apple silicon)
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app,dmg
+          - name: macOS (Intel)
+            os: macos-latest
+            rust-targets: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles app,dmg
+          - name: Linux (x86_64)
+            os: ubuntu-22.04
+            rust-targets: ""
+            args: --bundles deb,appimage
+          - name: Windows (x86_64)
+            os: windows-latest
+            rust-targets: ""
+            args: --bundles nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "Loreweaver Studio v__VERSION__"
+          releaseBody: |
+            Unsigned builds — the README's install section has the one-step
+            macOS Gatekeeper and Windows SmartScreen workarounds. On first
+            "Host locally & play" the app downloads the matching engine server
+            and verifies it by SHA-256; nothing else is bundled.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
