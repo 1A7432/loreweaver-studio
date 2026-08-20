@@ -42,7 +42,7 @@ catch-up itself.
 > **2026-08-15 — items 9–12 all landed upstream, mid-overhaul.** The engine lane
 > shipped `96c7228` (`.var set/add`), `fbcd08c` (`contents.presets`), `fd6613a`
 > (presentation kit **v2**) and `884fe51` (world-card prose → keeper module brief)
-> while the studio overhaul (`docs/OVERHAUL-2026-08.md`) was in flight. Item 12 is
+> while the 2026-08 studio overhaul series was in flight. Item 12 is
 > **consumed** here already — kit v2 is a hard break (`KIT_VERSION = 2`, v1 files
 > rejected outright), so the studio emits v2 and gained the promised template/palette
 > UI in the same commit; the round-trip gate exercises both. Items 9–11 are landed but
@@ -146,7 +146,7 @@ catch-up itself.
     per-member setting), or carry the current value in `welcome`. Either makes the
     control honest before the first attempt instead of after it.
 
-## Engine-side landings, 2026-08-15 (the parallel lane §9 of docs/OVERHAUL-2026-08.md)
+## Engine-side landings, 2026-08-15 (the overhaul's parallel engine lane)
 
 Every open item above closed upstream today, plus the promised author-DX work. What
 the studio must react to (R) or may now surface (S):
