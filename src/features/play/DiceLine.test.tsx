@@ -166,6 +166,24 @@ describe("dice detail", () => {
     expect(chips[0]).toContain("2")
   })
 
+  it("keeps a zero whose zero IS the reading: a rule-capped loss", () => {
+    // 《安土》 caps plant-horror sanity loss to 0 once a character is far enough
+    // gone — the module's whole thesis. The engine publishes loss:0 alongside
+    // loss_ceiling:0 and says why; dropping both zeroes left the player watching
+    // a failed check roll 1d4 and lose nothing, unexplained (run-3 play-test).
+    const { container } = render(
+      <DiceLine
+        frame={{
+          ...base,
+          detail: { loss_expr: "1d4", loss: 0, remaining: 42, loss_ceiling: 0, resource_max: 99 },
+        }}
+      />,
+    )
+    const chips = [...container.querySelectorAll(".dice-chip")].map((chip) => chip.textContent ?? "")
+    expect(chips.some((chip) => /loss\b/i.test(chip) && chip.includes("0"))).toBe(true)
+    expect(chips.some((chip) => /cap/i.test(chip))).toBe(true)
+  })
+
   it("renders nothing extra when there is no detail at all", () => {
     const { container } = render(<DiceLine frame={base} />)
     expect(container.querySelector(".dice-detail")).toBeNull()

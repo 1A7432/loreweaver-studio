@@ -299,7 +299,7 @@
         "disadvantage": "劣势",
         "loss": "损失",
         "loss_expr": "损失掷骰",
-        "loss_ceiling": "损失上限",
+        "loss_ceiling": "损失被封顶为",
         "remaining": "剩余",
         "resource_max": "上限",
         "points": "消耗",

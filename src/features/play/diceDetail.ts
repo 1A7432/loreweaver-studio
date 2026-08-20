@@ -101,6 +101,18 @@ function formatValue(value: unknown): string {
   }
 }
 
+/** Numeric keys whose ZERO is a reading, not an absence.
+ *
+ * `remaining`/`total` are the roll's own numbers. `loss`/`loss_ceiling` are the
+ * case that taught us the rest of the list is not enough: a pack may CAP a
+ * resource loss (《安土》 caps plant-horror sanity loss to 0 once a character is
+ * far enough gone — the module's whole thesis is that comfort is the damage),
+ * and the engine says so in the roll it publishes. Dropping those two zeroes
+ * left the player watching a failed check roll 1d4 and lose nothing, with no
+ * reason on screen — which is precisely what the engine's own comment says the
+ * reason exists to prevent. */
+const MEANINGFUL_ZERO_KEYS = new Set(["remaining", "total", "loss", "loss_ceiling"])
+
 /** Should this entry appear at all?
  *
  * A `false` boolean and a zero modifier are the ABSENCE of a thing — a chip
@@ -109,7 +121,7 @@ function formatValue(value: unknown): string {
  * whatever it is. */
 function worthShowing(key: string, value: unknown): boolean {
   if (typeof value === "boolean") return value
-  if (typeof value === "number") return value !== 0 || key === "remaining" || key === "total"
+  if (typeof value === "number") return value !== 0 || MEANINGFUL_ZERO_KEYS.has(key)
   if (typeof value === "string") return value.trim() !== ""
   if (Array.isArray(value)) return value.length > 0
   if (isRecord(value)) return Object.keys(value).length > 0
