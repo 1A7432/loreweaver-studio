@@ -11,6 +11,12 @@ const bridge = vi.hoisted(() => ({
   onHostLocalEvent: vi.fn(async () => () => {}),
 }))
 vi.mock("../lib/hostLocal", () => ({ ...bridge, HOST_LOCAL_EVENT: "loreweaver://host-local" }))
+// `start` refuses outright off the desktop app, so the reconnect path needs a shell.
+vi.mock("../lib/transport", () => ({
+  isTauri: () => true,
+  transportSend: vi.fn(async () => {}),
+  TRANSPORT_EVENT: "loreweaver://transport",
+}))
 
 import { useConnectionStore } from "./connection"
 import { quitTable, useHostLocalStore } from "./hostLocal"
@@ -24,6 +30,9 @@ function reset() {
     homeOverride: "",
     effectiveHome: "",
     devSourceRoot: "",
+    lastTicket: "",
+    lastKey: "",
+    lastTicketHome: "",
   })
 }
 
@@ -31,6 +40,53 @@ describe("hostLocal store", () => {
   beforeEach(() => {
     reset()
     vi.clearAllMocks()
+  })
+
+  it("sits back down at a server it already started instead of refusing to start one", async () => {
+    // The dead end this closes: the WebView reloads (a paste crash, a dev HMR, a
+    // devtools refresh), the Rust side is still serving, and pressing the one button
+    // answered "a local server is already running" with nowhere to go — a keeper had
+    // to dig a ticket out of a text file to sit back down at their own table.
+    const connect = vi.fn(async () => {})
+    useConnectionStore.setState({ connect } as never)
+    bridge.hostLocalStatus.mockResolvedValueOnce({
+      running: true,
+      home: "/tmp/.loreweaver",
+      dataDir: "/tmp/.loreweaver/data",
+    })
+    useHostLocalStore.setState({ lastTicket: "tkt", lastKey: "kee", lastTicketHome: "/tmp/.loreweaver" })
+
+    await useHostLocalStore.getState().start()
+
+    expect(connect).toHaveBeenCalledWith({ ticket: "tkt", key: "kee" })
+    expect(bridge.hostLocalStart).not.toHaveBeenCalled()
+    expect(useHostLocalStore.getState().phase).toBe("ready")
+  })
+
+  it("will not dial one server with another home's credentials", async () => {
+    const connect = vi.fn(async () => {})
+    useConnectionStore.setState({ connect } as never)
+    bridge.hostLocalStatus.mockResolvedValueOnce({
+      running: true,
+      home: "/tmp/other-home",
+      dataDir: "/tmp/other-home/data",
+    })
+    useHostLocalStore.setState({ lastTicket: "tkt", lastKey: "kee", lastTicketHome: "/tmp/.loreweaver" })
+
+    await useHostLocalStore.getState().start()
+
+    expect(connect).not.toHaveBeenCalled()
+    expect(bridge.hostLocalStart).toHaveBeenCalled() // falls through to a real start
+  })
+
+  it("remembers the credentials a ready server handed it", () => {
+    useConnectionStore.setState({ connect: vi.fn(async () => {}) } as never)
+    useHostLocalStore.getState().ingest({ kind: "ready", ticket: "tkt", key: "kee" })
+    const state = useHostLocalStore.getState()
+    expect(state.lastTicket).toBe("tkt")
+    expect(state.lastKey).toBe("kee")
+    const persisted = useHostLocalStore.persist.getOptions().partialize!(state) as { lastTicket: string }
+    expect(persisted.lastTicket).toBe("tkt")
   })
 
   it("streams log lines with a cap and never loses the newest", () => {

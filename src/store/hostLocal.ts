@@ -32,6 +32,16 @@ interface HostLocalState {
   homeOverride: string
   /** The resolved effective home, for display (refreshed by refreshHome). */
   effectiveHome: string
+  /** The credentials the LAST server we started handed us, kept for the home they
+   * belong to. Persisted, because the case they exist for is the front end coming
+   * back without them: the WebView reloads, the Rust side is still serving, and
+   * `start` can then only answer "a local server is already running" — a dead end
+   * that made a keeper dig a ticket out of a text file to sit back down at their own
+   * table (2026-08-20 play-test). Local credentials for a local server, stored beside
+   * the API key this app already keeps. */
+  lastTicket: string
+  lastKey: string
+  lastTicketHome: string
   /** The dev-room source root the RUNNING server was started with ("" = none).
    * `TRPG_DEV__SOURCE_ROOT` is read at startup, so a caller that needs a
    * different one has to restart rather than reconfigure. */
@@ -40,6 +50,9 @@ interface HostLocalState {
   setHomeOverride: (path: string) => void
   refreshHome: () => Promise<void>
   start: (devSourceRoot?: string) => Promise<void>
+  /** Sit back down at a server this app already started; false when there is none
+   * to sit at (or its credentials belong to another home). */
+  reconnectIfServing: () => Promise<boolean>
   stop: () => Promise<void>
   ingest: (event: HostLocalEvent) => void
 }
@@ -62,6 +75,9 @@ export const useHostLocalStore = create<HostLocalState>()(
       homeOverride: "",
       effectiveHome: "",
       devSourceRoot: "",
+      lastTicket: "",
+      lastKey: "",
+      lastTicketHome: "",
 
       setHomeOverride: (path) => {
         set({ homeOverride: path })
@@ -87,6 +103,9 @@ export const useHostLocalStore = create<HostLocalState>()(
         set({ phase: "starting", log: [], error: null, hostedSession: false, devSourceRoot })
         try {
           await subscribeOnce(get().ingest)
+          // Already serving? Then this press means "sit me back down", not "start one":
+          // the Rust side would refuse, and refusing is the whole dead end.
+          if (await get().reconnectIfServing()) return
           await hostLocalStart(
             useAiStore.getState().engineRepoDir.trim() || undefined,
             get().homeOverride.trim() || undefined,
@@ -95,6 +114,24 @@ export const useHostLocalStore = create<HostLocalState>()(
         } catch (cause) {
           set({ phase: "error", error: cause instanceof Error ? cause.message : String(cause) })
         }
+      },
+
+      reconnectIfServing: async () => {
+        if (!isTauri()) return false
+        let status
+        try {
+          status = await hostLocalStatus(get().homeOverride.trim() || undefined)
+        } catch {
+          return false
+        }
+        const { lastTicket, lastKey, lastTicketHome } = get()
+        // Credentials belong to the home that minted them: a different folder is a
+        // different server with different keys, and dialing it with these would fail
+        // in a way that reads like a bug rather than a mismatch.
+        if (!status.running || !lastTicket || !lastKey || lastTicketHome !== status.home) return false
+        set({ phase: "ready", hostedSession: true, error: null })
+        await useConnectionStore.getState().connect({ ticket: lastTicket, key: lastKey })
+        return true
       },
 
       stop: async () => {
@@ -112,7 +149,13 @@ export const useHostLocalStore = create<HostLocalState>()(
             set((s) => ({ log: [...s.log.slice(-(MAX_LOG_LINES - 1)), event.text] }))
             return
           case "ready":
-            set({ phase: "ready", hostedSession: true })
+            set({ phase: "ready", hostedSession: true, lastTicket: event.ticket, lastKey: event.key })
+            // Which home these credentials belong to is a question only the Rust side
+            // can answer, and `ingest` is synchronous — so ask, and record what comes
+            // back. `effectiveHome` may never have been refreshed in this session.
+            void hostLocalStatus(get().homeOverride.trim() || undefined)
+              .then((status) => set({ lastTicketHome: status.home, effectiveHome: status.home }))
+              .catch(() => {})
             void useConnectionStore.getState().connect({ ticket: event.ticket, key: event.key })
             return
           case "exit":
@@ -131,7 +174,12 @@ export const useHostLocalStore = create<HostLocalState>()(
     {
       name: "loreweaver-studio-host-local",
       storage: guardedLocalStorage,
-      partialize: (s) => ({ homeOverride: s.homeOverride }),
+      partialize: (s) => ({
+        homeOverride: s.homeOverride,
+        lastTicket: s.lastTicket,
+        lastKey: s.lastKey,
+        lastTicketHome: s.lastTicketHome,
+      }),
     },
   ),
 )

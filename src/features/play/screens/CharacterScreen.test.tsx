@@ -142,6 +142,24 @@ describe("CharacterScreen — editing", () => {
     expect(sent).toEqual([{ type: "input", text: ".st 力量=70" }])
   })
 
+  it("edits through a text box, because pasting into a number box took the app down", async () => {
+    // Three times out of three, ⌘V into this field reloaded the whole WebView and dropped
+    // the table (2026-08-20 play-test) — a crash below our floor, in WebKit's native paste
+    // path for `<input type=number>`. The dodge is also the better control: no spinner, and
+    // no scroll wheel quietly rewriting a stat. Pinned so nobody "tidies" it back.
+    render(<CharacterScreen onBack={() => {}} />)
+    await userEvent.click(screen.getByRole("button", { name: "55" }))
+    const box = screen.getByLabelText("力量")
+    expect(box).toHaveAttribute("type", "text")
+    expect(box).toHaveAttribute("inputMode", "numeric")
+
+    // And what a paste actually delivers — stray whitespace and all — still commits.
+    await userEvent.clear(box)
+    await userEvent.paste("  62  ")
+    await userEvent.keyboard("{Enter}")
+    expect(sent).toEqual([{ type: "input", text: ".st 力量=62" }])
+  })
+
   it("writes through the explicit `=` form, so a negative or a digit-bearing key is exact", async () => {
     // The bare `.st X -3` is "current minus 3" to the engine and `.st skill2 30` splits
     // the name; `.st X=-3` / `.st skill2=30` are absolute and unambiguous (engine 2.3).

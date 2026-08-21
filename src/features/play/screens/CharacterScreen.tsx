@@ -218,7 +218,16 @@ function AttributeRow({ name, value }: { name: string; value: unknown }) {
         ) : (
           <input
             autoFocus
-            type="number"
+            // NOT `type="number"`. Pasting into that input reloaded the whole WebView —
+            // three times out of three, on a value as ordinary as `47`, while the same
+            // paste into every other field in the app was fine (2026-08-20 play-test).
+            // The crash is below our floor (WebKit's own native paste path for number
+            // inputs), so this is a dodge rather than a diagnosis; it is also the better
+            // control regardless — no spinner arrows, and no scroll wheel silently
+            // rewriting a character's stat. `inputMode` keeps the numeric keypad on
+            // touch, and `commit` already parses and validates whatever lands here.
+            type="text"
+            inputMode="numeric"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
