@@ -29,6 +29,8 @@ function HostLocalBlock() {
   const phase = useHostLocalStore((s) => s.phase)
   const log = useHostLocalStore((s) => s.log)
   const error = useHostLocalStore((s) => s.error)
+  const exitKind = useHostLocalStore((s) => s.exitKind)
+  const exitCode = useHostLocalStore((s) => s.exitCode)
   const homeOverride = useHostLocalStore((s) => s.homeOverride)
   const effectiveHome = useHostLocalStore((s) => s.effectiveHome)
   const setHomeOverride = useHostLocalStore((s) => s.setHomeOverride)
@@ -79,16 +81,21 @@ function HostLocalBlock() {
           {t("studio.ai.browse")}
         </button>
       </div>
-      {phase !== "idle" && (log.length > 0 || error !== null) ? (
+      {phase !== "idle" && (log.length > 0 || error !== null || exitKind !== null) ? (
         <div className="host-local-log" role="log">
           {log.slice(-12).map((line, index) => (
             <div key={index} className="host-local-line">
               {line}
             </div>
           ))}
-          {error !== null ? (
+          {error !== null || exitKind !== null ? (
             <p className="connect-error" role="alert">
-              {error}
+              {error ??
+                (exitKind === "before-ready"
+                  ? t("connect.hostLocal.exitedBeforeReady")
+                  : exitCode === null
+                    ? t("connect.hostLocal.exitedUnexpectedly")
+                    : t("connect.hostLocal.exitedUnexpectedlyCode", { code: exitCode }))}
             </p>
           ) : null}
           {phase === "starting" ? (

@@ -27,6 +27,7 @@ const hostBridge = vi.hoisted(() => ({
     running: false,
     home: "/tmp/.loreweaver",
     dataDir: "/tmp/.loreweaver/data",
+    hostId: null,
   })),
 }))
 const transport = vi.hoisted(() => ({
@@ -42,6 +43,8 @@ vi.mock("../lib/hostLocal", () => ({
   hostLocalStart: vi.fn(async () => {}),
   hostLocalStop: vi.fn(async () => true),
   onHostLocalEvent: vi.fn(async () => () => {}),
+  mintHostId: () => "test-host",
+  hostEventApplies: () => true,
 }))
 vi.mock("../lib/transport", () => ({ ...transport, TRANSPORT_EVENT: "loreweaver://transport" }))
 

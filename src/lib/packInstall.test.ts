@@ -10,6 +10,7 @@ const host = vi.hoisted(() => ({
     running: false,
     home: homeOverride ?? "/Users/nyx/.loreweaver",
     dataDir: `${homeOverride ?? "/Users/nyx/.loreweaver"}/data`,
+    hostId: null,
   })),
 }))
 

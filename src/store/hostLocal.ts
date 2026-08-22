@@ -8,9 +8,11 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { guardedLocalStorage } from "../lib/persistStorage"
 import {
+  hostEventApplies,
   hostLocalStart,
   hostLocalStatus,
   hostLocalStop,
+  mintHostId,
   onHostLocalEvent,
   type HostLocalEvent,
 } from "../lib/hostLocal"
@@ -21,11 +23,20 @@ import { useConnectionStore } from "./connection"
 const MAX_LOG_LINES = 400
 
 export type HostLocalPhase = "idle" | "starting" | "ready" | "error"
+export type HostLocalExitKind = "before-ready" | "unexpected"
 
 interface HostLocalState {
   phase: HostLocalPhase
   log: string[]
   error: string | null
+  /** Structured death of THIS host session. The connect screen translates it. */
+  exitKind: HostLocalExitKind | null
+  exitCode: number | null
+  /** Host session the WebView currently accepts events for. Minted on start,
+   * adopted from `host_local_status` after a reload. */
+  hostId: string | null
+  /** After an explicit stop, only the confirming Exit for this id is accepted. */
+  stoppingHostId: string | null
   /** Whether the CURRENT connection came from our own local server. */
   hostedSession: boolean
   /** User-picked server folder ("" = the TUI-shared default chain). Persisted. */
@@ -71,6 +82,10 @@ export const useHostLocalStore = create<HostLocalState>()(
       phase: "idle",
       log: [],
       error: null,
+      exitKind: null,
+      exitCode: null,
+      hostId: null,
+      stoppingHostId: null,
       hostedSession: false,
       homeOverride: "",
       effectiveHome: "",
@@ -100,7 +115,18 @@ export const useHostLocalStore = create<HostLocalState>()(
           return
         }
         if (get().phase === "starting") return
-        set({ phase: "starting", log: [], error: null, hostedSession: false, devSourceRoot })
+        const hostId = mintHostId()
+        set({
+          phase: "starting",
+          log: [],
+          error: null,
+          exitKind: null,
+          exitCode: null,
+          hostedSession: false,
+          devSourceRoot,
+          hostId,
+          stoppingHostId: null,
+        })
         try {
           await subscribeOnce(get().ingest)
           // Already serving? Then this press means "sit me back down", not "start one":
@@ -110,6 +136,7 @@ export const useHostLocalStore = create<HostLocalState>()(
             useAiStore.getState().engineRepoDir.trim() || undefined,
             get().homeOverride.trim() || undefined,
             devSourceRoot || undefined,
+            get().hostId ?? hostId,
           )
         } catch (cause) {
           set({ phase: "error", error: cause instanceof Error ? cause.message : String(cause) })
@@ -129,27 +156,59 @@ export const useHostLocalStore = create<HostLocalState>()(
         // different server with different keys, and dialing it with these would fail
         // in a way that reads like a bug rather than a mismatch.
         if (!status.running || !lastTicket || !lastKey || lastTicketHome !== status.home) return false
-        set({ phase: "ready", hostedSession: true, error: null })
+        // Adopt the live child's id so a later Exit (and only that child's
+        // Exit) still reaches ingest after a WebView reload.
+        set({
+          phase: "ready",
+          hostedSession: true,
+          error: null,
+          exitKind: null,
+          exitCode: null,
+          hostId: status.hostId ?? get().hostId,
+          stoppingHostId: null,
+        })
         await useConnectionStore.getState().connect({ ticket: lastTicket, key: lastKey })
         return true
       },
 
       stop: async () => {
+        // Invalidate the current id first so a late Ready cannot revive us.
+        // Keep it as stoppingHostId so the confirming Exit is still applied
+        // (and only as a confirmation — we are already idle).
+        const current = get().hostId
+        set({
+          phase: "idle",
+          hostedSession: false,
+          devSourceRoot: "",
+          error: null,
+          exitKind: null,
+          exitCode: null,
+          hostId: null,
+          stoppingHostId: current,
+        })
         try {
           await hostLocalStop()
         } catch {
           // Nothing to stop is fine.
         }
-        set({ phase: "idle", hostedSession: false, devSourceRoot: "" })
       },
 
       ingest: (event) => {
+        if (!hostEventApplies(event, get().hostId, get().stoppingHostId)) return
         switch (event.kind) {
           case "log":
             set((s) => ({ log: [...s.log.slice(-(MAX_LOG_LINES - 1)), event.text] }))
             return
           case "ready":
-            set({ phase: "ready", hostedSession: true, lastTicket: event.ticket, lastKey: event.key })
+            set({
+              phase: "ready",
+              hostedSession: true,
+              lastTicket: event.ticket,
+              lastKey: event.key,
+              error: null,
+              exitKind: null,
+              exitCode: null,
+            })
             // Which home these credentials belong to is a question only the Rust side
             // can answer, and `ingest` is synchronous — so ask, and record what comes
             // back. `effectiveHome` may never have been refreshed in this session.
@@ -159,11 +218,32 @@ export const useHostLocalStore = create<HostLocalState>()(
             void useConnectionStore.getState().connect({ ticket: event.ticket, key: event.key })
             return
           case "exit":
-            set((s) =>
-              s.phase === "starting"
-                ? { phase: "error", error: "the local server exited before it was ready" }
-                : { phase: "idle", hostedSession: false },
-            )
+            set((s) => {
+              if (s.stoppingHostId !== null && event.hostId === s.stoppingHostId) {
+                return { stoppingHostId: null }
+              }
+              if (s.phase === "starting") {
+                return {
+                  phase: "error" as const,
+                  hostedSession: false,
+                  exitKind: "before-ready" as const,
+                  exitCode: event.code,
+                  hostId: null,
+                }
+              }
+              if (s.phase === "ready" || s.hostedSession) {
+                return {
+                  phase: "error" as const,
+                  hostedSession: false,
+                  exitKind: "unexpected" as const,
+                  exitCode: event.code,
+                  hostId: null,
+                }
+              }
+              // A readiness Error already named the failure. Clear the id so
+              // a late Ready for this dead child cannot revive the session.
+              return { hostId: null }
+            })
             return
           case "error":
             set({ phase: "error", error: event.message })

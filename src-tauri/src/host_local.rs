@@ -20,16 +20,28 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::sync::Mutex;
+use std::process::{ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
 pub const HOST_LOCAL_EVENT: &str = "loreweaver://host-local";
 const REPO: &str = "https://github.com/1A7432/loreweaver";
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
+/// Cap on the pre-ready ticket scan window. The iroh ticket is tens of bytes;
+/// 90s of stderr chatter must not accumulate without bound.
+const TICKET_SCAN_CAP: usize = 64 * 1024;
+const SIDECAR_ATTEMPTS: u32 = 20;
+const SIDECAR_DELAY: Duration = Duration::from_millis(250);
+/// How often the exit monitor `try_wait`s. The Child stays in the slot; the
+/// monitor never calls `wait()` and never holds the mutex across this sleep.
+const EXIT_POLL: Duration = Duration::from_millis(100);
+/// Explicit stop kills, then waits this long for the process to disappear
+/// before returning. `kill_on_drop` still covers an uncooperative child.
+const STOP_WAIT: Duration = Duration::from_secs(5);
 const BINARY_INTEGRITY_MANIFEST: &str = ".loreweaver-integrity.json";
 const EXE_NAME: &str = if cfg!(windows) {
     "loreweaver-server.exe"
@@ -40,14 +52,51 @@ const EXE_NAME: &str = if cfg!(windows) {
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum HostLocalEvent {
-    Log { level: String, text: String },
-    Ready { ticket: String, key: String },
-    Exit { code: Option<i32> },
-    Error { message: String },
+    Log {
+        host_id: String,
+        level: String,
+        text: String,
+    },
+    Ready {
+        host_id: String,
+        ticket: String,
+        key: String,
+    },
+    Exit {
+        host_id: String,
+        code: Option<i32>,
+    },
+    Error {
+        host_id: String,
+        message: String,
+    },
+}
+
+/// Occupant of the one local-server slot. `host_id` is minted by the WebView
+/// (or, as a fallback, here) and travels on every event so the store can
+/// drop queued frames from a superseded session — a Rust emit-before-check
+/// cannot see the JS queue.
+struct Hosted {
+    child: Child,
+    host_id: String,
 }
 
 #[derive(Default)]
-pub struct HostLocalState(pub Mutex<Option<Child>>);
+struct Inner {
+    hosted: Option<Hosted>,
+    /// The host id that may still emit Log/Ready/Error. Cleared on stop and
+    /// on observed death so a late Ready cannot revive a dead server.
+    /// Exit is emitted with the claimed id *after* this is cleared.
+    current_host_id: Option<String>,
+}
+
+/// The Child lives behind a `std::sync::Mutex` so `try_wait` / take are
+/// instantaneous. Callers must never hold this lock across `.await` — stop
+/// waits on a taken Child outside the mutex, and the monitor only polls.
+#[derive(Default)]
+pub struct HostLocalState {
+    inner: Mutex<Inner>,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +107,9 @@ pub struct HostLocalStatus {
     /// be visible to it — an installed pack above all — has to land here, so
     /// the caller needs the resolved path, not just the home.
     pub data_dir: String,
+    /// Host session id of the live child, when one is running. The WebView
+    /// adopts this after a reload so a later Exit still belongs to it.
+    pub host_id: Option<String>,
 }
 
 struct LocalPaths {
@@ -227,14 +279,30 @@ async fn verified_cached_binary(binary_dir: &Path, asset: &str) -> Option<PathBu
     (sha256_hex(&bytes) == manifest.executable_sha256).then_some(exe)
 }
 
-fn emit_log(app: &AppHandle, level: &str, text: impl Into<String>) {
+fn emit_log(app: &AppHandle, host_id: &str, level: &str, text: impl Into<String>) {
     let _ = app.emit(
         HOST_LOCAL_EVENT,
         HostLocalEvent::Log {
+            host_id: host_id.to_owned(),
             level: level.to_owned(),
             text: text.into(),
         },
     );
+}
+
+fn resolve_host_id(host_id: Option<String>) -> String {
+    let trimmed = host_id.unwrap_or_default();
+    let trimmed = trimmed.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_owned();
+    }
+    format!(
+        "host-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    )
 }
 
 /// Download + verify + unpack the prebuilt server; returns the executable.
@@ -242,9 +310,10 @@ async fn download_binary(
     app: &AppHandle,
     paths: &LocalPaths,
     asset: &str,
+    host_id: &str,
 ) -> Result<PathBuf, String> {
     let url = release_url(asset);
-    emit_log(app, "step", format!("Downloading {asset}…"));
+    emit_log(app, host_id, "step", format!("Downloading {asset}…"));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(600))
         .build()
@@ -278,7 +347,12 @@ async fn download_binary(
             "server download SHA-256 mismatch for {asset} — refusing to run it"
         ));
     }
-    emit_log(app, "ok", "Download verified against its published SHA-256");
+    emit_log(
+        app,
+        host_id,
+        "ok",
+        "Download verified against its published SHA-256",
+    );
 
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -367,6 +441,7 @@ async fn resolve_launch(
     app: &AppHandle,
     paths: &LocalPaths,
     engine_repo_dir: Option<String>,
+    host_id: &str,
 ) -> Result<Launch, String> {
     if let Some(repo) = engine_repo_dir.map(|value| expand_home(value.trim())) {
         if repo.join("app.py").is_file() {
@@ -379,6 +454,7 @@ async fn resolve_launch(
             if let Some(python) = venv_pythons.into_iter().find(|p| p.is_file()) {
                 emit_log(
                     app,
+                    host_id,
                     "ok",
                     format!("Using the engine checkout at {}", repo.display()),
                 );
@@ -391,6 +467,7 @@ async fn resolve_launch(
                 if which_in_path(name).is_some() {
                     emit_log(
                         app,
+                        host_id,
                         "ok",
                         format!(
                             "Using the engine checkout at {} (system {name})",
@@ -416,6 +493,7 @@ async fn resolve_launch(
     if let Some(exe) = verified_cached_binary(&paths.binary_dir, asset).await {
         emit_log(
             app,
+            host_id,
             "ok",
             "Using the verified prebuilt server downloaded earlier",
         );
@@ -424,11 +502,12 @@ async fn resolve_launch(
     if binary_exe(&paths.binary_dir).is_file() {
         emit_log(
             app,
+            host_id,
             "err",
             "Ignoring an unverified or changed prebuilt server cache",
         );
     }
-    let exe = download_binary(app, paths, asset).await?;
+    let exe = download_binary(app, paths, asset, host_id).await?;
     Ok(Launch::Binary { exe })
 }
 
@@ -450,82 +529,332 @@ fn which_in_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Stream one pipe line-by-line into log events; feed stderr through the
-/// ticket scanner and fire Ready exactly once (ticket + sidecar key).
+/// Rolling window the ticket scanner walks. Each `push_line` also scans the
+/// line alone so a ticket on one banner line cannot be lost to a cap trim.
+struct TicketScan {
+    buf: String,
+    cap: usize,
+}
+
+impl TicketScan {
+    fn new(cap: usize) -> Self {
+        Self {
+            buf: String::new(),
+            cap: cap.max(1),
+        }
+    }
+
+    fn push_line(&mut self, line: &str) -> Option<String> {
+        if let Some(ticket) = extract_ticket(line) {
+            return Some(ticket);
+        }
+        self.buf.push_str(line);
+        self.buf.push('\n');
+        if self.buf.len() > self.cap {
+            let overflow = self.buf.len() - self.cap;
+            let mut start = overflow.min(self.buf.len());
+            while start < self.buf.len() && !self.buf.is_char_boundary(start) {
+                start += 1;
+            }
+            self.buf.drain(..start);
+        }
+        extract_ticket(&self.buf)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.buf.len()
+    }
+}
+
+/// Line-oriented drain of one pipe. Returns only on EOF (the process closed
+/// the fd). A readiness timeout must never wrap this future — dropping it
+/// would drop the reader and stall the child on a full pipe.
+async fn drain_lines<R, F>(reader: R, mut on_line: F)
+where
+    R: AsyncBufRead + Unpin,
+    F: FnMut(String),
+{
+    let mut lines = reader.lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        on_line(line);
+    }
+}
+
+/// Poll the keeper sidecar without touching the stderr reader.
+async fn await_sidecar_key(path: &Path, attempts: u32, delay: Duration) -> Option<String> {
+    for _ in 0..attempts {
+        if let Ok(text) = tokio::fs::read_to_string(path).await {
+            if let Some(key) = parse_sidecar_key(&text) {
+                return Some(key);
+            }
+        }
+        tokio::time::sleep(delay).await;
+    }
+    None
+}
+
+/// Sleep `timeout`, then report whether readiness is still outstanding.
+/// Never cancels a drain — the caller emits an Error and leaves the readers.
+async fn wait_readiness_timeout(timeout: Duration, already_reported: &AtomicBool) -> bool {
+    tokio::time::sleep(timeout).await;
+    !already_reported.load(Ordering::SeqCst)
+}
+
+fn lock_inner(state: &HostLocalState) -> Result<MutexGuard<'_, Inner>, String> {
+    state
+        .inner
+        .lock()
+        .map_err(|_| "host state poisoned".to_owned())
+}
+
+fn host_id_is_current(inner: &Inner, host_id: &str) -> bool {
+    inner.current_host_id.as_deref() == Some(host_id)
+}
+
+fn host_id_is_current_in(state: &HostLocalState, host_id: &str) -> bool {
+    lock_inner(state)
+        .map(|inner| host_id_is_current(&inner, host_id))
+        .unwrap_or(false)
+}
+
+fn is_live(inner: &mut Inner) -> bool {
+    match inner.hosted.as_mut() {
+        Some(hosted) => matches!(hosted.child.try_wait(), Ok(None)),
+        None => false,
+    }
+}
+
+/// Outcome of one monitor poll. `Stale` means this watcher must go quiet —
+/// another start/stop already owns the slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObserveExit {
+    Stale,
+    Running,
+    Exited(Option<i32>),
+}
+
+fn exit_code(status: ExitStatus) -> Option<i32> {
+    status.code()
+}
+
+fn clear_current_if(inner: &mut Inner, host_id: &str) {
+    if inner.current_host_id.as_deref() == Some(host_id) {
+        inner.current_host_id = None;
+    }
+}
+
+/// Claim a spontaneous exit for `expected` at most once. Takes the Child
+/// and clears `current_host_id` so a late Ready for this id cannot follow.
+/// The caller still emits Exit tagged with `expected` — the WebView filter,
+/// not this flag, is what accepts that Exit.
+fn try_observe_exit(inner: &mut Inner, expected: &str) -> ObserveExit {
+    match inner.hosted.as_mut() {
+        Some(hosted) if hosted.host_id == expected => match hosted.child.try_wait() {
+            Ok(None) => ObserveExit::Running,
+            Ok(Some(status)) => {
+                inner.hosted = None;
+                clear_current_if(inner, expected);
+                ObserveExit::Exited(exit_code(status))
+            }
+            Err(_) => {
+                inner.hosted = None;
+                clear_current_if(inner, expected);
+                ObserveExit::Exited(None)
+            }
+        },
+        _ => ObserveExit::Stale,
+    }
+}
+
+/// Take the Child for an explicit stop and invalidate every watcher. The
+/// caller kills + waits *outside* the mutex, then emits Exit with this id.
+fn take_for_stop(inner: &mut Inner) -> Option<(Child, String)> {
+    let hosted = inner.hosted.take()?;
+    clear_current_if(inner, &hosted.host_id);
+    Some((hosted.child, hosted.host_id))
+}
+
+/// Poll `observe` until the child exits or this host id is superseded.
+/// Returns `Some(code)` exactly when *this* watcher claimed the death.
+async fn monitor_child_exit<F>(mut observe: F, poll: Duration) -> Option<Option<i32>>
+where
+    F: FnMut() -> ObserveExit,
+{
+    loop {
+        match observe() {
+            ObserveExit::Stale => return None,
+            ObserveExit::Exited(code) => return Some(code),
+            ObserveExit::Running => tokio::time::sleep(poll).await,
+        }
+    }
+}
+
+fn emit_if_current(app: &AppHandle, host_id: &str, event: HostLocalEvent) {
+    if !host_id_is_current_in(&app.state::<HostLocalState>(), host_id) {
+        return;
+    }
+    let _ = app.emit(HOST_LOCAL_EVENT, event);
+}
+
+fn claim_ready(flag: &AtomicBool) -> bool {
+    flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+}
+
+/// Announce Ready (or a sidecar Error) without holding the stderr reader.
+async fn announce_ready(
+    app: AppHandle,
+    sidecar: PathBuf,
+    ticket: String,
+    host_id: String,
+    reported: Arc<AtomicBool>,
+) {
+    if let Some(key) = await_sidecar_key(&sidecar, SIDECAR_ATTEMPTS, SIDECAR_DELAY).await {
+        if host_id_is_current_in(&app.state::<HostLocalState>(), &host_id) && claim_ready(&reported)
+        {
+            emit_if_current(
+                &app,
+                &host_id,
+                HostLocalEvent::Ready {
+                    host_id: host_id.clone(),
+                    ticket,
+                    key,
+                },
+            );
+        }
+        return;
+    }
+    if host_id_is_current_in(&app.state::<HostLocalState>(), &host_id) && claim_ready(&reported) {
+        emit_if_current(
+            &app,
+            &host_id,
+            HostLocalEvent::Error {
+                host_id: host_id.clone(),
+                message: "server is up but its keeper-key.txt sidecar never appeared".to_owned(),
+            },
+        );
+    }
+}
+
+/// Drain stdout + stderr until EOF. The same stderr reader scans for the
+/// ticket, fires Ready via a sidecar waiter, then keeps draining. A ready
+/// timeout only emits an Error — it does not drop either reader.
 async fn watch_output(
     app: AppHandle,
-    paths_sidecar: PathBuf,
+    sidecar: PathBuf,
     stdout: Option<tokio::process::ChildStdout>,
     stderr: Option<tokio::process::ChildStderr>,
+    host_id: String,
+    ready_timeout: Duration,
 ) {
+    let reported = Arc::new(AtomicBool::new(false));
+
     let out_app = app.clone();
+    let out_host = host_id.clone();
     let stdout_task = tauri::async_runtime::spawn(async move {
         if let Some(stdout) = stdout {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                emit_log(&out_app, "out", line);
-            }
+            let state_app = out_app.clone();
+            drain_lines(BufReader::new(stdout), move |line| {
+                if host_id_is_current_in(&state_app.state::<HostLocalState>(), &out_host) {
+                    emit_log(&state_app, &out_host, "out", line);
+                }
+            })
+            .await;
         }
     });
 
-    let ready = async {
-        let mut seen = String::new();
-        if let Some(stderr) = stderr {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                emit_log(&app, "out", line.clone());
-                seen.push_str(&line);
-                seen.push('\n');
-                if let Some(ticket) = extract_ticket(&seen) {
-                    // The sidecar is written before the ticket banner, but poll
-                    // briefly anyway in case of filesystem lag.
-                    for _ in 0..20 {
-                        if let Ok(text) = tokio::fs::read_to_string(&paths_sidecar).await {
-                            if let Some(key) = parse_sidecar_key(&text) {
-                                let _ = app
-                                    .emit(HOST_LOCAL_EVENT, HostLocalEvent::Ready { ticket, key });
-                                return true;
-                            }
-                        }
-                        tokio::time::sleep(Duration::from_millis(250)).await;
-                    }
-                    let _ = app.emit(
-                        HOST_LOCAL_EVENT,
-                        HostLocalEvent::Error {
-                            message: "server is up but its keeper-key.txt sidecar never appeared"
-                                .to_owned(),
-                        },
-                    );
-                    return false;
+    let err_app = app.clone();
+    let err_reported = reported.clone();
+    let err_host = host_id.clone();
+    let stderr_task = tauri::async_runtime::spawn(async move {
+        let Some(stderr) = stderr else {
+            return;
+        };
+        let mut scan = TicketScan::new(TICKET_SCAN_CAP);
+        let mut looking = true;
+        let drain_app = err_app.clone();
+        let drain_reported = err_reported.clone();
+        let drain_host = err_host.clone();
+        drain_lines(BufReader::new(stderr), move |line| {
+            if host_id_is_current_in(&drain_app.state::<HostLocalState>(), &drain_host) {
+                emit_log(&drain_app, &drain_host, "out", line.clone());
+            }
+            if looking {
+                if let Some(ticket) = scan.push_line(&line) {
+                    looking = false;
+                    tauri::async_runtime::spawn(announce_ready(
+                        drain_app.clone(),
+                        sidecar.clone(),
+                        ticket,
+                        drain_host.clone(),
+                        drain_reported.clone(),
+                    ));
                 }
             }
-        }
-        false
-    };
-
-    match tokio::time::timeout(READY_TIMEOUT, ready).await {
-        Ok(true) => {
-            // Keep draining stderr in the background so the pipe never fills.
-        }
-        Ok(false) => {
-            let _ = app.emit(
-                HOST_LOCAL_EVENT,
+        })
+        .await;
+        if looking
+            && host_id_is_current_in(&err_app.state::<HostLocalState>(), &err_host)
+            && claim_ready(&err_reported)
+        {
+            emit_if_current(
+                &err_app,
+                &err_host,
                 HostLocalEvent::Error {
+                    host_id: err_host.clone(),
                     message: "the server exited before it was ready".to_owned(),
                 },
             );
         }
-        Err(_) => {
-            let _ = app.emit(
-                HOST_LOCAL_EVENT,
+    });
+
+    let timeout_app = app.clone();
+    let timeout_reported = reported.clone();
+    let timeout_host = host_id.clone();
+    let timeout_task = tauri::async_runtime::spawn(async move {
+        if wait_readiness_timeout(ready_timeout, &timeout_reported).await
+            && host_id_is_current_in(&timeout_app.state::<HostLocalState>(), &timeout_host)
+            && claim_ready(&timeout_reported)
+        {
+            emit_if_current(
+                &timeout_app,
+                &timeout_host,
                 HostLocalEvent::Error {
+                    host_id: timeout_host.clone(),
                     message: "the server did not become ready in time (no iroh ticket after 90s)"
                         .to_owned(),
                 },
             );
         }
-    }
+    });
+
     let _ = stdout_task.await;
+    let _ = stderr_task.await;
+    timeout_task.abort();
+}
+
+async fn watch_exit(app: AppHandle, host_id: String) {
+    let watch_app = app.clone();
+    let watch_id = host_id.clone();
+    let observed = monitor_child_exit(
+        move || {
+            let state = watch_app.state::<HostLocalState>();
+            let observed = match lock_inner(&state) {
+                Ok(mut inner) => try_observe_exit(&mut inner, &watch_id),
+                Err(_) => ObserveExit::Stale,
+            };
+            observed
+        },
+        EXIT_POLL,
+    )
+    .await;
+    // Emit Exit even though current_host_id is already cleared — the
+    // WebView accepts it by matching the id it still holds (or the
+    // stopping id). A later start has a different id and will drop this.
+    if let Some(code) = observed {
+        let _ = app.emit(HOST_LOCAL_EVENT, HostLocalEvent::Exit { host_id, code });
+    }
 }
 
 #[tauri::command]
@@ -535,17 +864,19 @@ pub async fn host_local_start(
     engine_repo_dir: Option<String>,
     home_override: Option<String>,
     dev_source_root: Option<String>,
+    host_id: Option<String>,
 ) -> Result<(), String> {
+    let host_id = resolve_host_id(host_id);
     {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "host state poisoned".to_owned())?;
-        if let Some(child) = guard.as_mut() {
-            match child.try_wait() {
-                Ok(None) => return Err("a local server is already running".to_owned()),
-                _ => *guard = None,
-            }
+        let mut inner = lock_inner(&state)?;
+        if is_live(&mut inner) {
+            return Err("a local server is already running".to_owned());
+        }
+        // A dead occupant is still visible to the old monitor. Drop it and
+        // clear the current id *before* the acquire path so a late Ready
+        // from that child cannot land after we have moved on.
+        if let Some(dead) = inner.hosted.take() {
+            clear_current_if(&mut inner, &dead.host_id);
         }
     }
 
@@ -558,11 +889,12 @@ pub async fn host_local_start(
         .map_err(|err| err.to_string())?;
     emit_log(
         &app,
+        &host_id,
         "step",
         format!("Local server home: {}", paths.home.display()),
     );
 
-    let launch = resolve_launch(&app, &paths, engine_repo_dir).await?;
+    let launch = resolve_launch(&app, &paths, engine_repo_dir, &host_id).await?;
 
     let mut command = match &launch {
         Launch::Python { program, repo } => {
@@ -601,11 +933,17 @@ pub async fn host_local_start(
         .filter(|r| !r.is_empty())
     {
         command.env("TRPG_DEV__SOURCE_ROOT", root);
-        emit_log(&app, "step", format!("Dev-room source root: {root}"));
+        emit_log(
+            &app,
+            &host_id,
+            "step",
+            format!("Dev-room source root: {root}"),
+        );
     }
 
     emit_log(
         &app,
+        &host_id,
         "step",
         "Starting the local p2p server — waiting for a relay, ~10s…",
     );
@@ -614,19 +952,33 @@ pub async fn host_local_start(
         .map_err(|err| format!("starting the server failed: {err}"))?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "host state poisoned".to_owned())?;
-        *guard = Some(child);
+    let seated = {
+        let mut inner = lock_inner(&state)?;
+        if is_live(&mut inner) {
+            Err(child)
+        } else {
+            inner.current_host_id = Some(host_id.clone());
+            inner.hosted = Some(Hosted {
+                child,
+                host_id: host_id.clone(),
+            });
+            Ok(())
+        }
+    };
+    if let Err(mut leftover) = seated {
+        let _ = leftover.start_kill();
+        let _ = tokio::time::timeout(STOP_WAIT, leftover.wait()).await;
+        return Err("a local server is already running".to_owned());
     }
     tauri::async_runtime::spawn(watch_output(
         app.clone(),
         paths.keeper_sidecar.clone(),
         stdout,
         stderr,
+        host_id.clone(),
+        READY_TIMEOUT,
     ));
+    tauri::async_runtime::spawn(watch_exit(app, host_id));
     Ok(())
 }
 
@@ -635,23 +987,21 @@ pub async fn host_local_stop(
     app: AppHandle,
     state: State<'_, HostLocalState>,
 ) -> Result<bool, String> {
-    let stopped = {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "host state poisoned".to_owned())?;
-        match guard.take() {
-            Some(mut child) => {
-                let _ = child.start_kill();
-                true
-            }
-            None => false,
-        }
+    let Some((mut child, host_id)) = ({
+        let mut inner = lock_inner(&state)?;
+        take_for_stop(&mut inner)
+    }) else {
+        return Ok(false);
     };
-    if stopped {
-        let _ = app.emit(HOST_LOCAL_EVENT, HostLocalEvent::Exit { code: None });
-    }
-    Ok(stopped)
+    let _ = child.start_kill();
+    // Confirm the process is gone (or give up after STOP_WAIT). The monitor
+    // cannot `wait()` this Child — we took it — so the two cannot deadlock.
+    let code = match tokio::time::timeout(STOP_WAIT, child.wait()).await {
+        Ok(Ok(status)) => exit_code(status),
+        _ => None,
+    };
+    let _ = app.emit(HOST_LOCAL_EVENT, HostLocalEvent::Exit { host_id, code });
+    Ok(true)
 }
 
 #[tauri::command]
@@ -659,14 +1009,15 @@ pub async fn host_local_status(
     state: State<'_, HostLocalState>,
     home_override: Option<String>,
 ) -> Result<HostLocalStatus, String> {
-    let running = {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "host state poisoned".to_owned())?;
-        match guard.as_mut() {
-            Some(child) => matches!(child.try_wait(), Ok(None)),
-            None => false,
+    let (running, host_id) = {
+        let mut inner = lock_inner(&state)?;
+        if is_live(&mut inner) {
+            (
+                true,
+                inner.hosted.as_ref().map(|hosted| hosted.host_id.clone()),
+            )
+        } else {
+            (false, None)
         }
     };
     let paths = resolve_paths(home_override.as_deref());
@@ -674,12 +1025,26 @@ pub async fn host_local_status(
         running,
         home: paths.home.to_string_lossy().into_owned(),
         data_dir: paths.data_dir.to_string_lossy().into_owned(),
+        host_id,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_ticket, parse_sha256_sidecar, parse_sidecar_key, resolve_paths};
+    use super::{
+        await_sidecar_key, drain_lines, extract_ticket, host_id_is_current, is_live,
+        monitor_child_exit, parse_sha256_sidecar, parse_sidecar_key, resolve_host_id,
+        resolve_paths, take_for_stop, try_observe_exit, wait_readiness_timeout, Hosted, Inner,
+        ObserveExit, TicketScan, TICKET_SCAN_CAP,
+    };
+    use std::process::Stdio;
+    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::io::BufReader;
+    use tokio::process::Command;
+
+    const SAMPLE_TICKET: &str = "endpointac5qv3krex5jrly5kpdrkxhy67gxq3ases";
 
     #[test]
     fn home_override_outranks_the_env_chain() {
@@ -729,5 +1094,276 @@ mod tests {
         let wrong_name = format!("{digest}  other.tar.gz");
         assert_eq!(parse_sha256_sidecar(&wrong_name, "x.tar.gz"), None);
         assert_eq!(parse_sha256_sidecar("zz", "x.tar.gz"), None);
+    }
+
+    #[test]
+    fn ticket_scan_caps_the_window_and_still_finds_a_late_ticket() {
+        let mut scan = TicketScan::new(64);
+        for i in 0..200 {
+            assert_eq!(scan.push_line(&format!("noise {i} with no ticket")), None);
+        }
+        assert!(scan.len() <= 64);
+        assert_eq!(
+            scan.push_line(&format!("Ticket：{SAMPLE_TICKET}"))
+                .as_deref(),
+            Some(SAMPLE_TICKET)
+        );
+    }
+
+    #[test]
+    fn ticket_scan_reads_a_ticket_on_the_line_even_when_the_window_is_full() {
+        let mut scan = TicketScan::new(8);
+        scan.push_line("xxxxxxxx");
+        assert_eq!(
+            scan.push_line(&format!("  {SAMPLE_TICKET}")).as_deref(),
+            Some(SAMPLE_TICKET)
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_lines_reads_every_line_until_eof() {
+        let cursor = std::io::Cursor::new("one\ntwo\nthree\n");
+        let mut got = Vec::new();
+        drain_lines(BufReader::new(cursor), |line| got.push(line)).await;
+        assert_eq!(got, ["one", "two", "three"]);
+    }
+
+    #[tokio::test]
+    async fn readiness_timeout_reports_only_when_still_outstanding() {
+        let pending = AtomicBool::new(false);
+        assert!(wait_readiness_timeout(Duration::from_millis(5), &pending).await);
+        let done = AtomicBool::new(true);
+        assert!(!wait_readiness_timeout(Duration::from_millis(5), &done).await);
+    }
+
+    #[tokio::test]
+    async fn sidecar_waiter_sees_a_key_written_after_the_first_miss() {
+        let dir = std::env::temp_dir().join(format!(
+            "lw-sidecar-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("keeper-key.txt");
+        let writer = path.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            tokio::fs::write(writer, "room=table\nkey=UHEYQm7dvCvNujUglSaj8Px-\n")
+                .await
+                .unwrap();
+        });
+        let key = await_sidecar_key(&path, 20, Duration::from_millis(10)).await;
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        assert_eq!(key.as_deref(), Some("UHEYQm7dvCvNujUglSaj8Px-"));
+    }
+
+    #[tokio::test]
+    async fn monitor_claims_an_exit_exactly_once() {
+        let step = AtomicU8::new(0);
+        let first = monitor_child_exit(
+            || match step.fetch_add(1, Ordering::SeqCst) {
+                0 => ObserveExit::Running,
+                _ => ObserveExit::Exited(Some(7)),
+            },
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(first, Some(Some(7)));
+        let stale = monitor_child_exit(|| ObserveExit::Stale, Duration::from_millis(1)).await;
+        assert_eq!(stale, None);
+    }
+
+    fn spawn_sh(script: &str) -> tokio::process::Child {
+        Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn sh")
+    }
+
+    #[tokio::test]
+    async fn short_command_stdout_and_stderr_drain_until_exit() {
+        let mut child = spawn_sh(&format!(
+            "echo out-a; echo pre >&2; echo Ticket：{SAMPLE_TICKET} >&2; echo out-b; echo post >&2; exit 3"
+        ));
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let err = Arc::new(Mutex::new(Vec::new()));
+        let mut scan = TicketScan::new(TICKET_SCAN_CAP);
+        let ticket = Arc::new(Mutex::new(None));
+        let out_c = out.clone();
+        let err_c = err.clone();
+        let ticket_c = ticket.clone();
+        let drain_out = drain_lines(BufReader::new(stdout), move |line| {
+            out_c.lock().unwrap().push(line);
+        });
+        let drain_err = drain_lines(BufReader::new(stderr), move |line| {
+            if ticket_c.lock().unwrap().is_none() {
+                *ticket_c.lock().unwrap() = scan.push_line(&line);
+            }
+            err_c.lock().unwrap().push(line);
+        });
+        let reported = AtomicBool::new(false);
+        let ((), (), timed_out) = tokio::join!(
+            drain_out,
+            drain_err,
+            wait_readiness_timeout(Duration::from_millis(5), &reported),
+        );
+        // Timeout is a readiness signal only — both pipes still drained to EOF.
+        let _ = timed_out;
+        let status = child.wait().await.unwrap();
+        assert_eq!(status.code(), Some(3));
+        assert_eq!(*out.lock().unwrap(), ["out-a", "out-b"]);
+        assert_eq!(
+            *err.lock().unwrap(),
+            vec![
+                "pre".to_string(),
+                format!("Ticket：{SAMPLE_TICKET}"),
+                "post".to_string()
+            ]
+        );
+        assert_eq!(ticket.lock().unwrap().as_deref(), Some(SAMPLE_TICKET));
+    }
+
+    #[tokio::test]
+    async fn readiness_timeout_leaves_the_stderr_reader_in_place() {
+        let mut child = spawn_sh(&format!(
+            "echo pre >&2; sleep 0.15; echo Ticket：{SAMPLE_TICKET} >&2; echo post >&2"
+        ));
+        let stderr = child.stderr.take().unwrap();
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let lines_c = lines.clone();
+        let mut scan = TicketScan::new(TICKET_SCAN_CAP);
+        let ticket = Arc::new(Mutex::new(None));
+        let ticket_c = ticket.clone();
+        let drain = tokio::spawn(async move {
+            drain_lines(BufReader::new(stderr), move |line| {
+                if ticket_c.lock().unwrap().is_none() {
+                    *ticket_c.lock().unwrap() = scan.push_line(&line);
+                }
+                lines_c.lock().unwrap().push(line);
+            })
+            .await;
+        });
+        let reported = AtomicBool::new(false);
+        assert!(wait_readiness_timeout(Duration::from_millis(40), &reported).await);
+        // The timeout fired while the process was still writing; drain continues.
+        drain.await.unwrap();
+        let collected = lines.lock().unwrap().clone();
+        assert!(collected.iter().any(|line| line == "pre"));
+        assert!(collected.iter().any(|line| line == "post"));
+        assert_eq!(ticket.lock().unwrap().as_deref(), Some(SAMPLE_TICKET));
+        let _ = child.wait().await;
+    }
+
+    #[test]
+    fn resolve_host_id_keeps_a_nonempty_mint_and_fills_a_blank() {
+        assert_eq!(resolve_host_id(Some("  minted-1  ".into())), "minted-1");
+        let fallback = resolve_host_id(Some("   ".into()));
+        assert!(fallback.starts_with("host-"));
+        assert_ne!(fallback, "minted-1");
+    }
+
+    #[tokio::test]
+    async fn observe_exit_of_a_short_command_is_once_per_host_id() {
+        let child = spawn_sh("exit 9");
+        let mut inner = Inner {
+            hosted: Some(Hosted {
+                child,
+                host_id: "sess-1".into(),
+            }),
+            current_host_id: Some("sess-1".into()),
+        };
+        let mut saw = ObserveExit::Running;
+        for _ in 0..50 {
+            saw = try_observe_exit(&mut inner, "sess-1");
+            if saw != ObserveExit::Running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(saw, ObserveExit::Exited(Some(9)));
+        assert!(!host_id_is_current(&inner, "sess-1"));
+        assert_eq!(try_observe_exit(&mut inner, "sess-1"), ObserveExit::Stale);
+        assert_eq!(try_observe_exit(&mut inner, "sess-2"), ObserveExit::Stale);
+        assert!(!is_live(&mut inner));
+    }
+
+    #[tokio::test]
+    async fn observed_exit_clears_current_id_so_ready_cannot_follow() {
+        // The bug: try_observe_exit took hosted but left generation current,
+        // so announce_ready still emitted Ready after Exit.
+        let child = spawn_sh("exit 0");
+        let mut inner = Inner {
+            hosted: Some(Hosted {
+                child,
+                host_id: "dead".into(),
+            }),
+            current_host_id: Some("dead".into()),
+        };
+        let mut saw = ObserveExit::Running;
+        for _ in 0..50 {
+            saw = try_observe_exit(&mut inner, "dead");
+            if saw != ObserveExit::Running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(saw, ObserveExit::Exited(Some(0)));
+        assert!(
+            !host_id_is_current(&inner, "dead"),
+            "late Ready must not see this id as current"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_takes_the_child_and_the_monitor_does_not_claim_exit() {
+        let child = spawn_sh("sleep 30");
+        let mut inner = Inner {
+            hosted: Some(Hosted {
+                child,
+                host_id: "sess-4".into(),
+            }),
+            current_host_id: Some("sess-4".into()),
+        };
+        assert!(is_live(&mut inner));
+        let (mut taken, stopped_id) = take_for_stop(&mut inner).expect("child");
+        assert_eq!(stopped_id, "sess-4");
+        assert!(!host_id_is_current(&inner, "sess-4"));
+        assert_eq!(try_observe_exit(&mut inner, "sess-4"), ObserveExit::Stale);
+        assert!(!is_live(&mut inner));
+        let _ = taken.start_kill();
+        let status = tokio::time::timeout(Duration::from_secs(2), taken.wait())
+            .await
+            .expect("stop wait")
+            .expect("wait");
+        // SIGKILL has no numeric code on Unix; the point is the wait finished.
+        let _ = status.code();
+    }
+
+    #[tokio::test]
+    async fn stale_host_id_never_claims_a_live_child() {
+        let child = spawn_sh("sleep 30");
+        let mut inner = Inner {
+            hosted: Some(Hosted {
+                child,
+                host_id: "live".into(),
+            }),
+            current_host_id: Some("live".into()),
+        };
+        assert_eq!(try_observe_exit(&mut inner, "dead"), ObserveExit::Stale);
+        assert!(host_id_is_current(&inner, "live"));
+        assert!(is_live(&mut inner));
+        if let Some((mut child, _)) = take_for_stop(&mut inner) {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        }
     }
 }
