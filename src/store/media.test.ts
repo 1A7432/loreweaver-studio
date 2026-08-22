@@ -153,4 +153,28 @@ describe("media store", () => {
       expect(useMediaStore.getState().uploadsEnabled).toBeNull()
     })
   })
+
+  it("does not resurrect an upload that finished after the session was reset", async () => {
+    let finish: (value: string) => void = () => {}
+    native.mediaUpload.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve
+        }),
+    )
+    await useMediaStore.getState().upload("/tmp/handout.png")
+    useMediaStore.getState().ingest({ type: "media_accept", upload_id: "u-7" })
+    await vi.waitFor(() => expect(useMediaStore.getState().uploads.abc123.phase).toBe("sending"))
+
+    const epoch = useMediaStore.getState().epoch
+    useMediaStore.getState().reset()
+    expect(useMediaStore.getState().epoch).toBe(epoch + 1)
+    expect(useMediaStore.getState().uploads).toEqual({})
+
+    finish("abc123")
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(useMediaStore.getState().uploads).toEqual({})
+    expect(useMediaStore.getState().epoch).toBe(epoch + 1)
+  })
 })

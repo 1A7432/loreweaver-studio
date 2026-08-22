@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { NarrativeFrame, ServerFrame } from "@loreweaver/protocol"
+import { dataUrlCacheHas, loadDataUrl } from "../lib/dataUrlCache"
 
 const sent: unknown[] = []
 vi.mock("../lib/transport", () => ({
@@ -8,6 +9,8 @@ vi.mock("../lib/transport", () => ({
   },
 }))
 
+import { useAdminStore } from "./admin"
+import { usePanelsStore } from "./panels"
 import {
   MAX_LOG_ENTRIES,
   MAX_STREAM_TEXT,
@@ -120,6 +123,85 @@ describe("session store", () => {
 
     ingest({ type: "state", party: [], initiative: [], online: 1, reset: true })
     expect(useSessionStore.getState().entries).toHaveLength(0)
+  })
+
+  it("clears hook sidebar regions on a campaign wipe, not the module manifest or pack inventory", () => {
+    // TUI GameView drops sidebarUi with the log; the module list and the
+    // server's installed-pack card catalog are not campaign residue.
+    usePanelsStore.getState().applyManifest([
+      {
+        id: "harbour/case-board",
+        title: { en: "Case Board" },
+        slot: "sidebar",
+        tier: 1,
+        blocks: [{ kind: "text", text: { en: "clues" } }],
+      },
+    ])
+    ingest({
+      type: "ui",
+      panel: "sidebar",
+      id: "hud",
+      blocks: [{ kind: "badge", label: "omen" }],
+    })
+    ingest({
+      type: "pack_cards",
+      cards: [{ ref: "harbour/cards/pilot.png", pack: "harbour", name: "pilot" }],
+    })
+    expect(useSessionStore.getState().uiPanels).toHaveLength(1)
+
+    ingest({ type: "state", party: [], initiative: [], online: 1, reset: true })
+
+    expect(useSessionStore.getState().entries).toHaveLength(0)
+    expect(useSessionStore.getState().uiPanels).toHaveLength(0)
+    expect(usePanelsStore.getState().manifest.map((panel) => panel.id)).toEqual(["harbour/case-board"])
+    expect(useSessionStore.getState().packCards).toEqual([
+      { ref: "harbour/cards/pilot.png", pack: "harbour", name: "pilot" },
+    ])
+  })
+
+  it("drops keeper-admin leftovers on session clear, not on a campaign wipe", () => {
+    useAdminStore.setState({
+      generated: {
+        type: "admin_generated",
+        kind: "module",
+        ok: true,
+        id: "old",
+        name: "Old Room Module",
+        error: "",
+        detail: "installed",
+      },
+      roomOp: {
+        type: "admin_room_op",
+        action: "reset",
+        room: "old-room",
+        keys: 2,
+        store_rows: 4,
+        vector_points: 0,
+      },
+      serverUpdate: { type: "admin_update", status: "failed", output: "stale" },
+      lastError: "stale forbidden",
+    })
+
+    ingest({ type: "state", party: [], initiative: [], online: 1, reset: true })
+    expect(useAdminStore.getState().lastError).toBe("stale forbidden")
+    expect(useAdminStore.getState().generated?.name).toBe("Old Room Module")
+    expect(useAdminStore.getState().roomOp?.room).toBe("old-room")
+    expect(useAdminStore.getState().serverUpdate?.status).toBe("failed")
+
+    useSessionStore.getState().clear()
+    const admin = useAdminStore.getState()
+    expect(admin.generated).toBeNull()
+    expect(admin.roomOp).toBeNull()
+    expect(admin.serverUpdate).toBeNull()
+    expect(admin.lastError).toBeNull()
+  })
+
+  it("recycles settled picture URLs when the play session is cleared", async () => {
+    const hash = "a".repeat(64)
+    await loadDataUrl(hash, () => Promise.resolve("data:image/png;base64,xx"))
+    expect(dataUrlCacheHas(hash)).toBe(true)
+    useSessionStore.getState().clear()
+    expect(dataUrlCacheHas(hash)).toBe(false)
   })
 
   it("tracks presence and turn status with a safety timeout", () => {

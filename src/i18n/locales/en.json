@@ -1,6 +1,7 @@
 {
   "app": {
-    "title": "Loreweaver Studio"
+    "title": "Loreweaver Studio",
+    "persistDegraded": "Your work is not being saved on this device. A restart will lose unpublished edits."
   },
   "nav": {
     "label": "Mode",

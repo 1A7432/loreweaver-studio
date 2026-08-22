@@ -13,7 +13,9 @@ import type {
   TurnActivity,
   UiFrame,
 } from "@loreweaver/protocol"
+import { clearDataUrlCache } from "../lib/dataUrlCache"
 import { transportSend } from "../lib/transport"
+import { useAdminStore } from "./admin"
 import { usePanelsStore } from "./panels"
 
 /** Scrollback cap, mirroring the reference TUI client. */
@@ -302,8 +304,16 @@ export const useSessionStore = create<SessionState>((set) => ({
         return
       case "state":
         // `reset:true` marks the snapshot right after a campaign wipe: the
-        // panel data is already fresh and the scrollback must go too.
-        set((s) => ({ game: frame, entries: frame.reset ? [] : s.entries }))
+        // state-frame panel data is already fresh, the scrollback must go,
+        // and so must hook-emitted sidebar `ui` regions (they are campaign
+        // residue). The module `ui_manifest` and the server's installed-pack
+        // card inventory are not campaign state — a story reset keeps the
+        // module, and `pack_cards` is what `.import` can see on this host.
+        set((s) => ({
+          game: frame,
+          entries: frame.reset ? [] : s.entries,
+          uiPanels: frame.reset ? [] : s.uiPanels,
+        }))
         return
       case "presence":
         set({ presence: frame })
@@ -388,7 +398,12 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   clear: () => {
+    // Explicit new play session (connect calls this). Campaign wipe is
+    // `state{reset:true}` and must not go through here — a keeper's last
+    // room-op / generate / error still belongs to this table.
     usePanelsStore.getState().resetSession()
+    useAdminStore.getState().reset()
+    clearDataUrlCache()
     set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [], packCards: null })
   },
 }))

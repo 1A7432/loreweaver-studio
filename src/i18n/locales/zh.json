@@ -1,6 +1,7 @@
 {
   "app": {
-    "title": "Loreweaver 工作台"
+    "title": "Loreweaver 工作台",
+    "persistDegraded": "本机未能保存你的工作。重启后未写入的修改会丢失。"
   },
   "nav": {
     "label": "模式",

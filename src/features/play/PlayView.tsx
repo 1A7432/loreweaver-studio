@@ -110,7 +110,12 @@ function OnlineView() {
   // is not otherwise meaningful).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setScreen("menu")
+      if (event.key !== "Escape") return
+      // A child that owns this key (panel modal, an in-progress sheet edit)
+      // preventDefault()s. InputBox does not — Esc from the chat field is
+      // still the TUI's "back to the menu".
+      if (event.defaultPrevented) return
+      setScreen("menu")
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
