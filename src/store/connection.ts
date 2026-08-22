@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { isServerFrame, protocolMismatch, type WelcomeFrame } from "@loreweaver/protocol"
 import i18n from "../i18n"
 import {
+  createConnectionId,
   isTauri,
   transportConnect,
   transportDisconnect,
@@ -38,10 +39,17 @@ interface ConnectionState {
   attempt: number
   lastError: string | null
   welcome: WelcomeFrame | null
+  /**
+   * The live Tauri-bridge generation. Events stamped with any other id are
+   * dropped at `handleEvent` — including ones already sitting in the JS
+   * queue when this is overwritten. `null` after disconnect, so a queued
+   * Offline/Frame from the dying actor cannot write back.
+   */
+  connectionId: string | null
   /** A handshake this store refused. While set, transport statuses are ignored
    * — see `handleEvent`. Cleared only by an explicit new connect. */
   refused: boolean
-  connect: (params: TransportConnectParams) => Promise<void>
+  connect: (params: Omit<TransportConnectParams, "connectionId">) => Promise<void>
   disconnect: () => Promise<void>
   /** Single entry point for everything the Rust bridge emits. */
   handleEvent: (event: TransportEvent) => void
@@ -63,6 +71,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   attempt: 0,
   lastError: null,
   welcome: null,
+  connectionId: null,
   refused: false,
 
   connect: async (params) => {
@@ -71,21 +80,49 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     // status that follows for the rest of the process's life.
     set({ refused: false })
     if (!isTauri()) {
-      set({ status: "offline", lastError: "transport is only available inside the app shell" })
+      set({
+        status: "offline",
+        lastError: "transport is only available inside the app shell",
+        connectionId: null,
+      })
       return
     }
-    set({ status: "connecting", attempt: 0, lastError: null, welcome: null })
+    // Mint the new generation BEFORE clear() and BEFORE the invoke returns.
+    // Events already queued from the previous actor carry the old id and
+    // must not refill the session we are about to wipe; events from the new
+    // actor may arrive before `transportConnect` resolves.
+    const connectionId = createConnectionId()
+    set({ status: "connecting", attempt: 0, lastError: null, welcome: null, connectionId })
     useSessionStore.getState().clear()
     useMediaStore.getState().reset()
     useAudioStore.getState().reset()
     try {
-      await transportConnect({ ...params, ticket: sanitizeTicket(params.ticket), key: params.key.trim() })
+      await transportConnect({
+        ...params,
+        ticket: sanitizeTicket(params.ticket),
+        key: params.key.trim(),
+        connectionId,
+      })
     } catch (err) {
-      set({ status: "offline", lastError: String(err) })
+      // A later explicit connect may already own the store. This invoke is
+      // stale; writing offline/null would kill generation B.
+      if (get().connectionId !== connectionId) return
+      set({ status: "offline", lastError: String(err), connectionId: null })
     }
   },
 
   disconnect: async () => {
+    // Invalidate FIRST. The dying actor still emits Offline (and maybe a
+    // last Frame); those events may already be in the JS queue. Clearing
+    // the generation here is what stops them writing the previous room
+    // back after the caller has moved on. Status is set locally because
+    // the Offline event itself will now be dropped.
+    //
+    // The invoke below writes nothing when it settles, so a concurrent
+    // newer connect is safe from this function's tail — do not add a
+    // post-await set.
+    const lastError = get().refused ? get().lastError : null
+    set({ connectionId: null, status: "offline", attempt: 0, welcome: null, lastError })
     if (!isTauri()) return
     try {
       await transportDisconnect()
@@ -95,6 +132,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
 
   handleEvent: (event) => {
+    // The single chokepoint for a stale generation. A Rust-side check
+    // before emit cannot see an event that has already crossed the bridge.
+    if (event.connectionId !== get().connectionId) return
     if (event.kind === "status") {
       // A refusal outranks every status that follows it. The bridge emits the
       // welcome frame and `online` back-to-back (`client.rs`: `settled = true`

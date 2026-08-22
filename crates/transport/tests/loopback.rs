@@ -9,7 +9,7 @@ use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use loreweaver_transport::client::{
-    connect, ConnStatus, ConnectParams, NetworkProfile, TransportEvent,
+    connect, connect_with_backoff_pulse, ConnStatus, ConnectParams, NetworkProfile, TransportEvent,
 };
 use loreweaver_transport::codec::{encode_line, LineDecoder};
 use serde_json::{json, Value};
@@ -180,6 +180,7 @@ async fn happy_path_join_autopong_and_echo() {
 
     handle
         .send_frame(json!({"type": "input", "text": "hello"}))
+        .await
         .expect("send while online");
     let narrative = expect_frame(&mut rx).await;
     assert_eq!(narrative["type"], "narrative");
@@ -254,6 +255,7 @@ async fn welcome_of_any_protocol_version_is_forwarded_verbatim() {
 
         handle
             .send_frame(json!({"type": "input", "text": "still open"}))
+            .await
             .expect("send while online");
         assert_eq!(expect_frame(&mut rx).await["type"], "ack");
 
@@ -293,6 +295,7 @@ async fn reconnects_with_rejoin_after_connection_loss() {
     expect_status(&mut rx, ConnStatus::Online).await;
     handle
         .send_frame(json!({"type": "input", "text": "before drop"}))
+        .await
         .expect("send while online");
 
     let (attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
@@ -486,4 +489,123 @@ async fn put_blob_roundtrip_and_error_reply() {
     handle.close();
     expect_status(&mut rx, ConnStatus::Offline).await;
     server.await.expect("server task");
+}
+
+/// A write that the control stream accepted is `Ok`. Enqueue-and-return-Ok
+/// was the old bug: the handle resolved before the actor touched the stream.
+#[tokio::test]
+async fn send_while_online_returns_ok_after_write() {
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let _join = conn.read_frame().await;
+        conn.write_frame(&welcome_frame("1.6")).await;
+        let input = conn.read_frame().await;
+        assert_eq!(input, json!({"type": "input", "text": "delivered"}));
+        conn.conn.closed().await;
+    });
+
+    let (handle, mut rx) = connect(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+
+    handle
+        .send_frame(json!({"type": "input", "text": "delivered"}))
+        .await
+        .expect("online write is Ok only after the stream accepts it");
+
+    handle.close();
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.await.expect("server task");
+}
+
+/// After a settled session drops, the actor sleeps the backoff window
+/// (`Reconnecting` is emitted only when that sleep ends) and used to
+/// `continue` on `Command::Send` — the handle had already returned `Ok`,
+/// so the typed line vanished. The verdict must be `Err` here.
+#[tokio::test]
+async fn send_during_reconnect_backoff_returns_err() {
+    let (endpoint, ticket) = bind_server().await;
+    let (drop_tx, drop_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let mut first = ServerConn::accept(&endpoint).await;
+        let _join = first.read_frame().await;
+        first.write_frame(&welcome_frame("1.6")).await;
+        drop_rx.await.expect("client asks the server to drop");
+        first.conn.close(0u32.into(), b"drop");
+        // Hold the endpoint; do not accept a redial (that would end backoff).
+        tokio::time::sleep(STEP).await;
+        drop(endpoint);
+    });
+
+    let (handle, mut rx, mut backoff) = connect_with_backoff_pulse(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+
+    drop_tx.send(()).expect("signal the drop");
+    tokio::time::timeout(STEP, backoff.recv())
+        .await
+        .expect("actor observed the loss")
+        .expect("backoff pulse channel open");
+    let err = handle
+        .send_frame(json!({"type": "input", "text": "lost if this is Ok"}))
+        .await
+        .expect_err("backoff must not report a successful send");
+    assert!(
+        err.contains("offline") || err.contains("closed") || err.contains("send failed"),
+        "unexpected send error: {err}"
+    );
+
+    handle.close();
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.abort();
+}
+
+/// Close (and actor drop) must settle a waiter rather than leave the
+/// `transport_send` Promise pending forever.
+#[tokio::test]
+async fn close_settles_a_pending_send() {
+    let (endpoint, ticket) = bind_server().await;
+    let (drop_tx, drop_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let mut first = ServerConn::accept(&endpoint).await;
+        let _join = first.read_frame().await;
+        first.write_frame(&welcome_frame("1.6")).await;
+        drop_rx.await.expect("client asks the server to drop");
+        first.conn.close(0u32.into(), b"drop");
+        tokio::time::sleep(STEP).await;
+        drop(endpoint);
+    });
+
+    let (handle, mut rx, mut backoff) = connect_with_backoff_pulse(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+    drop_tx.send(()).expect("signal the drop");
+    tokio::time::timeout(STEP, backoff.recv())
+        .await
+        .expect("actor observed the loss")
+        .expect("backoff pulse channel open");
+
+    let pending = {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle
+                .send_frame(json!({"type": "input", "text": "late"}))
+                .await
+        })
+    };
+    handle.close();
+    let result = tokio::time::timeout(STEP, pending)
+        .await
+        .expect("close settles the waiter")
+        .expect("send task");
+    assert!(
+        result.is_err(),
+        "close must fail the pending send, got {result:?}"
+    );
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.abort();
 }

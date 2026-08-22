@@ -208,6 +208,9 @@ describe("test-drive: the dev-room mode", () => {
     const stop = vi.fn(async () => {})
     const start = vi.fn(async (root?: string) => {
       useHostLocalStore.setState({ phase: "ready", devSourceRoot: root ?? "" })
+      // disconnect() now invalidates the generation and goes offline; a
+      // real restart dials again and a new welcome lands.
+      useConnectionStore.setState({ status: "online", welcome: WELCOME })
     })
     useHostLocalStore.setState({ phase: "ready", devSourceRoot: "/somewhere/else", start, stop })
     useConnectionStore.setState({ status: "online", welcome: WELCOME })
