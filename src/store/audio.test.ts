@@ -88,10 +88,56 @@ describe("audio store", () => {
   it("ignores frames from the other families", () => {
     expect(useAudioStore.getState().ingest({ type: "system", level: "info", text: "x" })).toBe(false)
   })
+
+  it("keeps a load error on the layer that failed, and a play clears only that layer", () => {
+    useAudioStore.getState().unlock()
+    useAudioStore.getState().ingest(control({ layer: "bgm", hash: "abc", title: "Tide" }))
+    useAudioStore.getState().ingest(control({ layer: "ambience", hash: "def", title: "Rain" }))
+    useAudioStore.getState().setLayerLoadError("bgm", "blob exceeds the client cap")
+    expect(useAudioStore.getState().layers.bgm.loadError).toBe("blob exceeds the client cap")
+    expect(useAudioStore.getState().layers.ambience.loadError).toBeNull()
+
+    // A new play of the same hash is a natural retry: error gone, epoch up.
+    const epoch = useAudioStore.getState().layers.bgm.loadEpoch
+    useAudioStore.getState().ingest(control({ layer: "bgm", hash: "abc" }))
+    expect(useAudioStore.getState().layers.bgm.loadError).toBeNull()
+    expect(useAudioStore.getState().layers.bgm.loadEpoch).toBe(epoch + 1)
+    expect(useAudioStore.getState().layers.ambience.loadError).toBeNull()
+  })
+
+  it("retries one layer without touching the others", () => {
+    useAudioStore.getState().setLayerLoadError("sfx", "decode")
+    useAudioStore.getState().setLayerLoadError("bgm", "still failing")
+    const sfxEpoch = useAudioStore.getState().layers.sfx.loadEpoch
+    useAudioStore.getState().retryLayer("sfx")
+    expect(useAudioStore.getState().layers.sfx.loadError).toBeNull()
+    expect(useAudioStore.getState().layers.sfx.loadEpoch).toBe(sfxEpoch + 1)
+    expect(useAudioStore.getState().layers.bgm.loadError).toBe("still failing")
+  })
+
+  it("drops a load error when the hash changes, including on a replayed state", () => {
+    useAudioStore.getState().unlock()
+    useAudioStore.getState().ingest(control({ layer: "bgm", hash: "old" }))
+    useAudioStore.getState().setLayerLoadError("bgm", "not cached")
+    useAudioStore.getState().ingest({
+      type: "audio_state",
+      layers: [{ layer: "bgm", hash: "new", playing: true }],
+    })
+    expect(useAudioStore.getState().layers.bgm.loadError).toBeNull()
+    expect(useAudioStore.getState().layers.bgm.hash).toBe("new")
+  })
 })
 
 describe("effectiveVolume", () => {
-  const layer = { layer: "bgm" as const, playing: true, muted: false, gain: 1, waitingForUnlock: false }
+  const layer = {
+    layer: "bgm" as const,
+    playing: true,
+    muted: false,
+    gain: 1,
+    waitingForUnlock: false,
+    loadError: null,
+    loadEpoch: 0,
+  }
 
   it("multiplies the server's level by the listener's own", () => {
     expect(effectiveVolume({ ...layer, volume: 0.5, gain: 0.5 }, false)).toBe(0.25)

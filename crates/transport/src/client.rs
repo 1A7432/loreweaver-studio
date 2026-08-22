@@ -15,15 +15,12 @@ use tokio::time::Instant;
 use crate::backoff::Backoff;
 use crate::codec::{encode_line, LineDecoder, MAX_LINE_BYTES};
 use crate::frames::{self, ALPN};
+use crate::limits::accepted_blob_size;
 
 /// How long we wait for `welcome` (or `error`) after sending `join`. The
 /// server's own handshake timeout defaults to 10s; ours is slightly larger so
 /// the server-side verdict usually arrives first.
 pub const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Upper bound on one fetched blob (protocol media caps top out at 128 MiB for
-/// audio; panel assets are far smaller — this is a defensive ceiling, not a quota).
-pub const MAX_BLOB_BYTES: u64 = 64 * 1024 * 1024;
 
 /// End-to-end deadline for one blob fetch, header and body included.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -497,9 +494,7 @@ async fn fetch_blob_on(
         .get("size")
         .and_then(Value::as_u64)
         .ok_or_else(|| "media reply header missing size".to_owned())?;
-    if size > MAX_BLOB_BYTES {
-        return Err(format!("blob exceeds the {MAX_BLOB_BYTES}-byte cap"));
-    }
+    let size = accepted_blob_size(size)?;
     let mime = header
         .get("mime")
         .and_then(Value::as_str)
@@ -512,7 +507,6 @@ async fn fetch_blob_on(
         .to_owned();
 
     // `buf` already holds whatever body bytes rode in with the header chunk.
-    let size = size as usize;
     let mut body = buf;
     while body.len() < size {
         match recv.read(&mut chunk).await {

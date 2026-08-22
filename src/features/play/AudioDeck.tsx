@@ -3,23 +3,27 @@
 // One `<audio>` element per layer, fed from the same verified cache the picture
 // path uses: `audio_control` names a blob by hash, `assetFetch` pulls it over
 // the media byte channel and stores it under its sha256, and `assetReadBase64`
-// hands back only bytes that passed verification. Nothing plays from a URL the
-// server chose.
+// hands back only bytes that passed verification. Playback is a `blob:` URL
+// built from those bytes — not a `data:` URL, which would keep a second 4/3
+// copy of a 128 MiB track in the DOM. Nothing plays from a URL the server chose.
 //
 // Autoplay is handled, not hoped for. A webview refuses sound before a user
 // gesture, and the failure is silent in most engines — so a play that arrives
 // early is REMEMBERED (`waitingForUnlock`) and the deck shows one button that
 // starts everything still waiting. A staged BGM cue is something the author
 // composed; losing it to a policy nobody surfaced is the bug this avoids.
+//
+// Fetch/read/decode failures are NOT silent. Each layer records its own
+// `loadError`; a retry (or a new play / hash change) clears only that layer.
 
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { AudioLayer } from "@loreweaver/protocol"
-import { assetFetch, assetReadBase64 } from "./panels/assets"
 import { AUDIO_LAYERS, effectiveVolume, useAudioStore, type LayerState } from "../../store/audio"
 import { isTauri, transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useMediaStore } from "../../store/media"
+import { cachedAudioUrl } from "./audioPlayback"
 import {
   importPackAudioCommand,
   LAYER_DEFAULT_LOOP,
@@ -28,43 +32,50 @@ import {
   volumeCommand,
 } from "./audioCommands"
 
-/** Pull one blob into the verified cache and hand back a `data:` URL.
- *
- * Audio is inert content, like a tier-1 `image` block — the CSP already allows
- * `data:` media, and the alternative (a blob URL fed from the WebView) would
- * mean moving the bytes through JS twice. */
-async function cachedAudioUrl(hash: string, mime: string): Promise<string> {
-  await assetFetch(hash)
-  const base64 = await assetReadBase64(hash)
-  return `data:${mime || "audio/mpeg"};base64,${base64}`
-}
-
 function LayerPlayer({ layer }: { layer: LayerState }) {
   const element = useRef<HTMLAudioElement | null>(null)
+  const objectUrl = useRef<string | null>(null)
   const [src, setSrc] = useState<string | null>(null)
   const masterMuted = useAudioStore((s) => s.muted)
   const unlocked = useAudioStore((s) => s.unlocked)
+  const setLayerLoadError = useAudioStore((s) => s.setLayerLoadError)
   const hash = layer.hash ?? ""
 
   useEffect(() => {
+    const dropUrl = () => {
+      if (objectUrl.current !== null) {
+        URL.revokeObjectURL(objectUrl.current)
+        objectUrl.current = null
+      }
+    }
     if (!hash || !isTauri()) {
+      dropUrl()
       setSrc(null)
       return
     }
     let live = true
     void cachedAudioUrl(hash, layer.mime ?? "")
       .then((url) => {
-        if (live) setSrc(url)
+        if (!live) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        dropUrl()
+        objectUrl.current = url
+        setSrc(url)
+        setLayerLoadError(layer.layer, null)
       })
-      .catch(() => {
-        // A cue whose bytes will not come is silence, not a crash; the deck
-        // still shows what the server asked for.
-        if (live) setSrc(null)
+      .catch((cause: unknown) => {
+        if (!live) return
+        dropUrl()
+        setSrc(null)
+        setLayerLoadError(layer.layer, cause instanceof Error ? cause.message : String(cause))
       })
     return () => {
       live = false
+      dropUrl()
     }
-  }, [hash, layer.mime])
+  }, [hash, layer.layer, layer.mime, layer.loadEpoch, setLayerLoadError])
 
   useEffect(() => {
     const audio = element.current
@@ -72,9 +83,17 @@ function LayerPlayer({ layer }: { layer: LayerState }) {
     audio.volume = effectiveVolume(layer, masterMuted)
     audio.loop = layer.loop === true
     if (layer.playing && unlocked && src !== null) {
-      void audio.play().catch(() => {
-        // Still refused: keep the element paused rather than pretending.
-      })
+      try {
+        const attempt = audio.play()
+        if (attempt !== undefined && typeof attempt.catch === "function") {
+          void attempt.catch(() => {
+            // Still refused: keep the element paused rather than pretending.
+          })
+        }
+      } catch {
+        // jsdom (and some webviews) throw instead of returning a rejected
+        // promise. Either way the element stays paused.
+      }
     } else {
       audio.pause()
     }
@@ -83,13 +102,28 @@ function LayerPlayer({ layer }: { layer: LayerState }) {
   if (src === null) return null
   // Not `controls`: the keeper drives playback, and the listener's own controls
   // are the mixer rows below.
-  return <audio ref={element} src={src} preload="auto" />
+  return (
+    <audio
+      ref={element}
+      src={src}
+      preload="auto"
+      onError={() => {
+        setLayerLoadError(layer.layer, "decode")
+        if (objectUrl.current !== null) {
+          URL.revokeObjectURL(objectUrl.current)
+          objectUrl.current = null
+        }
+        setSrc(null)
+      }}
+    />
+  )
 }
 
 function LayerRow({ layer }: { layer: LayerState }) {
   const { t } = useTranslation()
   const setLayerMuted = useAudioStore((s) => s.setLayerMuted)
   const setLayerGain = useAudioStore((s) => s.setLayerGain)
+  const retryLayer = useAudioStore((s) => s.retryLayer)
   const label = t(`play.audio.layers.${layer.layer}`)
 
   return (
@@ -100,6 +134,16 @@ function LayerRow({ layer }: { layer: LayerState }) {
           ? (layer.title ?? layer.name ?? t("play.audio.untitled"))
           : t("play.audio.silent")}
       </span>
+      {layer.loadError !== null ? (
+        <>
+          <span className="audio-load-error" role="alert" title={layer.loadError}>
+            {t("play.audio.loadFailed")}
+          </span>
+          <button type="button" className="ghost-button" onClick={() => retryLayer(layer.layer)}>
+            {t("play.audio.retry")}
+          </button>
+        </>
+      ) : null}
       <label className="audio-mute">
         <input
           type="checkbox"

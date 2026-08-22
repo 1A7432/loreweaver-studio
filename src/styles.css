@@ -3424,6 +3424,12 @@ body {
   white-space: nowrap;
 }
 
+.audio-load-error {
+  flex: none;
+  font-size: 11px;
+  color: var(--danger);
+}
+
 .audio-mute {
   display: inline-flex;
   gap: 4px;
