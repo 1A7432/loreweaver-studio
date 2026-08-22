@@ -29,7 +29,10 @@
       "desktopOnly": "本地托管需要桌面端。",
       "cancel": "取消",
       "home": "服务器目录（数据、钥匙、缓存）",
-      "homePlaceholder": "~/.loreweaver"
+      "homePlaceholder": "~/.loreweaver",
+      "exitedBeforeReady": "本地服务器在就绪前退出了。",
+      "exitedUnexpectedly": "本地服务器意外停止。",
+      "exitedUnexpectedlyCode": "本地服务器意外停止（代码 {{code}}）。"
     },
     "attempt": "第 {{n}} 次",
     "status": {

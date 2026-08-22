@@ -29,7 +29,10 @@
       "desktopOnly": "Local hosting needs the desktop app.",
       "cancel": "Cancel",
       "home": "Server folder (data, keys, cache)",
-      "homePlaceholder": "~/.loreweaver"
+      "homePlaceholder": "~/.loreweaver",
+      "exitedBeforeReady": "The local server exited before it was ready.",
+      "exitedUnexpectedly": "The local server stopped unexpectedly.",
+      "exitedUnexpectedlyCode": "The local server stopped unexpectedly (code {{code}})."
     },
     "attempt": "attempt {{n}}",
     "status": {
