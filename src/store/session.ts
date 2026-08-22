@@ -15,6 +15,7 @@ import type {
 } from "@loreweaver/protocol"
 import { clearDataUrlCache } from "../lib/dataUrlCache"
 import { transportSend } from "../lib/transport"
+import { useAdminStore } from "./admin"
 import { usePanelsStore } from "./panels"
 
 /** Scrollback cap, mirroring the reference TUI client. */
@@ -397,7 +398,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   clear: () => {
+    // Explicit new play session (connect calls this). Campaign wipe is
+    // `state{reset:true}` and must not go through here — a keeper's last
+    // room-op / generate / error still belongs to this table.
     usePanelsStore.getState().resetSession()
+    useAdminStore.getState().reset()
     clearDataUrlCache()
     set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [], packCards: null })
   },

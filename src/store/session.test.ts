@@ -9,6 +9,7 @@ vi.mock("../lib/transport", () => ({
   },
 }))
 
+import { useAdminStore } from "./admin"
 import { usePanelsStore } from "./panels"
 import {
   MAX_LOG_ENTRIES,
@@ -156,6 +157,43 @@ describe("session store", () => {
     expect(useSessionStore.getState().packCards).toEqual([
       { ref: "harbour/cards/pilot.png", pack: "harbour", name: "pilot" },
     ])
+  })
+
+  it("drops keeper-admin leftovers on session clear, not on a campaign wipe", () => {
+    useAdminStore.setState({
+      generated: {
+        type: "admin_generated",
+        kind: "module",
+        ok: true,
+        id: "old",
+        name: "Old Room Module",
+        error: "",
+        detail: "installed",
+      },
+      roomOp: {
+        type: "admin_room_op",
+        action: "reset",
+        room: "old-room",
+        keys: 2,
+        store_rows: 4,
+        vector_points: 0,
+      },
+      serverUpdate: { type: "admin_update", status: "failed", output: "stale" },
+      lastError: "stale forbidden",
+    })
+
+    ingest({ type: "state", party: [], initiative: [], online: 1, reset: true })
+    expect(useAdminStore.getState().lastError).toBe("stale forbidden")
+    expect(useAdminStore.getState().generated?.name).toBe("Old Room Module")
+    expect(useAdminStore.getState().roomOp?.room).toBe("old-room")
+    expect(useAdminStore.getState().serverUpdate?.status).toBe("failed")
+
+    useSessionStore.getState().clear()
+    const admin = useAdminStore.getState()
+    expect(admin.generated).toBeNull()
+    expect(admin.roomOp).toBeNull()
+    expect(admin.serverUpdate).toBeNull()
+    expect(admin.lastError).toBeNull()
   })
 
   it("recycles settled picture URLs when the play session is cleared", async () => {
