@@ -19,7 +19,7 @@
   a memory optimization; `blob:` reuses the existing `assetReadBase64` read
   and the `img-src` already allowed `blob:` for pictures. CSP adds
   `media-src 'self' blob:` so `<audio>` can play those object URLs.
-- **Rule home:** `crates/transport/src/client.rs` (`MAX_BLOB_BYTES`,
+- **Rule home:** `crates/transport/src/limits.rs` (`MAX_BLOB_BYTES`,
   `accepted_blob_size`); `src-tauri/src/media.rs` (`read_capped_file`);
   `src/features/play/audioPlayback.ts`; `src/store/audio.ts` (`loadError` /
   `retryLayer`).
