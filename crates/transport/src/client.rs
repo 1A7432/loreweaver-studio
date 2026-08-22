@@ -5,6 +5,12 @@
 //! [`TransportEvent`]s from the returned receiver. Lifecycle mirrors the
 //! reference TUI client: `connecting → online → reconnecting → offline`, where
 //! `offline` is only reached by an explicit close or a fatal join error.
+//!
+//! [`ClientHandle::send_frame`] is a delivery verdict, not an enqueue: it
+//! resolves `Ok` only after the control stream accepted the write, and `Err`
+//! when the actor is backing off, offline, closed, or the write itself fails
+//! (a failed write also trips a redial). Pending waiters are settled if the
+//! actor exits or the handle is dropped.
 
 use std::time::Duration;
 
@@ -97,7 +103,10 @@ pub struct FetchedBlob {
 
 #[derive(Debug)]
 enum Command {
-    Send(Value),
+    Send {
+        frame: Value,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     FetchBlob {
         hash: String,
         reply: oneshot::Sender<Result<FetchedBlob, String>>,
@@ -110,10 +119,6 @@ enum Command {
     Close,
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("transport is closed")]
-pub struct TransportClosed;
-
 /// Cheap cloneable handle to the connection actor.
 #[derive(Debug, Clone)]
 pub struct ClientHandle {
@@ -121,10 +126,18 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
-    pub fn send_frame(&self, frame: Value) -> Result<(), TransportClosed> {
+    /// Write one client frame on the live control stream.
+    ///
+    /// `Ok(())` means the bytes were accepted by the stream — not that the
+    /// server has processed them. `Err` means they were not written: the
+    /// actor is backing off / offline / closed, or the write failed (and a
+    /// redial has been started). The future settles even if the actor drops.
+    pub async fn send_frame(&self, frame: Value) -> Result<(), String> {
+        let (reply, rx) = oneshot::channel();
         self.cmd
-            .send(Command::Send(frame))
-            .map_err(|_| TransportClosed)
+            .send(Command::Send { frame, reply })
+            .map_err(|_| "transport is closed".to_owned())?;
+        rx.await.map_err(|_| "transport is closed".to_owned())?
     }
 
     /// Pull one blob by sha256 over a fresh media stream on the live
@@ -161,9 +174,34 @@ impl ClientHandle {
 
 /// Spawn the connection actor on the current tokio runtime.
 pub fn connect(params: ConnectParams) -> (ClientHandle, mpsc::UnboundedReceiver<TransportEvent>) {
+    spawn_actor(params, None)
+}
+
+/// Test-only: same as [`connect`], plus a pulse each time the actor begins a
+/// reconnect backoff wait (after a loss is observed, before that sleep ends).
+/// Integration tests wait on the pulse instead of guessing close latency.
+/// Not part of the crate's published surface — integration tests cannot see
+/// `pub(crate)`, so this stays `pub` but hidden from rustdoc.
+#[doc(hidden)]
+pub fn connect_with_backoff_pulse(
+    params: ConnectParams,
+) -> (
+    ClientHandle,
+    mpsc::UnboundedReceiver<TransportEvent>,
+    mpsc::UnboundedReceiver<()>,
+) {
+    let (pulse_tx, pulse_rx) = mpsc::unbounded_channel();
+    let (handle, events) = spawn_actor(params, Some(pulse_tx));
+    (handle, events, pulse_rx)
+}
+
+fn spawn_actor(
+    params: ConnectParams,
+    backoff_pulse: Option<mpsc::UnboundedSender<()>>,
+) -> (ClientHandle, mpsc::UnboundedReceiver<TransportEvent>) {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
-    tokio::spawn(run(params, event_tx, cmd_rx));
+    tokio::spawn(run(params, event_tx, cmd_rx, backoff_pulse));
     (ClientHandle { cmd: cmd_tx }, event_rx)
 }
 
@@ -172,6 +210,53 @@ fn status(status: ConnStatus, attempt: u32, error: Option<String>) -> TransportE
         status,
         attempt,
         error,
+    }
+}
+
+fn reject_command(cmd: Command, err: &str) {
+    match cmd {
+        Command::Send { reply, .. } => {
+            let _ = reply.send(Err(err.to_owned()));
+        }
+        Command::FetchBlob { reply, .. } => {
+            let _ = reply.send(Err(err.to_owned()));
+        }
+        Command::PutBlob { reply, .. } => {
+            let _ = reply.send(Err(err.to_owned()));
+        }
+        Command::Close => {}
+    }
+}
+
+fn drain_commands(cmds: &mut mpsc::UnboundedReceiver<Command>) {
+    while let Ok(cmd) = cmds.try_recv() {
+        reject_command(cmd, "transport is closed");
+    }
+}
+
+enum OfflineAction {
+    Continue,
+    Stop,
+}
+
+/// Fail-fast answers while the actor has no live control stream (reconnect
+/// backoff, or the handle is being closed from that wait). Extracted so the
+/// verdict is unit-tested without guessing iroh close latency.
+fn reject_offline_command(cmd: Command) -> OfflineAction {
+    match cmd {
+        Command::Close => OfflineAction::Stop,
+        Command::Send { reply, .. } => {
+            let _ = reply.send(Err("transport offline".to_owned()));
+            OfflineAction::Continue
+        }
+        Command::FetchBlob { reply, .. } => {
+            let _ = reply.send(Err("transport offline".to_owned()));
+            OfflineAction::Continue
+        }
+        Command::PutBlob { reply, .. } => {
+            let _ = reply.send(Err("transport offline".to_owned()));
+            OfflineAction::Continue
+        }
     }
 }
 
@@ -189,6 +274,7 @@ async fn run(
     params: ConnectParams,
     events: mpsc::UnboundedSender<TransportEvent>,
     mut cmds: mpsc::UnboundedReceiver<Command>,
+    backoff_pulse: Option<mpsc::UnboundedSender<()>>,
 ) {
     let ticket: iroh_tickets::endpoint::EndpointTicket = match params.ticket.trim().parse() {
         Ok(ticket) => ticket,
@@ -198,6 +284,7 @@ async fn run(
                 0,
                 Some(format!("invalid ticket: {err}")),
             ));
+            drain_commands(&mut cmds);
             return;
         }
     };
@@ -207,6 +294,7 @@ async fn run(
         Ok(endpoint) => endpoint,
         Err(err) => {
             let _ = events.send(status(ConnStatus::Offline, 0, Some(err)));
+            drain_commands(&mut cmds);
             return;
         }
     };
@@ -245,32 +333,39 @@ async fn run(
                 }
                 attempt = attempt.saturating_add(1);
                 let deadline = Instant::now() + backoff.next_delay();
+                // Production `connect` passes None — no channel, no send.
+                if let Some(pulse) = &backoff_pulse {
+                    let _ = pulse.send(());
+                }
                 // Sleep out the backoff window, but keep answering the handle:
-                // a Close aborts the redial loop, sends are dropped while down.
+                // a Close aborts the redial loop; Send/fetch/put fail fast so
+                // the caller sees a delivery error instead of a silent drop.
                 loop {
                     tokio::select! {
                         _ = tokio::time::sleep_until(deadline) => break,
                         cmd = cmds.recv() => match cmd {
-                            None | Some(Command::Close) => {
+                            None => {
                                 let _ = events.send(status(ConnStatus::Offline, 0, None));
+                                drain_commands(&mut cmds);
                                 endpoint.close().await;
                                 return;
                             }
-                            Some(Command::Send(_)) => continue,
-                            // No live connection to open a stream on: fail the
-                            // transfer instead of queueing it into the redial.
-                            Some(Command::FetchBlob { reply, .. }) => {
-                                let _ = reply.send(Err("transport offline".to_owned()));
-                            }
-                            Some(Command::PutBlob { reply, .. }) => {
-                                let _ = reply.send(Err("transport offline".to_owned()));
-                            }
+                            Some(cmd) => match reject_offline_command(cmd) {
+                                OfflineAction::Continue => {}
+                                OfflineAction::Stop => {
+                                    let _ = events.send(status(ConnStatus::Offline, 0, None));
+                                    drain_commands(&mut cmds);
+                                    endpoint.close().await;
+                                    return;
+                                }
+                            },
                         },
                     }
                 }
             }
         }
     }
+    drain_commands(&mut cmds);
     endpoint.close().await;
 }
 
@@ -338,9 +433,15 @@ async fn session(
                     conn.close(0u32.into(), b"client closed");
                     return SessionOutcome::ClosedByUser;
                 }
-                Some(Command::Send(frame)) => {
-                    if send.write_all(&encode_line(&frame)).await.is_err() {
-                        return SessionOutcome::Lost { settled };
+                Some(Command::Send { frame, reply }) => {
+                    match send.write_all(&encode_line(&frame)).await {
+                        Ok(()) => {
+                            let _ = reply.send(Ok(()));
+                        }
+                        Err(err) => {
+                            let _ = reply.send(Err(format!("send failed: {err}")));
+                            return SessionOutcome::Lost { settled };
+                        }
                     }
                 }
                 Some(Command::FetchBlob { hash, reply }) => {
@@ -596,5 +697,68 @@ async fn put_blob_on(
             Ok(None) => return Err("media stream closed before a put reply".to_owned()),
             Err(err) => return Err(format!("media put reply read failed: {err}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn send_during_offline_wait_is_err_not_ok() {
+        let (reply, mut rx) = oneshot::channel();
+        assert!(matches!(
+            reject_offline_command(Command::Send {
+                frame: json!({"type": "input", "text": "lost if this is Ok"}),
+                reply,
+            }),
+            OfflineAction::Continue
+        ));
+        assert_eq!(
+            rx.try_recv().expect("waiter settled"),
+            Err("transport offline".to_owned())
+        );
+    }
+
+    #[test]
+    fn fetch_and_put_during_offline_wait_fail_the_same_way() {
+        let (fetch_reply, mut fetch_rx) = oneshot::channel();
+        assert!(matches!(
+            reject_offline_command(Command::FetchBlob {
+                hash: "cafe".to_owned(),
+                reply: fetch_reply,
+            }),
+            OfflineAction::Continue
+        ));
+        assert_eq!(
+            fetch_rx
+                .try_recv()
+                .expect("fetch waiter settled")
+                .expect_err("fetch fails offline"),
+            "transport offline"
+        );
+
+        let (put_reply, mut put_rx) = oneshot::channel();
+        assert!(matches!(
+            reject_offline_command(Command::PutBlob {
+                upload_id: "u-1".to_owned(),
+                bytes: vec![1, 2, 3],
+                reply: put_reply,
+            }),
+            OfflineAction::Continue
+        ));
+        assert_eq!(
+            put_rx.try_recv().expect("put waiter settled"),
+            Err("transport offline".to_owned())
+        );
+    }
+
+    #[test]
+    fn close_during_offline_wait_stops_the_redial() {
+        assert!(matches!(
+            reject_offline_command(Command::Close),
+            OfflineAction::Stop
+        ));
     }
 }
