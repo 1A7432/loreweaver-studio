@@ -18,21 +18,48 @@
 // store that filled it: guarding only the big ones would mean the theme toggle
 // takes down whatever the author was typing.
 
+import { useSyncExternalStore } from "react"
 import { createJSONStorage } from "zustand/middleware"
 
-/** Set when a write has failed. Nothing renders it today — it exists so a
- * "your work is not being saved" notice has something to read, and so the
- * failure is not purely invisible in a console-less desktop build. */
+type Listener = () => void
+
 let degraded = false
+const listeners = new Set<Listener>()
+
+function notify(): void {
+  for (const listener of listeners) listener()
+}
+
+function markDegraded(): void {
+  if (degraded) return
+  degraded = true
+  notify()
+}
 
 /** Has a persisted write failed this session? */
 export function persistenceDegraded(): boolean {
   return degraded
 }
 
+/** Subscribe to the first failure (and to a test reset). Later failures do
+ * not notify — the banner is a latch, not a log. */
+export function subscribePersistence(onStoreChange: Listener): () => void {
+  listeners.add(onStoreChange)
+  return () => {
+    listeners.delete(onStoreChange)
+  }
+}
+
 /** For tests. */
 export function resetPersistenceState(): void {
+  if (!degraded) return
   degraded = false
+  notify()
+}
+
+/** Live latch: flips true on the first failed write and stays there. */
+export function usePersistenceDegraded(): boolean {
+  return useSyncExternalStore(subscribePersistence, persistenceDegraded, persistenceDegraded)
 }
 
 /** localStorage with every operation wrapped. A read that throws is "nothing
@@ -52,14 +79,14 @@ export const guardedLocalStorage = createJSONStorage(() => ({
     } catch {
       // Quota, private mode, a blocked origin. The edit that triggered this
       // write has already landed in memory and must stay there.
-      degraded = true
+      markDegraded()
     }
   },
   removeItem: (name: string): void => {
     try {
       globalThis.localStorage?.removeItem(name)
     } catch {
-      degraded = true
+      markDegraded()
     }
   },
 }))

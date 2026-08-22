@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { UiFrame } from "@loreweaver/protocol"
 import "../../i18n"
+import { clearDataUrlCache } from "../../lib/dataUrlCache"
 import UiBlocks from "./UiBlocks"
 import { ImageBlockView, MapPinBlockView } from "./UiRichBlocks"
 
@@ -20,6 +21,7 @@ const HASH_MAP = "2".repeat(64)
 const HASH_BROKEN = "3".repeat(64)
 
 beforeEach(() => {
+  clearDataUrlCache()
   vi.mocked(assetFetch).mockReset().mockResolvedValue(4)
   vi.mocked(assetReadBase64)
     .mockReset()

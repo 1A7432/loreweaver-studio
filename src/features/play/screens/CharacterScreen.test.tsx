@@ -188,6 +188,19 @@ describe("CharacterScreen — editing", () => {
     expect(screen.getByRole("button", { name: "Create character" })).toBeEnabled()
   })
 
+  it("clears the draft on Escape and does not write", async () => {
+    render(<CharacterScreen onBack={() => {}} />)
+    await userEvent.click(screen.getByRole("button", { name: "55" }))
+    const box = screen.getByLabelText("力量")
+    await userEvent.clear(box)
+    await userEvent.type(box, "70")
+    await userEvent.keyboard("{Escape}")
+
+    expect(sent).toEqual([])
+    expect(screen.queryByLabelText("力量")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "55" })).toBeInTheDocument()
+  })
+
   it("sends nothing when the value did not change", async () => {
     render(<CharacterScreen onBack={() => {}} />)
     await userEvent.click(screen.getByRole("button", { name: "60" }))

@@ -13,6 +13,7 @@ import type {
   TurnActivity,
   UiFrame,
 } from "@loreweaver/protocol"
+import { clearDataUrlCache } from "../lib/dataUrlCache"
 import { transportSend } from "../lib/transport"
 import { usePanelsStore } from "./panels"
 
@@ -302,8 +303,16 @@ export const useSessionStore = create<SessionState>((set) => ({
         return
       case "state":
         // `reset:true` marks the snapshot right after a campaign wipe: the
-        // panel data is already fresh and the scrollback must go too.
-        set((s) => ({ game: frame, entries: frame.reset ? [] : s.entries }))
+        // state-frame panel data is already fresh, the scrollback must go,
+        // and so must hook-emitted sidebar `ui` regions (they are campaign
+        // residue). The module `ui_manifest` and the server's installed-pack
+        // card inventory are not campaign state — a story reset keeps the
+        // module, and `pack_cards` is what `.import` can see on this host.
+        set((s) => ({
+          game: frame,
+          entries: frame.reset ? [] : s.entries,
+          uiPanels: frame.reset ? [] : s.uiPanels,
+        }))
         return
       case "presence":
         set({ presence: frame })
@@ -389,6 +398,7 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   clear: () => {
     usePanelsStore.getState().resetSession()
+    clearDataUrlCache()
     set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [], packCards: null })
   },
 }))

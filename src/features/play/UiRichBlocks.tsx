@@ -21,28 +21,19 @@ import {
   type UiMapPinBlock,
   type UiTitleCardBlock,
 } from "@loreweaver/protocol"
+import { loadDataUrl as loadCachedDataUrl } from "../../lib/dataUrlCache"
 import { assetFetch, assetReadBase64 } from "./panels/assets"
 
 // The server stamps the authoritative mime; anything outside the image
 // whitelist is dropped from the data URL (the browser then sniffs instead).
 const IMAGE_MIME_RE = /^image\/(png|jpeg|webp|gif|svg\+xml)$/
 
-// Resolved data URLs are immutable per hash — share them across mounts.
-const dataUrlCache = new Map<string, Promise<string>>()
-
 function loadDataUrl(hash: string, mime: string | undefined): Promise<string> {
-  const cached = dataUrlCache.get(hash)
-  if (cached) return cached
-  const pending = assetFetch(hash)
-    .then(() => assetReadBase64(hash))
-    .then((base64) => `data:${mime && IMAGE_MIME_RE.test(mime) ? mime : ""};base64,${base64}`)
-    .catch((error: unknown) => {
-      // A failed pull must not poison the cache — the next mount retries.
-      dataUrlCache.delete(hash)
-      throw error
-    })
-  dataUrlCache.set(hash, pending)
-  return pending
+  return loadCachedDataUrl(hash, () =>
+    assetFetch(hash)
+      .then(() => assetReadBase64(hash))
+      .then((base64) => `data:${mime && IMAGE_MIME_RE.test(mime) ? mime : ""};base64,${base64}`),
+  )
 }
 
 type LoadPhase = "loading" | "ready" | "failed"

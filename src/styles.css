@@ -124,6 +124,15 @@ body {
   letter-spacing: 0.02em;
 }
 
+.persist-banner {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-raised));
+  border-bottom: 1px solid var(--border);
+}
+
 .mode-nav {
   display: flex;
   gap: 4px;

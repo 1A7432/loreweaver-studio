@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { guardedLocalStorage, persistenceDegraded, resetPersistenceState } from "./persistStorage"
+import {
+  guardedLocalStorage,
+  persistenceDegraded,
+  resetPersistenceState,
+  subscribePersistence,
+} from "./persistStorage"
 
 /** `createJSONStorage` hands back a storage whose values are already parsed;
  * these tests only care that nothing thrown by the browser escapes. */
@@ -44,6 +49,24 @@ describe("guardedLocalStorage", () => {
     })
     expect(() => storage.removeItem("k")).not.toThrow()
     expect(persistenceDegraded()).toBe(true)
+  })
+
+  it("notifies subscribers on the first failure only, and again on reset", () => {
+    const seen: boolean[] = []
+    const stop = subscribePersistence(() => seen.push(persistenceDegraded()))
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("exceeded the quota", "QuotaExceededError")
+    })
+
+    storage.setItem("k", { state: {}, version: 1 })
+    storage.setItem("k2", { state: {}, version: 1 })
+    expect(seen).toEqual([true])
+    expect(persistenceDegraded()).toBe(true)
+
+    resetPersistenceState()
+    expect(seen).toEqual([true, false])
+    expect(persistenceDegraded()).toBe(false)
+    stop()
   })
 
   it("is the only storage any persisted store uses", () => {

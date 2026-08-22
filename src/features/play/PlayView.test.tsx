@@ -1,9 +1,10 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { WelcomeFrame } from "@loreweaver/protocol"
+import type { UiManifestPanel, WelcomeFrame } from "@loreweaver/protocol"
 import "../../i18n"
 import { useConnectionStore } from "../../store/connection"
+import { usePanelsStore } from "../../store/panels"
 import { useSessionStore } from "../../store/session"
 import PlayView from "./PlayView"
 
@@ -14,6 +15,14 @@ const WELCOME: WelcomeFrame = {
   you: { id: "u1", name: "Nyx", role: "keeper" },
   locale: "en",
   server: "loreweaver/1",
+}
+
+const MODAL: UiManifestPanel = {
+  id: "harbour/map",
+  title: { en: "Manor Map" },
+  slot: "modal",
+  tier: 1,
+  blocks: [{ kind: "text", text: { en: "the tide line" } }],
 }
 
 function reset() {
@@ -101,5 +110,48 @@ describe("PlayView", () => {
     useConnectionStore.setState({ lastError: "bad_key: unknown key" })
     render(<PlayView />)
     expect(screen.getByRole("alert")).toHaveTextContent("bad_key")
+  })
+
+  it("closes a panel modal on Escape without leaving the game", async () => {
+    const user = userEvent.setup()
+    useConnectionStore.setState({ status: "online", welcome: WELCOME })
+    usePanelsStore.getState().applyManifest([MODAL])
+    usePanelsStore.getState().openModal(MODAL.id)
+    render(<PlayView />)
+    await user.click(screen.getByRole("menuitem", { name: /Enter game/ }))
+    expect(screen.getByRole("dialog", { name: "Manor Map" })).toBeInTheDocument()
+
+    await user.keyboard("{Escape}")
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    expect(screen.getByText("r1 · Nyx")).toBeInTheDocument()
+    expect(screen.queryByText(/Table “r1”/)).not.toBeInTheDocument()
+  })
+
+  it("cancels a sheet edit on Escape without returning to the menu", async () => {
+    const user = userEvent.setup()
+    useConnectionStore.setState({ status: "online", welcome: WELCOME })
+    useSessionStore.getState().ingest({
+      type: "state",
+      party: [],
+      initiative: [],
+      online: 1,
+      character: {
+        name: "Lin Quill",
+        system: "coc7",
+        resources: [],
+        attributes: { 力量: 55 },
+        status_effects: [],
+      },
+    })
+    render(<PlayView />)
+    await user.click(screen.getByRole("menuitem", { name: /My character/ }))
+    await user.click(screen.getByRole("button", { name: "55" }))
+    expect(screen.getByLabelText("力量")).toBeInTheDocument()
+
+    await user.keyboard("{Escape}")
+    expect(screen.queryByLabelText("力量")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "55" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Delete character" })).toBeInTheDocument()
+    expect(screen.queryByText(/Table “r1”/)).not.toBeInTheDocument()
   })
 })

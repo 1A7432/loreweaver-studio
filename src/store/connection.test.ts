@@ -1,6 +1,21 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PROTOCOL_VERSION } from "@loreweaver/protocol"
+
+const transport = vi.hoisted(() => ({
+  isTauri: vi.fn(() => false),
+  transportConnect: vi.fn(async () => {}),
+  transportDisconnect: vi.fn(async () => {}),
+}))
+
+vi.mock("../lib/transport", () => ({
+  isTauri: () => transport.isTauri(),
+  transportConnect: transport.transportConnect,
+  transportDisconnect: transport.transportDisconnect,
+  TRANSPORT_EVENT: "loreweaver://transport",
+}))
+
 import { sanitizeTicket, useConnectionStore } from "./connection"
+import { useAdminStore } from "./admin"
 
 const WELCOME = {
   type: "welcome",
@@ -12,6 +27,9 @@ const WELCOME = {
 }
 
 function reset() {
+  transport.isTauri.mockReturnValue(false)
+  transport.transportConnect.mockClear()
+  transport.transportDisconnect.mockClear()
   useConnectionStore.setState({
     status: "offline",
     attempt: 0,
@@ -19,6 +37,7 @@ function reset() {
     welcome: null,
     refused: false,
   })
+  useAdminStore.getState().reset()
 }
 
 describe("sanitizeTicket", () => {
@@ -171,5 +190,46 @@ describe("connection store", () => {
     const state = useConnectionStore.getState()
     expect(state.status).toBe("offline")
     expect(state.lastError).toContain("app shell")
+  })
+
+  it("drops keeper-admin leftovers on an explicit new dial, not on auto-reconnect", async () => {
+    useAdminStore.setState({
+      generated: {
+        type: "admin_generated",
+        kind: "module",
+        ok: true,
+        id: "old",
+        name: "Old Room Module",
+        error: "",
+        detail: "installed",
+      },
+      roomOp: {
+        type: "admin_room_op",
+        action: "reset",
+        room: "old-room",
+        keys: 2,
+        store_rows: 4,
+        vector_points: 0,
+      },
+      serverUpdate: { type: "admin_update", status: "failed", output: "stale" },
+      lastError: "stale forbidden",
+    })
+
+    const handle = useConnectionStore.getState().handleEvent
+    handle({ kind: "status", status: "reconnecting", attempt: 2 })
+    handle({ kind: "status", status: "online", attempt: 2 })
+    expect(useAdminStore.getState().lastError).toBe("stale forbidden")
+    expect(useAdminStore.getState().generated?.name).toBe("Old Room Module")
+    expect(useAdminStore.getState().roomOp?.room).toBe("old-room")
+    expect(useAdminStore.getState().serverUpdate?.status).toBe("failed")
+
+    transport.isTauri.mockReturnValue(true)
+    await useConnectionStore.getState().connect({ ticket: "endpoint-new", key: "k" })
+    const admin = useAdminStore.getState()
+    expect(admin.generated).toBeNull()
+    expect(admin.roomOp).toBeNull()
+    expect(admin.serverUpdate).toBeNull()
+    expect(admin.lastError).toBeNull()
+    expect(transport.transportConnect).toHaveBeenCalled()
   })
 })

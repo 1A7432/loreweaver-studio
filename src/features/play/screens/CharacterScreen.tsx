@@ -233,7 +233,11 @@ function AttributeRow({ name, value }: { name: string; value: unknown }) {
             onBlur={commit}
             onKeyDown={(e) => {
               if (e.key === "Enter") commit()
-              if (e.key === "Escape") setDraft(null)
+              if (e.key === "Escape") {
+                e.preventDefault()
+                e.stopPropagation()
+                setDraft(null)
+              }
             }}
             aria-label={name}
           />

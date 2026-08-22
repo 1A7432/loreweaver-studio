@@ -18,10 +18,18 @@ export default function PanelModalHost() {
   useEffect(() => {
     if (!panel) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeModal()
+      if (event.key !== "Escape") return
+      // Same target as OnlineView's menu listener (window). stopPropagation
+      // cannot order those; stopImmediatePropagation + capture run before
+      // the bubble menu handler, and closeModal is sync — a parent that
+      // gated on `modalOpen` after this would already read null.
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      closeModal()
     }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
+    window.addEventListener("keydown", onKeyDown, true)
+    return () => window.removeEventListener("keydown", onKeyDown, true)
   }, [panel, closeModal])
 
   if (!panel) return null

@@ -42,6 +42,8 @@ export interface PendingUpload {
 const MAX_ITEMS = 100
 
 interface MediaState {
+  /** Bumped on every `reset`. Async completions from a prior session no-op. */
+  epoch: number
   /** Room picture broadcasts, oldest first. */
   images: MediaFrame[]
   /** Room audio-library entries, oldest first. */
@@ -76,6 +78,7 @@ function capped<T>(list: T[], item: T): T[] {
 }
 
 export const useMediaStore = create<MediaState>()((set, get) => ({
+  epoch: 0,
   ...EMPTY,
 
   ingest: (frame) => {
@@ -118,6 +121,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
 
   upload: async (path) => {
     if (!isTauri()) return
+    const epoch = get().epoch
     let offer
     try {
       offer = await mediaPrepare(path)
@@ -126,6 +130,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
       // caller surfaces it.
       throw cause instanceof Error ? cause : new Error(String(cause))
     }
+    if (get().epoch !== epoch) return
     set((state) => ({
       uploads: {
         ...state.uploads,
@@ -141,6 +146,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
         sha256: offer.sha256,
       })
     } catch (cause) {
+      if (get().epoch !== epoch) return
       set((state) => ({
         uploads: {
           ...state.uploads,
@@ -173,7 +179,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
       return { uploads }
     }),
 
-  reset: () => set({ ...EMPTY }),
+  reset: () => set((state) => ({ ...EMPTY, epoch: state.epoch + 1 })),
 }))
 
 /** Mark every offer still waiting for an answer as failed. The server replies
@@ -203,6 +209,7 @@ async function resolveAccept(
   // The accept names the blob only through the metadata it echoes back, so an
   // `existing` accept is matched by hash and a fresh one by whichever upload is
   // still waiting for bytes.
+  const epoch = get().epoch
   const hash = frame.media?.hash ?? frame.audio?.hash ?? ""
   const uploads = get().uploads
   const sha256 =
@@ -228,10 +235,12 @@ async function resolveAccept(
   }))
   try {
     await mediaUpload(pending.path, frame.upload_id, pending.sha256)
+    if (get().epoch !== epoch) return
     set((state) => ({
       uploads: { ...state.uploads, [sha256]: { ...state.uploads[sha256], phase: "done" } },
     }))
   } catch (cause) {
+    if (get().epoch !== epoch) return
     set((state) => ({
       uploads: {
         ...state.uploads,
