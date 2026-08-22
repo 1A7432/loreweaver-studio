@@ -355,7 +355,9 @@
       "keeperVolume": "广播音量",
       "keeperImport": "导入模组包音频",
       "keeperImportRun": "导入",
-      "keeperHint": "这些按钮发送的就是 TUI 用的同一批 keeper 命令（.bgm / .ambience / .sfx / .audio import），由服务器把结果广播给所有人。曲目列表是本房间自己的音频库——模组包的安装是全主机范围的，把它的配乐引入某个房间始终由你决定。"
+      "keeperHint": "这些按钮发送的就是 TUI 用的同一批 keeper 命令（.bgm / .ambience / .sfx / .audio import），由服务器把结果广播给所有人。曲目列表是本房间自己的音频库——模组包的安装是全主机范围的，把它的配乐引入某个房间始终由你决定。",
+      "loadFailed": "这一层的音频未能加载。",
+      "retry": "重试"
     }
   },
   "studio": {

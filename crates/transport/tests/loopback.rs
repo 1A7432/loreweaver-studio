@@ -9,7 +9,7 @@ use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use loreweaver_transport::client::{
-    connect, ConnStatus, ConnectParams, NetworkProfile, TransportEvent,
+    connect, ConnStatus, ConnectParams, NetworkProfile, TransportEvent, MAX_BLOB_BYTES,
 };
 use loreweaver_transport::codec::{encode_line, LineDecoder};
 use serde_json::{json, Value};
@@ -395,6 +395,110 @@ async fn fetch_blob_roundtrip_and_error_reply() {
         .expect("fetch inside the deadline")
         .expect_err("a server error line fails the fetch");
     assert!(err.contains("media_not_found"), "unexpected error: {err}");
+
+    handle.close();
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.await.expect("server task");
+}
+
+/// A header in the former 64–128 MiB band must not be refused as over-cap.
+/// The server announces 64 MiB + 1 and writes a one-byte body so the test
+/// does not transfer 65 MiB; the GET path has already accepted the size
+/// when it reports a body-length mismatch instead of the client cap.
+#[tokio::test]
+async fn fetch_blob_accepts_a_header_between_64_and_128_mib() {
+    let announced = 64 * 1024 * 1024 + 1;
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let join = conn.read_frame().await;
+        assert_eq!(join["type"], "join");
+        conn.write_frame(&welcome_frame("1.8")).await;
+
+        let (mut bsend, mut brecv) = conn.conn.accept_bi().await.expect("blob stream");
+        let request = read_blob_request(&mut brecv).await;
+        assert_eq!(request["op"], "get");
+        bsend
+            .write_all(&encode_line(&json!({
+                "op": "get",
+                "hash": "cafe65",
+                "size": announced,
+                "mime": "audio/mpeg",
+                "name": "over-old-cap.mp3",
+            })))
+            .await
+            .expect("blob header write");
+        bsend.write_all(b"x").await.expect("short body");
+        let _ = bsend.finish();
+        conn.conn.closed().await;
+    });
+
+    let (handle, mut rx) = connect(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+
+    let err = tokio::time::timeout(STEP, handle.fetch_blob("cafe65".to_owned()))
+        .await
+        .expect("fetch inside the deadline")
+        .expect_err("a short body cannot satisfy a 65 MiB header");
+    assert!(
+        err.contains("size mismatch"),
+        "the 65 MiB header must be accepted so the failure is the body, not the cap: {err}"
+    );
+    assert!(
+        !err.contains("client cap"),
+        "the former 64 MiB ceiling must not fire: {err}"
+    );
+
+    handle.close();
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.await.expect("server task");
+}
+
+/// A header above the published 128 MiB default is a client-side refuse.
+/// The server writes no body — the GET path must fail on the header so a
+/// hostile peer cannot force a 128 MiB + 1 allocation.
+#[tokio::test]
+async fn fetch_blob_refuses_a_header_over_the_client_cap() {
+    let announced = MAX_BLOB_BYTES + 1;
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let join = conn.read_frame().await;
+        assert_eq!(join["type"], "join");
+        conn.write_frame(&welcome_frame("1.8")).await;
+
+        let (mut bsend, mut brecv) = conn.conn.accept_bi().await.expect("blob stream");
+        let _ = read_blob_request(&mut brecv).await;
+        bsend
+            .write_all(&encode_line(&json!({
+                "op": "get",
+                "hash": "too-big",
+                "size": announced,
+                "mime": "audio/mpeg",
+                "name": "over-cap.mp3",
+            })))
+            .await
+            .expect("blob header write");
+        let _ = bsend.finish();
+        conn.conn.closed().await;
+    });
+
+    let (handle, mut rx) = connect(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+
+    let err = tokio::time::timeout(STEP, handle.fetch_blob("too-big".to_owned()))
+        .await
+        .expect("fetch inside the deadline")
+        .expect_err("over-cap header must fail");
+    assert!(err.contains("client cap"), "unexpected error: {err}");
+    assert!(
+        err.contains(&MAX_BLOB_BYTES.to_string()),
+        "error must name the cap: {err}"
+    );
 
     handle.close();
     expect_status(&mut rx, ConnStatus::Offline).await;

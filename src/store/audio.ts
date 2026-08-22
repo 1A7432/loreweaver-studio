@@ -29,10 +29,25 @@ export interface LayerState extends AudioLayerState {
   gain: number
   /** Set when a play arrived before the webview would allow sound. */
   waitingForUnlock: boolean
+  /** Fetch/read/decode failure for THIS layer only. Null when the layer is
+   * silent or the last load succeeded. A failure on one layer never writes
+   * the others. */
+  loadError: string | null
+  /** Bumped to retrigger the player effect (explicit retry, or a play of
+   * the same hash). Not a wire field. */
+  loadEpoch: number
 }
 
 function emptyLayer(layer: AudioLayer): LayerState {
-  return { layer, playing: false, muted: false, gain: 1, waitingForUnlock: false }
+  return {
+    layer,
+    playing: false,
+    muted: false,
+    gain: 1,
+    waitingForUnlock: false,
+    loadError: null,
+    loadEpoch: 0,
+  }
 }
 
 interface AudioState {
@@ -48,6 +63,10 @@ interface AudioState {
   setMuted: (muted: boolean) => void
   setLayerMuted: (layer: AudioLayer, muted: boolean) => void
   setLayerGain: (layer: AudioLayer, gain: number) => void
+  /** Record a fetch/read/decode failure on one layer. */
+  setLayerLoadError: (layer: AudioLayer, error: string | null) => void
+  /** Clear that layer's error and bump `loadEpoch` so the player retries. */
+  retryLayer: (layer: AudioLayer) => void
   reset: () => void
 }
 
@@ -78,9 +97,14 @@ export function applyControl(current: LayerState, frame: AudioControlFrame, unlo
         // start after the first gesture, and a lost BGM cue is a scene the
         // author staged that nobody heard.
         waitingForUnlock: !unlocked,
+        // A new play is a natural retry: drop a stale error on THIS layer
+        // (only) and bump the epoch so the player refetches even when the
+        // hash did not change.
+        loadError: null,
+        loadEpoch: next.loadEpoch + 1,
       }
     case "stop":
-      return { ...next, playing: false, hash: undefined, waitingForUnlock: false }
+      return { ...next, playing: false, hash: undefined, waitingForUnlock: false, loadError: null }
     case "pause":
       return { ...next, playing: false, waitingForUnlock: false }
     case "resume":
@@ -119,10 +143,17 @@ export const useAudioStore = create<AudioState>()((set) => ({
           }
           for (const wire of frame.layers) {
             const local = layers[wire.layer] ?? emptyLayer(wire.layer)
+            const previous = state.layers[wire.layer]
+            const sameHash = previous?.hash === wire.hash
             layers[wire.layer] = {
               ...local,
               ...wire,
               waitingForUnlock: wire.playing && !state.unlocked,
+              // A new blob is a fresh load; the same blob keeps a transient
+              // error so a reconnect does not hide a failure the listener
+              // has not retried. Other layers stay on emptyLayer (no error).
+              loadError: sameHash && previous ? previous.loadError : null,
+              loadEpoch: sameHash && previous ? previous.loadEpoch : 0,
             }
           }
           return { layers }
@@ -152,6 +183,23 @@ export const useAudioStore = create<AudioState>()((set) => ({
       layers: {
         ...state.layers,
         [layer]: { ...state.layers[layer], gain: Math.max(0, Math.min(1, gain)) },
+      },
+    })),
+
+  setLayerLoadError: (layer, error) =>
+    set((state) => ({
+      layers: { ...state.layers, [layer]: { ...state.layers[layer], loadError: error } },
+    })),
+
+  retryLayer: (layer) =>
+    set((state) => ({
+      layers: {
+        ...state.layers,
+        [layer]: {
+          ...state.layers[layer],
+          loadError: null,
+          loadEpoch: state.layers[layer].loadEpoch + 1,
+        },
       },
     })),
 

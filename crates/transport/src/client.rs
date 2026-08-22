@@ -21,9 +21,28 @@ use crate::frames::{self, ALPN};
 /// the server-side verdict usually arrives first.
 pub const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Upper bound on one fetched blob (protocol media caps top out at 128 MiB for
-/// audio; panel assets are far smaller — this is a defensive ceiling, not a quota).
-pub const MAX_BLOB_BYTES: u64 = 64 * 1024 * 1024;
+/// Client-side defensive ceiling for one fetched blob.
+///
+/// This is not a quota and not a second policy: the published protocol default
+/// (`docs/protocol.md`, engine `audio_max_file_bytes`) is 128 MiB per audio
+/// file, and this constant MUST stay equal to that number. A 65–128 MiB blob
+/// the engine already accepted has to be fetchable here; anything larger is
+/// refused so a hostile or misconfigured peer cannot force an unbounded
+/// allocation. `src-tauri` reads the same symbol (`loreweaver_transport::MAX_BLOB_BYTES`)
+/// for the upload pre-check, so the two sides cannot drift.
+pub const MAX_BLOB_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Accept a GET header `size` if it is within [`MAX_BLOB_BYTES`].
+///
+/// The GET path calls this before allocating the body, so an over-cap header
+/// is refused without reading the bytes. A size the former 64 MiB ceiling
+/// would have rejected (65–128 MiB) returns `Ok`.
+pub fn accepted_blob_size(size: u64) -> Result<usize, String> {
+    if size > MAX_BLOB_BYTES {
+        return Err(format!("blob exceeds the {MAX_BLOB_BYTES}-byte client cap"));
+    }
+    usize::try_from(size).map_err(|_| format!("blob size {size} does not fit this architecture"))
+}
 
 /// End-to-end deadline for one blob fetch, header and body included.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -497,9 +516,7 @@ async fn fetch_blob_on(
         .get("size")
         .and_then(Value::as_u64)
         .ok_or_else(|| "media reply header missing size".to_owned())?;
-    if size > MAX_BLOB_BYTES {
-        return Err(format!("blob exceeds the {MAX_BLOB_BYTES}-byte cap"));
-    }
+    let size = accepted_blob_size(size)?;
     let mime = header
         .get("mime")
         .and_then(Value::as_str)
@@ -512,7 +529,6 @@ async fn fetch_blob_on(
         .to_owned();
 
     // `buf` already holds whatever body bytes rode in with the header chunk.
-    let size = size as usize;
     let mut body = buf;
     while body.len() < size {
         match recv.read(&mut chunk).await {
@@ -596,5 +612,36 @@ async fn put_blob_on(
             Ok(None) => return Err("media stream closed before a put reply".to_owned()),
             Err(err) => return Err(format!("media put reply read failed: {err}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{accepted_blob_size, MAX_BLOB_BYTES};
+
+    #[test]
+    fn client_blob_cap_matches_the_published_audio_default() {
+        // Engine `infra/config.py` `audio_max_file_bytes` and `docs/protocol.md`.
+        assert_eq!(MAX_BLOB_BYTES, 128 * 1024 * 1024);
+    }
+
+    #[test]
+    fn client_blob_cap_accepts_the_former_64_mib_band_and_refuses_over_128() {
+        let former = 64 * 1024 * 1024;
+        assert_eq!(accepted_blob_size(former).expect("64 MiB"), former as usize);
+        assert_eq!(
+            accepted_blob_size(former + 1).expect("64 MiB + 1"),
+            (former + 1) as usize
+        );
+        assert_eq!(
+            accepted_blob_size(MAX_BLOB_BYTES).expect("exactly 128 MiB"),
+            MAX_BLOB_BYTES as usize
+        );
+        let over = accepted_blob_size(MAX_BLOB_BYTES + 1).expect_err("129 MiB");
+        assert!(over.contains("client cap"), "unexpected error: {over}");
+        assert!(
+            over.contains(&MAX_BLOB_BYTES.to_string()),
+            "error must name the cap: {over}"
+        );
     }
 }
