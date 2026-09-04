@@ -11,6 +11,16 @@ export PATH="$BUN_INSTALL/bin:$HOME/.local/bin:$PATH"
 export CARGO_HOME="${CARGO_HOME:-/usr/local/cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-/usr/local/rustup}"
 
+# --- Tauri system libraries (WebKitGTK + friends). The Rust core links against
+# these, so `cargo build/clippy/test` need them present. apt-get install is
+# naturally idempotent, so a re-run is a fast no-op once they are installed. ---
+if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends \
+    libwebkit2gtk-4.1-dev build-essential curl wget file \
+    libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+fi
+
 # --- Bun (JS runtime + package manager the repo pins) ---
 if ! command -v bun >/dev/null 2>&1; then
   curl -fsSL https://bun.sh/install | bash
