@@ -8,7 +8,5 @@
       "description": "Vite dev server for the Loreweaver Studio frontend on http://localhost:1420 (the WebView half of the Tauri app; the full desktop shell runs via `bun tauri dev` when a display is available)."
     }
   ],
-  "ports": [
-    { "name": "vite", "port": 1420 }
-  ]
+  "ports": [{ "name": "vite", "port": 1420 }]
 }
