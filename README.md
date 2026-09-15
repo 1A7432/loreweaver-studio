@@ -2,7 +2,8 @@
 
 The desktop client for [Loreweaver](https://github.com/1A7432/loreweaver) — the self-hosted AI
 gamemaster engine — and its card-authoring studio. **This is the recommended way to play**; the
-engine's terminal client is the one-line-install alternative for anywhere with a terminal. Built
+engine's terminal client is the one-line-install alternative for anywhere with a terminal, and
+its bridge mode seats a QQ group (NapCat / Lagrange) as an ordinary protocol client. Built
 with Tauri 2 (Rust core + TypeScript/React UI), targeting desktop (macOS / Windows / Linux) and,
 later, mobile (iOS / Android). It speaks the engine's open wire protocol (2.3) and nothing else,
 so it runs against any Loreweaver server — the one it can start for you with one click, or a
