@@ -296,7 +296,7 @@ function PartyCard({ game }: { game: StateFrame }) {
  * module ships. Claiming goes through the ordinary command path (`.pc claim
  * <name>`, `gateway/commands.py::cmd_pc`), which is a PLAYER action: claiming
  * is the whole point of a pregen roster. */
-function PregenCard({ game }: { game: StateFrame }) {
+export function PregenCard({ game }: { game: StateFrame }) {
   const { t } = useTranslation()
   const you = useConnectionStore((s) => s.welcome?.you.name ?? "")
   const online = useConnectionStore((s) => s.status === "online")

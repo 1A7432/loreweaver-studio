@@ -22,7 +22,7 @@ import { stripControlChars, type RuleSystemEntry } from "@loreweaver/protocol"
 import { transportSend } from "../../../lib/transport"
 import { useConnectionStore } from "../../../store/connection"
 import { useSessionStore } from "../../../store/session"
-import { ResourceRow } from "../StatePanel"
+import { PregenCard, ResourceRow } from "../StatePanel"
 import ScreenShell from "./ScreenShell"
 import { sheetWrite } from "./sheetWrite"
 
@@ -250,6 +250,7 @@ function AttributeRow({ name, value }: { name: string; value: unknown }) {
 export default function CharacterScreen({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation()
   const character = useSessionStore((s) => s.game?.character ?? null)
+  const game = useSessionStore((s) => s.game)
   const online = useConnectionStore((s) => s.status === "online")
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -258,6 +259,9 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
       {character === null ? (
         <>
           <p className="placeholder">{t("play.character.none")}</p>
+          {/* The text above points at the module's roster; show it here too, with its
+              claim buttons, rather than only in the in-game side panel. */}
+          {game ? <PregenCard game={game} /> : null}
           <CreateCharacter />
         </>
       ) : (
