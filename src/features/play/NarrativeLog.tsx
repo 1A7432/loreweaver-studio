@@ -109,16 +109,44 @@ export default function NarrativeLog() {
   // reader is already pinned at the bottom, so scrolling up to reread history
   // is never yanked back down mid-stream.
   const pinned = useRef(true)
+  const lastTop = useRef(0)
+
+  // Only the READER moving the scroll position re-decides whether we are following.
+  // Content growing underneath — a Director image that finishes loading after its entry
+  // was placed — leaves the position alone; it used to count as "scrolled away", and the
+  // log stopped following every later turn. Our own follow records where it put the
+  // position, because its scroll event arrives a frame later: an image that learned its
+  // size in between made that event read as "far from the bottom", and unpinned the log.
+  const follow = (el: HTMLDivElement) => {
+    el.scrollTop = el.scrollHeight
+    lastTop.current = el.scrollTop
+  }
 
   const onScroll = () => {
     const el = scroller.current
-    if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLACK_PX
+    if (!el) return
+    if (el.scrollTop !== lastTop.current) {
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLACK_PX
+    }
+    lastTop.current = el.scrollTop
   }
 
   useEffect(() => {
     const el = scroller.current
-    if (el && pinned.current) el.scrollTop = el.scrollHeight
+    if (el && pinned.current) follow(el)
   }, [entries])
+
+  // Media loads after its entry is laid out and grows the log; keep a following reader at
+  // the bottom when it does. `load` does not bubble, so listen in the capture phase.
+  useEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    const onMediaLoad = () => {
+      if (pinned.current) follow(el)
+    }
+    el.addEventListener("load", onMediaLoad, true)
+    return () => el.removeEventListener("load", onMediaLoad, true)
+  }, [])
 
   // A line the table never reflected back has to say so rather than sit there
   // looking sent. The sweep only runs while something is actually waiting.

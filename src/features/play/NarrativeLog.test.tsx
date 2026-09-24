@@ -89,6 +89,58 @@ describe("NarrativeLog", () => {
     expect(log.scrollTop).toBe(1000)
   })
 
+  it("keeps following when media grows the log underneath a pinned reader", () => {
+    const delta = (text: string) =>
+      act(() => ingest({ type: "narrative_delta", id: "s2", speaker: "kp", text }))
+    delta("A lantern ")
+    const { container } = render(<NarrativeLog />)
+    const log = container.querySelector(".narrative-log") as HTMLDivElement
+    let height = 1000
+    Object.defineProperty(log, "scrollHeight", { get: () => height, configurable: true })
+    Object.defineProperty(log, "clientHeight", { value: 200, configurable: true })
+    log.scrollTop = 800
+    fireEvent.scroll(log)
+
+    // An image finishes loading: the log is 600px taller, the position did not move.
+    height = 1600
+    fireEvent.scroll(log)
+    const img = document.createElement("img")
+    log.appendChild(img)
+    fireEvent.load(img)
+    expect(log.scrollTop).toBe(1600)
+
+    // …and the next line of the turn still follows.
+    height = 1700
+    delta("swings.")
+    expect(log.scrollTop).toBe(1700)
+  })
+
+  it("keeps following when an image sizes itself before our own follow's scroll event lands", () => {
+    const delta = (text: string) =>
+      act(() => ingest({ type: "narrative_delta", id: "s3", speaker: "kp", text }))
+    delta("The gate ")
+    const { container } = render(<NarrativeLog />)
+    const log = container.querySelector(".narrative-log") as HTMLDivElement
+    let height = 1000
+    Object.defineProperty(log, "scrollHeight", { get: () => height, configurable: true })
+    Object.defineProperty(log, "clientHeight", { value: 200, configurable: true })
+    log.scrollTop = 800
+    fireEvent.scroll(log)
+
+    // A new line: the log follows to 1100…
+    height = 1100
+    delta("opens.")
+    expect(log.scrollTop).toBe(1100)
+    // …an image learns its size before that follow's scroll event is dispatched…
+    height = 1700
+    fireEvent.scroll(log)
+    // …and when it finishes loading the reader is still following.
+    const img = document.createElement("img")
+    log.appendChild(img)
+    fireEvent.load(img)
+    expect(log.scrollTop).toBe(1700)
+  })
+
   it("renders a pending echo dimmed, and stops rendering it once the line lands", () => {
     act(() => {
       useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx")
