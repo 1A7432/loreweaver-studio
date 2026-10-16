@@ -5,12 +5,16 @@ mod host_local;
 mod llm;
 mod media;
 mod panel_serve;
+mod report;
 mod transport_bridge;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Opener is driven from Rust only (`report::report_open`); no capability
+        // grants it to the WebView.
+        .plugin(tauri_plugin_opener::init())
         .manage(transport_bridge::TransportState::default())
         .manage(panel_serve::PanelServeState::default())
         .manage(host_local::HostLocalState::default())
@@ -38,6 +42,9 @@ pub fn run() {
             asset_cache::asset_read_base64,
             media::media_prepare,
             media::media_upload,
+            report::report_fetch,
+            report::report_save,
+            report::report_open,
             panel_serve::panel_serve_register,
             panel_serve::panel_serve_unregister
         ])

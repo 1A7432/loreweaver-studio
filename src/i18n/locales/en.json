@@ -366,6 +366,28 @@
         "decode": "The bytes arrived, but this window could not decode them as playable audio."
       },
       "retry": "Retry"
+    },
+    "report": {
+      "region": "Session reports",
+      "fetching": "Fetching the session report…",
+      "fetchingReveal": "Fetching the debrief edition…",
+      "ready": "Session report ready",
+      "readyReveal": "Debrief edition ready",
+      "spoilerBadge": "Spoilers",
+      "revealWarning": "Every secret of the module is in it — don't share it mid-campaign.",
+      "save": "Save…",
+      "open": "Open in browser",
+      "dismiss": "Dismiss",
+      "saved": "Saved to {{path}}",
+      "failed": "The session report could not be fetched: {{error}}",
+      "actionFailed": "Could not save or open it: {{error}}",
+      "err": {
+        "checksum": "the file did not match its checksum",
+        "notFound": "the server does not have it for this connection (the debrief edition needs a keeper key)",
+        "notHtml": "the server sent something that is not a report",
+        "offline": "not connected",
+        "unavailable": "saving reports needs the desktop app"
+      }
     }
   },
   "studio": {

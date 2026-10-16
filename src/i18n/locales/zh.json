@@ -366,6 +366,28 @@
         "decode": "字节已经取到，但本窗口无法把它解码成可播放的音频。"
       },
       "retry": "重试"
+    },
+    "report": {
+      "region": "团报",
+      "fetching": "正在取回团报…",
+      "fetchingReveal": "正在取回复盘版团报…",
+      "ready": "团报已就绪",
+      "readyReveal": "复盘版团报已就绪",
+      "spoilerBadge": "含剧透",
+      "revealWarning": "里面是模组的全部秘密——战役结束前不要分享。",
+      "save": "保存…",
+      "open": "在浏览器中打开",
+      "dismiss": "关闭",
+      "saved": "已保存到 {{path}}",
+      "failed": "团报取回失败：{{error}}",
+      "actionFailed": "保存或打开失败：{{error}}",
+      "err": {
+        "checksum": "文件与校验值不符",
+        "notFound": "服务器没有给这个连接的这份文件（复盘版需要管理员钥匙）",
+        "notHtml": "服务器发来的不是团报",
+        "offline": "未连接",
+        "unavailable": "保存团报需要桌面版"
+      }
     }
   },
   "studio": {

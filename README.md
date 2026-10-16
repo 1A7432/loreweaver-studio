@@ -73,9 +73,9 @@ Two modes, one app:
 
 ## Status
 
-- **Play mode**: complete against protocol 2.3 — narrative / dice / state / presence / turn
+- **Play mode**: complete against protocol 2.4 — narrative / dice / state / presence / turn
   status, tier-1 and tier-2 module panels, the keeper screens, one-click local host, audio and
-  media. Tier-1 panel instantiation is the reference client's resolver, ported rule for
+  media, and saving the session report (`.report html`). Tier-1 panel instantiation is the reference client's resolver, ported rule for
   rule and pinned by the shared vector table
   (`src/features/play/panels/fixtures/panel_template_vectors.json`) that
   the engine and the reference client run too.

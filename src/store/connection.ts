@@ -13,6 +13,7 @@ import {
 import { useAdminStore } from "./admin"
 import { useAudioStore } from "./audio"
 import { useMediaStore } from "./media"
+import { useReportStore } from "./report"
 import { useSessionStore } from "./session"
 
 /** Tolerate the ticket shapes people actually paste: the engine writes
@@ -104,6 +105,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     useSessionStore.getState().clear()
     useMediaStore.getState().reset()
     useAudioStore.getState().reset()
+    useReportStore.getState().reset()
     let failure: string | null = null
     try {
       await transportConnect({
@@ -200,6 +202,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     // playback intent drives the mixer.
     if (useMediaStore.getState().ingest(frame)) return
     if (useAudioStore.getState().ingest(frame)) return
+    // A session report is an offer to THIS connection, not a chronicle line.
+    if (useReportStore.getState().ingest(frame)) return
     useSessionStore.getState().ingest(frame)
   },
 }))

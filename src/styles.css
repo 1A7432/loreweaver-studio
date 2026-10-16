@@ -2320,6 +2320,82 @@ body {
   min-width: 0;
 }
 
+/* Session-report offers (protocol 2.4): same one-line shape as the consent
+   notice. The reveal edition is the keeper's spoiler copy, so it carries the
+   danger rail, a badge and its warning in the danger ink — never mistakable
+   for the player edition. */
+
+.report-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-raised);
+  font: 12px/1.4 var(--font-ui);
+  color: var(--ink-dim);
+}
+
+.report-notice-reveal {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--bg-raised) 88%, var(--danger) 12%);
+}
+
+.report-notice-error {
+  border-left-color: var(--warn);
+}
+
+.report-notice-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  align-items: baseline;
+}
+
+.report-notice-title {
+  color: var(--ink);
+}
+
+.report-notice-name {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.report-notice-warn {
+  flex-basis: 100%;
+  color: var(--danger);
+}
+
+.report-notice-detail {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+
+.report-notice-fail {
+  color: var(--warn);
+}
+
+.report-badge {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--danger);
+  border-radius: 3px;
+  color: var(--danger);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.report-notice button {
+  flex: none;
+}
+
 /* Panels menu in the session header. */
 
 .panel-menu {

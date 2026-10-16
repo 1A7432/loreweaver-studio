@@ -25,6 +25,20 @@ pc`, `world` → the keeper-only `.import <ref> world`. Before it existed the st
 > local pack source. The gap was only ever that the wire did not carry what the manifest
 > already knew.
 
+> **Update — protocol 2.4 (`report` frame), 2026-10-16.** `.report html` and the
+> keeper-key-only `.report html reveal` announce a server-generated HTML session report to
+> the ONE connection that asked, as
+> `{type:"report", hash, name, size, mime:"text/html", variant}`. The studio pins
+> `npm:loreweaver-protocol@2.4.0`. The bytes ride the ordinary media GET into their own
+> verified cache (`src-tauri/src/report.rs` — never `panel-assets/`, which `panel://`
+> serves to tier-2 iframes) and never enter the WebView: the protocol forbids a client
+> from rendering the report in its own UI, so the session view offers Save (native
+> dialog, which confirms any replace) and Open in browser (a named copy in the app cache,
+> opened by `tauri-plugin-opener` from Rust — the WebView holds no opener permission).
+> `name` is untrusted and reduced to a safe base name (`src/lib/report.ts`); the native
+> side re-checks it, refusing rather than repairing. The reveal edition wears a spoiler
+> badge and warning.
+
 > **Update — the major-version check.** The shared package grew the compatibility
 > predicate (`protocolMajor` / `protocolMismatch`) on 2026-08-08, hours after 2.1.0 was
 > published; **2.1.1** carries it, and the studio pins that. The studio REFUSES a

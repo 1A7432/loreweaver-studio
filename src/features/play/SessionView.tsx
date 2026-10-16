@@ -7,6 +7,7 @@ import { PanelSidebar, PanelTray } from "./panels/PanelDeck"
 import PanelMenu from "./panels/PanelMenu"
 import PanelModalHost from "./panels/PanelModalHost"
 import PanelNotice from "./panels/PanelNotice"
+import ReportNotice from "./ReportNotice"
 import StatePanel from "./StatePanel"
 import StatusPill from "./StatusPill"
 import VersionBadge from "./VersionBadge"
@@ -34,6 +35,7 @@ export default function SessionView({ onMenu }: { onMenu?: () => void }) {
           </button>
         </header>
         <PanelNotice />
+        <ReportNotice />
         <TurnStatus />
         <NarrativeLog />
         <PanelTray />
