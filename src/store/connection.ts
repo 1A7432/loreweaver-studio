@@ -221,6 +221,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         useLastTableStore.getState().remember(pendingRemember.table)
         pendingRemember = null
       }
+      // Every welcome opens a join replay, and an automatic redial is a join
+      // like any other: the log must hear about it to rebuild from the replay
+      // instead of appending the whole history a second time.
+      useSessionStore.getState().ingest(frame)
       return
     }
     // The server turned the key down: a table saved with it can never connect

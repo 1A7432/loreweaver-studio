@@ -53,6 +53,31 @@ export interface PendingEcho {
   failed?: boolean
 }
 
+/**
+ * What a reconnect is waiting on while the server's join replay runs.
+ *
+ * Every successful join — the first dial and every automatic redial after a
+ * restart or a dropped link — is answered with a `welcome` and then a replay of
+ * the room's recent history, in fresh frames whose ids match nothing the client
+ * already holds. So on a reconnect the scrollback is REBUILT from the replay,
+ * not appended to. The one thing the replay cannot contain is a line this
+ * client typed on the connection that has just died: those are set aside here,
+ * out of the log the replay is rebuilding, and put back once it has ended.
+ */
+interface ReplayWindow {
+  /** Pending lines from the dead connection, oldest first, all marked undelivered. */
+  carried: Extract<LogEntry, { kind: "pending" }>[]
+  /** The transcript the client had already seen, newest first. */
+  seen: ReplayedLine[]
+  /** The narrative the replay (and anything flushed behind it) has delivered so far. */
+  lines: ReplayedLine[]
+}
+
+interface ReplayedLine {
+  speaker: string
+  text: string
+}
+
 export type LogEntry =
   | { seq: number; kind: "narrative"; frame: NarrativeFrame; draft?: boolean }
   | { seq: number; kind: "dice"; frame: DiceFrame }
@@ -99,6 +124,9 @@ function readRound(round: number | undefined): number | null {
 
 interface SessionState {
   entries: LogEntry[]
+  /** Open from a reconnect's `welcome` until the `state` frame that closes the
+   * server's join replay; `null` the rest of the time. */
+  replay: ReplayWindow | null
   game: StateFrame | null
   presence: PresenceFrame | null
   turn: TurnState
@@ -140,9 +168,10 @@ function pushEntry(entries: LogEntry[], entry: DistributiveOmit<LogEntry, "seq">
  * - the closing `narrative` with the SAME `id` carries the full final text
  *   and REPLACES the draft (post-generation corrections are already folded
  *   in); an empty final text drops an abandoned draft outright;
- * - a `narrative` whose id matches a completed line is a history replay
- *   (the server replays recent narrative on every join) and replaces it
- *   in place — same id, same text, same slot;
+ * - a `narrative` whose id matches a completed line replaces it in place —
+ *   same id, same text, same slot. (A join replay does NOT arrive this way: the
+ *   engine gives every replayed line a fresh id, which is why a `welcome`
+ *   rebuilds the log — see `beginReplay`.)
  * - anything else is a fresh line.
  */
 function ingestNarrative(entries: LogEntry[], frame: NarrativeFrame): LogEntry[] {
@@ -253,6 +282,93 @@ function failOldestPending(entries: LogEntry[]): LogEntry[] {
   return next
 }
 
+/**
+ * The transcript lines a reader has definitely been shown, newest first.
+ *
+ * Only what the server owns and will replay counts: no drafts (their text is
+ * still partial), no `system` narrative (command replies are backstage and are
+ * never replayed), and no local echoes.
+ */
+function seenLines(entries: LogEntry[]): ReplayedLine[] {
+  const lines: ReplayedLine[] = []
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i]
+    if (entry.kind !== "narrative" || entry.draft || entry.frame.speaker === "system") continue
+    const text = entry.frame.text.trim()
+    if (text) lines.push({ speaker: entry.frame.speaker, text })
+  }
+  return lines
+}
+
+/**
+ * A `welcome` on a session that already has a log is a reconnect. The server is
+ * about to replay its recent history from scratch, so everything the replay
+ * will say again goes now (narrative, the dice and NPC lines, an open stream
+ * draft) and the replay rebuilds it, exactly as a first join would. Whatever it
+ * does NOT replay — the backstage lines, command replies, `ui` blocks, errors —
+ * belongs to a transcript that no longer exists; kept, it would sit above the
+ * replay out of order.
+ *
+ * What survives is the player's own un-echoed lines. They rode the connection
+ * that died, so nothing here can say they arrived: they are marked undelivered
+ * and set aside until the replay has finished (see `settleReplay`).
+ */
+function beginReplay(state: SessionState): Partial<SessionState> {
+  if (state.entries.length === 0 && state.replay === null) return {}
+  const carried = [
+    ...(state.replay?.carried ?? []),
+    ...state.entries.flatMap((entry) =>
+      entry.kind === "pending" ? [{ ...entry, pending: { ...entry.pending, failed: true } }] : [],
+    ),
+  ]
+  if (carried.length === 0) return { entries: [], replay: null }
+  // A second welcome inside an open window means the link died mid-replay: what
+  // the first replay managed to deliver was seen too, and sits in `entries`.
+  const seen = [...seenLines(state.entries), ...(state.replay?.seen ?? [])]
+  return { entries: [], replay: { carried, seen, lines: [] } }
+}
+
+/**
+ * The replay has ended: put the carried lines back at the bottom, except those
+ * the replay proves the table did receive.
+ *
+ * "Proves" is deliberately narrow, because the cost of the two mistakes is not
+ * the same. Showing a delivered line once more as undelivered costs a glance;
+ * retiring an undelivered one silently costs the player their words. The replay
+ * holds the last stretch of history, so an OLD line with identical words ("I
+ * continue.") is common and proves nothing. Only a line AFTER the newest
+ * transcript line this client had already seen is new to it — that is where a
+ * line delivered just before the link died would sit. With no such anchor in
+ * the replay nothing is proved and every carried line stays. A command (`.st …`,
+ * `/roll …`) is never replayed, so it always stays: its fate is unknowable.
+ */
+function settleReplay(entries: LogEntry[], window: ReplayWindow): LogEntry[] {
+  const key = (line: ReplayedLine): string => JSON.stringify([line.speaker, line.text])
+  const replayed = window.lines.map(key)
+  const anchor = window.seen.map(key).find((candidate) => replayed.includes(candidate))
+  const unseen =
+    anchor === undefined
+      ? []
+      : window.lines
+          .slice(replayed.lastIndexOf(anchor) + 1)
+          .filter((line) => line.speaker === "player")
+          .map((line) => line.text)
+  const survivors = window.carried.filter((entry) => {
+    const index = unseen.indexOf(entry.pending.text)
+    if (index === -1) return true
+    unseen.splice(index, 1)
+    return false
+  })
+  return [...entries, ...survivors].slice(-MAX_LOG_ENTRIES)
+}
+
+/** While a replay window is open, remember what the replay says. */
+function recordReplayed(window: ReplayWindow | null, frame: NarrativeFrame): ReplayWindow | null {
+  const text = frame.text.trim()
+  if (!window || !text) return window
+  return { ...window, lines: [...window.lines, { speaker: frame.speaker, text }] }
+}
+
 /** A later sidebar frame with the same id replaces that region; no id = one anonymous region. */
 function upsertUiPanel(panels: UiPanelRegion[], frame: UiFrame): UiPanelRegion[] {
   const key = frame.id ?? ""
@@ -265,6 +381,7 @@ function upsertUiPanel(panels: UiPanelRegion[], frame: UiFrame): UiPanelRegion[]
 
 export const useSessionStore = create<SessionState>((set) => ({
   entries: [],
+  replay: null,
   game: null,
   presence: null,
   turn: IDLE_TURN,
@@ -280,8 +397,16 @@ export const useSessionStore = create<SessionState>((set) => ({
           set((s) => ({ entries: ingestInlineUi(s.entries, frame) }))
         }
         return
+      case "welcome":
+        // Lives here rather than in the connection store because the log is
+        // this store's: `beginReplay` says what a reconnect does to it.
+        set(beginReplay)
+        return
       case "narrative":
-        set((s) => ({ entries: ingestNarrative(retireEcho(s.entries, frame), frame) }))
+        set((s) => ({
+          entries: ingestNarrative(retireEcho(s.entries, frame), frame),
+          replay: recordReplayed(s.replay, frame),
+        }))
         return
       case "narrative_delta":
         set((s) => ({ entries: ingestDelta(s.entries, frame) }))
@@ -308,7 +433,16 @@ export const useSessionStore = create<SessionState>((set) => ({
         // sidebar `ui` regions STAY — owner's call: a region is a keeper's
         // standing readout, not campaign residue, and a wipe that emptied
         // the sidebar would look like the hooks had broken.
-        set((s) => ({ game: frame, entries: frame.reset ? [] : s.entries }))
+        // A `state` frame also ends a join replay: both carriers send the
+        // snapshot right after it, behind the live frames the replay held.
+        set((s) => {
+          if (frame.reset) return { game: frame, entries: [], replay: null }
+          return {
+            game: frame,
+            entries: s.replay ? settleReplay(s.entries, s.replay) : s.entries,
+            replay: null,
+          }
+        })
         return
       case "presence":
         set({ presence: frame })
@@ -349,10 +483,13 @@ export const useSessionStore = create<SessionState>((set) => ({
   echoLocalInput: (text, speaker, now = Date.now()) => {
     const seq = nextSeq
     set((s) => ({
-      entries: pushEntry(s.entries, {
+      // Typing ends the wait for a replay: the carried lines go back first, so
+      // the new line lands below them rather than above.
+      entries: pushEntry(s.replay ? settleReplay(s.entries, s.replay) : s.entries, {
         kind: "pending",
         pending: { speaker, text, at: now },
       }),
+      replay: null,
     }))
     return seq
   },
@@ -399,6 +536,14 @@ export const useSessionStore = create<SessionState>((set) => ({
     usePanelsStore.getState().resetSession()
     useAdminStore.getState().reset()
     clearDataUrlCache()
-    set({ entries: [], game: null, presence: null, turn: IDLE_TURN, uiPanels: [], packCards: null })
+    set({
+      entries: [],
+      replay: null,
+      game: null,
+      presence: null,
+      turn: IDLE_TURN,
+      uiPanels: [],
+      packCards: null,
+    })
   },
 }))
