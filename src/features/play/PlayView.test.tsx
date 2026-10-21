@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { UiManifestPanel, WelcomeFrame } from "@loreweaver/protocol"
-import "../../i18n"
+import i18n from "../../i18n"
 import { useAudioStore } from "../../store/audio"
 import { useConnectionStore } from "../../store/connection"
 import { useLastTableStore } from "../../store/lastTable"
@@ -125,6 +125,111 @@ describe("PlayView", () => {
       render(<PlayView />)
       expect(screen.getByLabelText(/access key/i)).toHaveValue("k-saved")
     })
+  })
+
+  it("keeps the access key out of sight until asked, and hides it again", async () => {
+    const user = userEvent.setup()
+    render(<PlayView />)
+    const key = screen.getByLabelText(/access key/i)
+    expect(key).toHaveAttribute("type", "password")
+    expect(key).toHaveAttribute("autocomplete", "off")
+    await user.type(key, "k-secret")
+
+    await user.click(screen.getByRole("button", { name: "Show" }))
+    expect(key).toHaveAttribute("type", "text")
+    expect(key).toHaveValue("k-secret")
+
+    await user.click(screen.getByRole("button", { name: "Hide" }))
+    expect(key).toHaveAttribute("type", "password")
+    expect(key).toHaveValue("k-secret")
+  })
+
+  it("does not submit the form when the show/hide toggle is pressed", async () => {
+    const connect = vi.fn().mockResolvedValue(undefined)
+    useConnectionStore.setState({ connect })
+    const user = userEvent.setup()
+    render(<PlayView />)
+    await user.type(screen.getByLabelText(/server ticket/i), "endpoint-abc")
+    await user.type(screen.getByLabelText(/access key/i), "k-1")
+    await user.click(screen.getByRole("button", { name: "Show" }))
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it("only treats the access key as secret: the ticket and the name stay readable", () => {
+    render(<PlayView />)
+    expect(screen.getByLabelText(/server ticket/i)).not.toHaveAttribute("type", "password")
+    expect(screen.getByLabelText(/display name/i)).not.toHaveAttribute("type", "password")
+  })
+
+  it("offers Cancel only while a dial is in flight, and Cancel drops the attempt", async () => {
+    const disconnect = vi.fn().mockResolvedValue(undefined)
+    useConnectionStore.setState({ status: "offline", disconnect })
+    const user = userEvent.setup()
+    const { rerender } = render(<PlayView />)
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+
+    useConnectionStore.setState({ status: "connecting" })
+    rerender(<PlayView />)
+    await user.click(await screen.findByRole("button", { name: "Cancel" }))
+    expect(disconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the form live while connecting: a new ticket can replace a stuck dial", async () => {
+    const connect = vi.fn().mockResolvedValue(undefined)
+    useConnectionStore.setState({ status: "connecting", connect })
+    const user = userEvent.setup()
+    render(<PlayView />)
+
+    const ticket = screen.getByLabelText(/server ticket/i)
+    expect(ticket).toBeEnabled()
+    expect(screen.getByLabelText(/access key/i)).toBeEnabled()
+    await user.type(ticket, "endpoint-current")
+    await user.type(screen.getByLabelText(/access key/i), "k-1")
+    await user.click(screen.getByRole("button", { name: "Connect" }))
+    expect(connect).toHaveBeenCalledWith(
+      { ticket: "endpoint-current", key: "k-1", name: undefined },
+      { remember: true },
+    )
+  })
+
+  it("keeps the remembered table usable while a dial is in flight: reconnect replaces it, Cancel sits beside it", async () => {
+    const connect = vi.fn().mockResolvedValue(undefined)
+    const disconnect = vi.fn().mockResolvedValue(undefined)
+    useConnectionStore.setState({ status: "connecting", connect, disconnect })
+    useLastTableStore.getState().remember({ ticket: "endpointabc12345678", key: "k-saved", name: "Nyx" })
+    const user = userEvent.setup()
+    render(<PlayView />)
+
+    expect(screen.getByText(/Last table: Nyx · …12345678/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Forget" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
+    const reconnect = screen.getByRole("button", { name: "Reconnect to last table" })
+    expect(reconnect).toBeEnabled()
+    await user.click(reconnect)
+    expect(connect).toHaveBeenCalledWith(
+      { ticket: "endpointabc12345678", key: "k-saved", name: "Nyx" },
+      { remember: true },
+    )
+  })
+
+  it("shows a timeout inline with the form editable and Connect usable again", async () => {
+    const connect = vi.fn().mockResolvedValue(undefined)
+    useConnectionStore.setState({
+      status: "offline",
+      lastError: i18n.t("connect.error.connectTimeout"),
+      connect,
+    })
+    const user = userEvent.setup()
+    render(<PlayView />)
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/ticket changed/i)
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText(/server ticket/i), "endpoint-fresh")
+    await user.type(screen.getByLabelText(/access key/i), "k-1")
+    const submit = screen.getByRole("button", { name: "Connect" })
+    expect(submit).toBeEnabled()
+    await user.click(submit)
+    expect(connect).toHaveBeenCalledTimes(1)
   })
 
   it("lands on the main menu while online; Enter game opens the chronicle", async () => {

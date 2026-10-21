@@ -21,6 +21,16 @@
     "namePlaceholder": "仅供参考——以密钥登记名为准",
     "submit": "连接",
     "disconnect": "断开",
+    "cancel": "取消",
+    "showKey": "显示",
+    "hideKey": "隐藏",
+    "showKeyLabel": "显示访问密钥",
+    "hideKeyLabel": "隐藏访问密钥",
+    "error": {
+      "connectTimeout": "没能在限定时间内连上牌桌。如果主机重启过，它的 Ticket 已经变了——请粘贴最新的 Ticket 再连一次。",
+      "joinTimeout": "已连上主机，但它没有及时放你入座。稍等片刻再试。",
+      "connectFailed": "没能连上牌桌（{{detail}}）。"
+    },
     "protocolMismatch": "协议 {{server}} ≠ {{client}}：主版本号即兼容契约，已拒绝连接。请升级落后的一方。",
     "welcomeUnreadable": "读不懂服务器的欢迎帧，已拒绝连接。这通常意味着两端对帧格式的理解不一致——请确认双方都跑在你认得的版本上。",
     "hostLocal": {
