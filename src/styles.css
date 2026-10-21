@@ -805,7 +805,11 @@ button.npc-line-toggle {
 
 .meter {
   display: grid;
-  grid-template-columns: 42px 1fr auto;
+  /* The label column is sized for a tracker name, not for a stat code: 42px
+     broke every name over three characters onto a second line. 7em holds seven
+     Chinese characters at this size; the 30% cap keeps a narrow sidebar from
+     starving the bar. Fixed (not content-sized) so the bars of a card line up. */
+  grid-template-columns: minmax(42px, min(7em, 30%)) 1fr auto;
   align-items: center;
   gap: 8px;
   font-size: 12px;
@@ -813,6 +817,11 @@ button.npc-line-toggle {
 
 .meter-label {
   color: var(--ink-dim);
+  /* A name longer than its column is cut, never wrapped; the full name is the
+     tooltip (Meter.tsx). */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .meter-track {

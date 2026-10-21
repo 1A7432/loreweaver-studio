@@ -105,6 +105,18 @@ describe("StatePanel — module variables (v1.6)", () => {
     expect(screen.getByText("trust no one")).toBeInTheDocument()
   })
 
+  it("offers the whole tracker name as a tooltip, for when the column cuts it", () => {
+    useSessionStore.getState().ingest({
+      type: "state",
+      party: [],
+      initiative: [],
+      online: 1,
+      variables: [{ id: "moon", label: "休环月倒计时", kind: "number", value: 3, min: 0, max: 12 }],
+    })
+    render(<StatePanel />)
+    expect(screen.getByText("休环月倒计时")).toHaveAttribute("title", "休环月倒计时")
+  })
+
   it("dims and locks keeper-view hidden variables (v1.7 additive hidden:true)", () => {
     useSessionStore.getState().ingest({
       type: "state",
