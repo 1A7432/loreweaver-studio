@@ -434,6 +434,50 @@ body {
   font: 15px/1.65 var(--font-story);
 }
 
+/* An NPC line is an attribution row, not reading matter: the Keeper's
+   narration restates it. One line — name, first words — that unfolds on click. */
+.npc-line-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.npc-line-toggle {
+  cursor: pointer;
+}
+
+.npc-line-toggle .entry-speaker {
+  flex: none;
+  margin-bottom: 0;
+}
+
+.npc-line-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 13px/1.4 var(--font-story);
+  color: var(--ink-dim);
+}
+
+.npc-line-chevron {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.npc-line .entry-body {
+  margin-top: 4px;
+}
+
 .entry-body > :first-child,
 .entry-body p:first-child {
   margin-top: 0;

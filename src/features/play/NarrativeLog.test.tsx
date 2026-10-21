@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "../../i18n"
 import { PENDING_ECHO_TIMEOUT_MS, useSessionStore } from "../../store/session"
-import NarrativeLog, { ECHO_SWEEP_MS } from "./NarrativeLog"
+import NarrativeLog, { ECHO_SWEEP_MS, NPC_PREVIEW_CHARS } from "./NarrativeLog"
 
 const ingest = useSessionStore.getState().ingest
 
@@ -42,6 +43,129 @@ describe("NarrativeLog", () => {
     render(<NarrativeLog />)
     expect(screen.getByText("沈墨")).toBeInTheDocument()
     expect(screen.getByText("Ash")).toBeInTheDocument()
+  })
+
+  describe("NPC lines", () => {
+    // The engine has the Keeper restate each voiced line inside its narration,
+    // so the same speech arrives twice: the NPC bubble, then the narration.
+    const SPEECH =
+      "别碰那口井。我在这渡口守了三十年，从没见过潮水退得这样干净，井口的铁链也锈得不像话，你们若还想活着回到岸上，天黑以前就该离开这里。"
+    const narrate = () =>
+      ingest({
+        type: "narrative",
+        id: "kp1",
+        speaker: "kp",
+        text: `沈墨压低了嗓子：“${SPEECH}”`,
+        format: "markdown",
+      })
+    const speak = () =>
+      ingest({
+        type: "narrative",
+        id: "npc1",
+        speaker: "npc",
+        name: "沈墨",
+        text: SPEECH,
+        format: "markdown",
+      })
+
+    it("folds a long line to the NPC's name and its first words, and leaves the narration to carry it", () => {
+      speak()
+      narrate()
+      render(<NarrativeLog />)
+
+      const toggle = screen.getByRole("button", { name: /沈墨/ })
+      const head = Array.from(SPEECH).slice(0, NPC_PREVIEW_CHARS).join("")
+      expect(toggle).toHaveTextContent(`沈墨${head}…`)
+      expect(toggle).toHaveAttribute("aria-expanded", "false")
+      // The speech is read once: inside the narration, not again in the bubble.
+      expect(screen.queryByText(SPEECH)).toBeNull()
+      expect(screen.getByText(/沈墨压低了嗓子/)).toBeInTheDocument()
+    })
+
+    it("keeps the entry where it arrived — nothing dropped, nothing reordered", () => {
+      speak()
+      narrate()
+      const { container } = render(<NarrativeLog />)
+      const entries = Array.from(container.querySelectorAll(".log-entry"))
+      expect(entries.map((entry) => entry.className)).toEqual([
+        "log-entry speaker-npc npc-line",
+        "log-entry speaker-kp",
+      ])
+    })
+
+    it("unfolds to the full line on click and folds back", async () => {
+      const user = userEvent.setup()
+      speak()
+      render(<NarrativeLog />)
+
+      const toggle = screen.getByRole("button", { name: /沈墨/ })
+      await user.click(toggle)
+      expect(screen.getByText(SPEECH)).toBeInTheDocument()
+      expect(toggle).toHaveAttribute("aria-expanded", "true")
+
+      await user.click(toggle)
+      expect(screen.queryByText(SPEECH)).toBeNull()
+      expect(toggle).toHaveAttribute("aria-expanded", "false")
+    })
+
+    it("opens from the keyboard", async () => {
+      const user = userEvent.setup()
+      speak()
+      render(<NarrativeLog />)
+
+      await user.tab()
+      expect(screen.getByRole("button", { name: /沈墨/ })).toHaveFocus()
+      await user.keyboard("{Enter}")
+      expect(screen.getByText(SPEECH)).toBeInTheDocument()
+    })
+
+    it("shows a line that fits the preview as it is, with nothing to unfold", () => {
+      ingest({
+        type: "narrative",
+        id: "npc2",
+        speaker: "npc",
+        name: "沈墨",
+        text: "别碰那口井。",
+        format: "markdown",
+      })
+      render(<NarrativeLog />)
+      expect(screen.getByText("别碰那口井。")).toBeInTheDocument()
+      expect(screen.queryByRole("button")).toBeNull()
+    })
+
+    it("cuts by characters, and shows markdown as plain words", () => {
+      // 30 astral-plane characters: a cut by UTF-16 unit would split a pair.
+      ingest({
+        type: "narrative",
+        id: "npc3",
+        speaker: "npc",
+        name: "Wen",
+        text: "𠮷".repeat(30),
+        format: "plain",
+      })
+      ingest({
+        type: "narrative",
+        id: "npc4",
+        speaker: "npc",
+        name: "Ash",
+        text: `*${"a".repeat(40)}*`,
+        format: "markdown",
+      })
+      render(<NarrativeLog />)
+      expect(screen.getByRole("button", { name: /Wen/ })).toHaveTextContent(
+        `Wen${"𠮷".repeat(NPC_PREVIEW_CHARS)}…`,
+      )
+      expect(screen.getByRole("button", { name: /Ash/ })).toHaveTextContent(
+        `Ash${"a".repeat(NPC_PREVIEW_CHARS)}…`,
+      )
+    })
+
+    it("leaves every other speaker's text in full", () => {
+      narrate()
+      render(<NarrativeLog />)
+      expect(screen.queryByRole("button")).toBeNull()
+      expect(screen.getByText(new RegExp(SPEECH))).toBeInTheDocument()
+    })
   })
 
   it("shows a blinking cursor only while the draft is open", () => {
