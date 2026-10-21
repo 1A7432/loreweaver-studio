@@ -44,7 +44,7 @@
     },
     "role": {
       "player": "Player",
-      "keeper": "Keeper"
+      "keeper": "Admin"
     },
     "versions": "server {{server}} · studio {{client}}",
     "versionUnknown": "(unreported)",
@@ -138,7 +138,7 @@
       "label": "Main menu",
       "table": "Table “{{room}}”",
       "role": {
-        "keeper": "Keeper",
+        "keeper": "Admin",
         "player": "Investigator"
       },
       "enterGame": "Enter game",

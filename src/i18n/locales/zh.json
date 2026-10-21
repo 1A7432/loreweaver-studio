@@ -44,7 +44,7 @@
     },
     "role": {
       "player": "玩家",
-      "keeper": "守秘人"
+      "keeper": "管理员"
     },
     "versions": "服务器 {{server}} · 工作室 {{client}}",
     "versionUnknown": "（未提供）",
@@ -138,7 +138,7 @@
       "label": "主菜单",
       "table": "牌桌「{{room}}」",
       "role": {
-        "keeper": "守秘人",
+        "keeper": "管理员",
         "player": "调查员"
       },
       "enterGame": "进入游戏",
