@@ -48,6 +48,23 @@ export interface ConnectOptions {
   remember?: boolean
 }
 
+/** What the operator reads when the transport gave up before ever coming
+ * online. A code the UI words itself gets its own sentence; anything else is
+ * the transport's own text, verbatim. */
+function describeFailure(event: Extract<TransportEvent, { kind: "status" }>): string | null {
+  const detail = event.error ?? ""
+  switch (event.errorCode) {
+    case "connect_timeout":
+      return i18n.t("connect.error.connectTimeout")
+    case "join_timeout":
+      return i18n.t("connect.error.joinTimeout")
+    case "connect_failed":
+      return i18n.t("connect.error.connectFailed", { detail })
+    default:
+      return event.error ?? null
+  }
+}
+
 interface ConnectionState {
   status: TransportStatus
   attempt: number
@@ -144,7 +161,18 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     // One guard over BOTH continuations: a later explicit connect may already
     // own the store, and this invoke — seated or refused — speaks for a
     // generation that is gone. Writing offline/null here would kill B.
-    if (get().connectionId !== generation.connectionId || failure === null) return
+    if (get().connectionId !== generation.connectionId) {
+      // Cancelled while the invoke was still in flight: the cancel's own
+      // disconnect reached Rust before this dial was seated and found nothing
+      // to close, so the actor seated just now belongs to nobody. Drop it —
+      // by this generation's id only, so a newer dial is untouched. (A
+      // newer connect needs no help: seating it already replaced this one.)
+      if (failure === null && get().connectionId === null) {
+        void transportDisconnect(generation.connectionId).catch(() => undefined)
+      }
+      return
+    }
+    if (failure === null) return
     set({ status: "offline", lastError: failure, connectionId: null })
   },
 
@@ -187,7 +215,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       set((state) => ({
         status: event.status,
         attempt: event.attempt,
-        lastError: event.error ?? null,
+        lastError: describeFailure(event),
         welcome: event.status === "offline" ? null : state.welcome,
       }))
       return

@@ -21,6 +21,16 @@
     "namePlaceholder": "advisory — the keystore name wins",
     "submit": "Connect",
     "disconnect": "Disconnect",
+    "cancel": "Cancel",
+    "showKey": "Show",
+    "hideKey": "Hide",
+    "showKeyLabel": "Show access key",
+    "hideKeyLabel": "Hide access key",
+    "error": {
+      "connectTimeout": "Could not reach the table in time. If the host restarted, its ticket changed — paste the current ticket and connect again.",
+      "joinTimeout": "Reached the host, but it did not welcome you in time. Try again in a moment.",
+      "connectFailed": "Could not connect to the table ({{detail}})."
+    },
     "protocolMismatch": "Protocol {{server}} ≠ {{client}}: the major version is the compatibility contract, so the connection was refused. Update whichever side is behind.",
     "welcomeUnreadable": "The server's welcome could not be read, so the connection was refused. This usually means the two ends disagree about the frame format — check that both are on a build you recognise.",
     "hostLocal": {
