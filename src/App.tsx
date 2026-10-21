@@ -6,6 +6,7 @@ import UndoToast from "./features/studio/UndoToast"
 import { usePersistenceDegraded } from "./lib/persistStorage"
 import { isTauri, onTransportEvent } from "./lib/transport"
 import { useAppStore, type AppMode } from "./store/app"
+import { armGestureUnlock } from "./store/audio"
 import { useConnectionStore } from "./store/connection"
 
 const MODES: AppMode[] = ["play", "studio"]
@@ -23,6 +24,10 @@ export default function App() {
       void unlisten.then((dispose) => dispose())
     }
   }, [])
+
+  // Any first gesture in the window lets the webview make sound; arm it at the
+  // root so a click on the mode tab or the connect form counts too.
+  useEffect(() => armGestureUnlock(), [])
 
   return (
     <div className="app">

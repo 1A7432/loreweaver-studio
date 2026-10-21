@@ -348,6 +348,7 @@
       "gainLayer": "{{layer}} volume",
       "unlock": "Turn sound on",
       "unlockHint": "This window blocks sound until you interact with it, so the keeper's cue is queued rather than lost.",
+      "unlockNotice": "A sound cue is waiting — this window has not allowed sound yet.",
       "keeperLayer": "Layer",
       "keeperTrack": "Track",
       "keeperPick": "(pick one)",

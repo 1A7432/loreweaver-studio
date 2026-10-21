@@ -7,11 +7,14 @@
 // built from those bytes — not a `data:` URL, which would keep a second 4/3
 // copy of a 128 MiB track in the DOM. Nothing plays from a URL the server chose.
 //
-// Autoplay is handled, not hoped for. A webview refuses sound before a user
-// gesture, and the failure is silent in most engines — so a play that arrives
-// early is REMEMBERED (`waitingForUnlock`) and the deck shows one button that
-// starts everything still waiting. A staged BGM cue is something the author
-// composed; losing it to a policy nobody surfaced is the bug this avoids.
+// Autoplay is handled, not hoped for. A webview may refuse sound before a user
+// gesture, and the failure is silent in most engines — so every play is
+// ATTEMPTED, and only a refusal (NotAllowedError) marks the layer
+// `waitingForUnlock`: the deck and a notice above the chronicle then offer one
+// button, and the first gesture anywhere in the window does the same job. A
+// staged BGM cue is something the author composed; losing it to a policy
+// nobody surfaced is the bug this avoids — and so is withholding it behind a
+// button of our own when the webview would have played it anyway.
 //
 // Fetch/read/decode failures are NOT silent. Each layer records its own
 // `loadError`; a retry (or a new play / hash change) clears only that layer.
@@ -49,6 +52,7 @@ function LayerPlayer({ layer }: { layer: LayerState }) {
   const [load, setLoad] = useState<{ url: string; token: number } | null>(null)
   const masterMuted = useAudioStore((s) => s.muted)
   const unlocked = useAudioStore((s) => s.unlocked)
+  const markBlocked = useAudioStore((s) => s.markBlocked)
   const setLayerLoadError = useAudioStore((s) => s.setLayerLoadError)
   const hash = layer.hash ?? ""
 
@@ -118,22 +122,31 @@ function LayerPlayer({ layer }: { layer: LayerState }) {
     if (audio === null) return
     audio.volume = effectiveVolume(layer, masterMuted)
     audio.loop = layer.loop === true
-    if (layer.playing && unlocked && load !== null) {
+    if (layer.playing && !layer.waitingForUnlock && load !== null) {
+      // Attempt regardless of `unlocked`: that flag only records that a gesture
+      // happened, and the webview may allow sound without one. Only a refusal
+      // means "waiting" — an AbortError is a pause or a newer source
+      // interrupting this very attempt, not a policy. A layer already waiting
+      // is not asked again; the unlock that clears it is what asks.
+      const blocked = () => {
+        if (element.current === audio) markBlocked(layer.layer)
+      }
       try {
         const attempt = audio.play()
         if (attempt !== undefined && typeof attempt.catch === "function") {
-          void attempt.catch(() => {
-            // Still refused: keep the element paused rather than pretending.
+          void attempt.catch((cause: unknown) => {
+            if ((cause as { name?: unknown } | null)?.name === "NotAllowedError") blocked()
           })
         }
       } catch {
         // jsdom (and some webviews) throw instead of returning a rejected
-        // promise. Either way the element stays paused.
+        // promise. Either way the element stays paused, and the player is told.
+        blocked()
       }
     } else {
       audio.pause()
     }
-  }, [layer, masterMuted, unlocked, load])
+  }, [layer, masterMuted, unlocked, load, markBlocked])
 
   if (load === null) return null
   // Not `controls`: the keeper drives playback, and the listener's own controls
@@ -341,10 +354,28 @@ function KeeperControls() {
   )
 }
 
+/** The same one-click unlock where the player is already looking. The deck
+ * above sits at the foot of the sidebar, below the fold, so a hint kept only
+ * there goes unseen — and "why is there no sound" stays unanswered. Shown only
+ * while a layer is actually waiting, i.e. after the webview refused. */
+export function AudioUnlockNotice() {
+  const { t } = useTranslation()
+  const waiting = useAudioStore((s) => AUDIO_LAYERS.some((name) => s.layers[name].waitingForUnlock))
+  const unlock = useAudioStore((s) => s.unlock)
+  if (!waiting) return null
+  return (
+    <div className="panel-notice" role="status">
+      <span className="panel-notice-text">{t("play.audio.unlockNotice")}</span>
+      <button type="button" className="primary-button" onClick={() => unlock()}>
+        {t("play.audio.unlock")}
+      </button>
+    </div>
+  )
+}
+
 export default function AudioDeck() {
   const { t } = useTranslation()
   const layers = useAudioStore((s) => s.layers)
-  const unlocked = useAudioStore((s) => s.unlocked)
   const unlock = useAudioStore((s) => s.unlock)
   const muted = useAudioStore((s) => s.muted)
   const setMuted = useAudioStore((s) => s.setMuted)
@@ -372,7 +403,7 @@ export default function AudioDeck() {
           {t("play.audio.muteAll")}
         </label>
       </header>
-      {waiting && !unlocked ? (
+      {waiting ? (
         // The one gesture the webview needs. Said plainly, because "why is
         // there no sound" is otherwise unanswerable from inside the app.
         <p className="studio-notice" role="status">

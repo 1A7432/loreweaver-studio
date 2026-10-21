@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { AudioControlFrame } from "@loreweaver/protocol"
-import { applyControl, effectiveVolume, useAudioStore } from "./audio"
+import { applyControl, armGestureUnlock, effectiveVolume, useAudioStore } from "./audio"
 
 function control(patch: Partial<AudioControlFrame>): AudioControlFrame {
   return { type: "audio_control", id: "c1", action: "play", layer: "bgm", ...patch }
@@ -22,10 +22,15 @@ describe("audio store", () => {
     expect(bgm.waitingForUnlock).toBe(false)
   })
 
-  it("remembers a cue that arrived before the webview would allow sound", () => {
-    // Dropping it would lose a beat the author staged; the deck's unlock
-    // button then starts everything that was waiting.
+  it("does not hold a cue back on its own flag, and remembers one the webview refused", () => {
+    // A webview may allow sound with no gesture at all, so the cue is not
+    // parked here: the player tries, and only a refusal marks the layer.
     useAudioStore.getState().ingest(control({ hash: "abc" }))
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+
+    // Dropping a refused cue would lose a beat the author staged; the unlock
+    // (a gesture, or the notice's button) then starts everything waiting.
+    useAudioStore.getState().markBlocked("bgm")
     expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(true)
 
     useAudioStore.getState().unlock()
@@ -34,16 +39,33 @@ describe("audio store", () => {
     expect(bgm.playing).toBe(true)
   })
 
+  it("marks a refusal only on a layer that is playing, and only once", () => {
+    // A refusal that lands after a stop must not resurrect a hint, and a
+    // second one must not write a new object (the player's effect re-runs on
+    // every layer change; a no-op write that looked like a change would loop).
+    useAudioStore.getState().markBlocked("bgm")
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+
+    useAudioStore.getState().ingest(control({ hash: "abc" }))
+    useAudioStore.getState().markBlocked("bgm")
+    const marked = useAudioStore.getState().layers.bgm
+    useAudioStore.getState().markBlocked("bgm")
+    expect(useAudioStore.getState().layers.bgm).toBe(marked)
+
+    useAudioStore.getState().ingest(control({ action: "stop" }))
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+  })
+
   it("keeps the transport actions distinct", () => {
     const base = { ...useAudioStore.getState().layers.bgm, hash: "abc", playing: true }
-    expect(applyControl(base, control({ action: "pause" }), true)).toMatchObject({
+    expect(applyControl(base, control({ action: "pause" }))).toMatchObject({
       playing: false,
       hash: "abc",
     })
-    expect(applyControl(base, control({ action: "resume" }), true).playing).toBe(true)
+    expect(applyControl(base, control({ action: "resume" })).playing).toBe(true)
     // Stop clears the blob; pause does not — resuming after a pause must not
     // need the server to re-send the hash.
-    expect(applyControl(base, control({ action: "stop" }), true)).toMatchObject({
+    expect(applyControl(base, control({ action: "stop" }))).toMatchObject({
       playing: false,
       hash: undefined,
     })
@@ -51,12 +73,12 @@ describe("audio store", () => {
 
   it("treats volume as an adjustment, never as a transport action", () => {
     const stopped = { ...useAudioStore.getState().layers.bgm, playing: false }
-    expect(applyControl(stopped, control({ action: "volume", volume: 0.2 }), true)).toMatchObject({
+    expect(applyControl(stopped, control({ action: "volume", volume: 0.2 }))).toMatchObject({
       playing: false,
       volume: 0.2,
     })
     const playing = { ...stopped, playing: true }
-    expect(applyControl(playing, control({ action: "volume", volume: 0.9 }), true).playing).toBe(true)
+    expect(applyControl(playing, control({ action: "volume", volume: 0.9 })).playing).toBe(true)
   })
 
   it("adopts a replayed audio_state without discarding the listener's mixer", () => {
@@ -125,6 +147,58 @@ describe("audio store", () => {
     })
     expect(useAudioStore.getState().layers.bgm.loadError).toBeNull()
     expect(useAudioStore.getState().layers.bgm.hash).toBe("new")
+  })
+})
+
+describe("armGestureUnlock", () => {
+  let disarm: () => void = () => undefined
+
+  beforeEach(() => {
+    useAudioStore.getState().reset()
+    useAudioStore.setState({ unlocked: false })
+  })
+
+  afterEach(() => disarm())
+
+  it("unlocks on the first pointer gesture anywhere, and starts what was waiting", () => {
+    useAudioStore.getState().ingest(control({ hash: "abc" }))
+    useAudioStore.getState().markBlocked("bgm")
+    disarm = armGestureUnlock()
+
+    // Not on our button, not even on a focusable element: anywhere in the window.
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+
+    expect(useAudioStore.getState().unlocked).toBe(true)
+    expect(useAudioStore.getState().layers.bgm).toMatchObject({ waitingForUnlock: false, playing: true })
+  })
+
+  it("unlocks on a key press too, and is spent after one gesture", () => {
+    disarm = armGestureUnlock()
+    window.dispatchEvent(new Event("keydown"))
+    expect(useAudioStore.getState().unlocked).toBe(true)
+
+    // Removed after firing: a later refusal is not wiped by the next click.
+    useAudioStore.getState().ingest(control({ hash: "abc" }))
+    useAudioStore.getState().markBlocked("bgm")
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(true)
+  })
+
+  it("is installed once, and the disposer takes it away", () => {
+    disarm = armGestureUnlock()
+    expect(armGestureUnlock()).toBe(disarm)
+    disarm()
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+    expect(useAudioStore.getState().unlocked).toBe(false)
+  })
+
+  it("arms nothing once a gesture has already been seen", () => {
+    useAudioStore.getState().unlock()
+    disarm = armGestureUnlock()
+    useAudioStore.getState().ingest(control({ hash: "abc" }))
+    useAudioStore.getState().markBlocked("bgm")
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(true)
   })
 })
 

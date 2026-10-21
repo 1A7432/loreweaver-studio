@@ -348,6 +348,7 @@
       "gainLayer": "{{layer}}音量",
       "unlock": "开启声音",
       "unlockHint": "本窗口在你与它交互之前不允许发声，所以 keeper 的提示已排队等待，而不是被丢弃。",
+      "unlockNotice": "有一段声音在等待播放——本窗口还不允许发声。",
       "keeperLayer": "声道",
       "keeperTrack": "曲目",
       "keeperPick": "（选择一项）",
