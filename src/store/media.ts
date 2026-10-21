@@ -77,6 +77,25 @@ function capped<T>(list: T[], item: T): T[] {
   return [...list.slice(-(MAX_ITEMS - 1)), item]
 }
 
+/**
+ * Add a broadcast to an index of what the room holds, once per blob.
+ *
+ * The identity of an entry is its content hash. The server replays its recent
+ * `media` and `audio_library_item` frames on every join, and an automatic
+ * redial is a join like any other, so the same blob arrives again and again —
+ * and the same bytes shared twice are one thing in the room, not two (the
+ * server's own audio library is keyed by hash the same way). The frame `id` is
+ * a per-broadcast label and is not the identity. A repeat takes the slot of the
+ * earlier entry and carries its newer metadata.
+ */
+function upsertByHash<T extends { hash: string }>(list: T[], item: T): T[] {
+  const index = list.findIndex((existing) => existing.hash === item.hash)
+  if (index === -1) return capped(list, item)
+  const next = [...list]
+  next[index] = item
+  return next
+}
+
 export const useMediaStore = create<MediaState>()((set, get) => ({
   epoch: 0,
   ...EMPTY,
@@ -84,10 +103,10 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
   ingest: (frame) => {
     switch (frame.type) {
       case "media":
-        set((state) => ({ images: capped(state.images, frame) }))
+        set((state) => ({ images: upsertByHash(state.images, frame) }))
         return true
       case "audio_library_item":
-        set((state) => ({ audio: capped(state.audio, frame) }))
+        set((state) => ({ audio: upsertByHash(state.audio, frame) }))
         return true
       case "media_enabled":
         set({ uploadsEnabled: frame.enabled })
@@ -223,8 +242,8 @@ async function resolveAccept(
     // accept and the server has broadcast nothing new.
     set((state) => ({
       uploads: { ...state.uploads, [sha256]: { ...state.uploads[sha256], phase: "done" } },
-      images: frame.media ? capped(state.images, frame.media) : state.images,
-      audio: frame.audio ? capped(state.audio, frame.audio) : state.audio,
+      images: frame.media ? upsertByHash(state.images, frame.media) : state.images,
+      audio: frame.audio ? upsertByHash(state.audio, frame.audio) : state.audio,
     }))
     return
   }

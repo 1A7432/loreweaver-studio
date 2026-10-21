@@ -56,6 +56,71 @@ describe("media store", () => {
     expect(useMediaStore.getState().audio[0].title).toBe("潮涌")
   })
 
+  // The server replays its recent `media` / `audio_library_item` frames on every
+  // join, and the transport redials by itself after a restart. The blob's hash is
+  // what identifies it; the frame id is a label for one broadcast.
+  describe("replayed broadcasts", () => {
+    const AUDIO = {
+      type: "audio_library_item" as const,
+      id: "a1",
+      hash: "def456",
+      mime: "audio/mpeg",
+      size: 4096,
+      name: "chao-yong.mp3",
+      from: "Nyx",
+      ts: 2,
+    }
+
+    it("lists a picture once however often a join replays it", () => {
+      const store = useMediaStore.getState()
+      store.ingest(IMAGE)
+      store.ingest({ ...IMAGE, id: "m-replay-1" })
+      store.ingest({ ...IMAGE, id: "m-replay-2" })
+      expect(useMediaStore.getState().images).toHaveLength(1)
+    })
+
+    it("keeps one slot per blob, in order, with the newest metadata", () => {
+      const store = useMediaStore.getState()
+      store.ingest(IMAGE)
+      store.ingest({ ...IMAGE, id: "m2", hash: "bbb222", name: "map.png" })
+      store.ingest({ ...IMAGE, id: "m3", from: "KP", ts: 9 })
+      const { images } = useMediaStore.getState()
+      expect(images.map((item) => item.hash)).toEqual(["abc123", "bbb222"])
+      expect(images[0]).toMatchObject({ id: "m3", from: "KP", ts: 9 })
+    })
+
+    it("keeps different pictures that happen to share a frame id", () => {
+      const store = useMediaStore.getState()
+      store.ingest(IMAGE)
+      store.ingest({ ...IMAGE, hash: "bbb222", name: "map.png" })
+      expect(useMediaStore.getState().images).toHaveLength(2)
+    })
+
+    it("lists a library track once however often a join replays it", () => {
+      const store = useMediaStore.getState()
+      store.ingest(AUDIO)
+      store.ingest({ ...AUDIO, id: "a-replay", title: "潮涌" })
+      expect(useMediaStore.getState().audio).toHaveLength(1)
+      expect(useMediaStore.getState().audio[0].title).toBe("潮涌")
+    })
+
+    it("does not list a blob twice when the room already held it on re-offer", async () => {
+      useMediaStore.getState().ingest(IMAGE)
+      await useMediaStore.getState().upload("/tmp/handout.png")
+      useMediaStore.getState().ingest({ type: "media_accept", upload_id: "", existing: true, media: IMAGE })
+      await vi.waitFor(() => expect(useMediaStore.getState().uploads.abc123.phase).toBe("done"))
+      expect(useMediaStore.getState().images).toHaveLength(1)
+    })
+
+    it("still caps the index", () => {
+      const store = useMediaStore.getState()
+      for (let i = 0; i < 120; i += 1) store.ingest({ ...IMAGE, id: `m${i}`, hash: `hash-${i}` })
+      const { images } = useMediaStore.getState()
+      expect(images).toHaveLength(100)
+      expect(images.at(-1)?.hash).toBe("hash-119")
+    })
+  })
+
   it("records the keeper's upload switch, and starts not knowing it", () => {
     expect(useMediaStore.getState().uploadsEnabled).toBeNull()
     useMediaStore.getState().ingest({ type: "media_enabled", enabled: false })
