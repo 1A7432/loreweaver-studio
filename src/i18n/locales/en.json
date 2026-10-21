@@ -304,6 +304,14 @@
       "versus": "vs",
       "tie": "tie",
       "winner": "{{name}} wins",
+      "tens": {
+        "bonus": "bonus die {{n}}",
+        "penalty": "penalty die {{n}}",
+        "both": "bonus die {{bonus}} / penalty die {{penalty}}",
+        "plain": "tens dice",
+        "value": "rolled {{base}}, extra tens {{extra}}, tens taken {{final}}",
+        "valueBare": "rolled {{base}}, tens taken {{final}}"
+      },
       "detail": {
         "bonus": "bonus dice",
         "penalty": "penalty dice",
@@ -321,7 +329,10 @@
         "critical_success": "critical",
         "critical_failure": "fumble",
         "mark": "marked",
-        "stat_delta": "changed"
+        "stat_delta": "changed",
+        "base_roll": "original roll",
+        "extra_tens": "extra tens",
+        "final_tens": "tens taken"
       }
     },
     "media": {

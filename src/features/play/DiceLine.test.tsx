@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import type { DiceFrame, DiceOutcome } from "@loreweaver/protocol"
-import "../../i18n"
+import i18n from "../../i18n"
 import DiceLine from "./DiceLine"
 import { diceOutcomeClass } from "./rank"
 
@@ -188,5 +188,149 @@ describe("dice detail", () => {
     const { container } = render(<DiceLine frame={base} />)
     expect(container.querySelector(".dice-detail")).toBeNull()
     expect(container.querySelector(".dice-opposed")).toBeNull()
+  })
+})
+
+describe("percentile bonus / penalty dice", () => {
+  // `core/dice_engine.py` reports a d100 with extra tens dice as `base_roll`
+  // (the d100 before them), `extra_tens`, `final_tens` and the bonus/penalty
+  // counts. Rendered raw, a CoC bonus-die check read
+  //   [68]  base_roll: 98  奖励骰: 1  extra_tens: [6]  final_tens: 6
+  // — four chips for one mechanic, two of them in the engine's own words.
+  const check: DiceFrame = {
+    type: "dice",
+    actor: "Nyx",
+    kind: "check",
+    expr: "1d100",
+    rolls: [68],
+    total: 68,
+    target: 70,
+  }
+  const chipsOf = (container: HTMLElement) =>
+    [...container.querySelectorAll(".dice-chip")].map((chip) => ({
+      label: chip.querySelector(".dice-chip-label")?.textContent,
+      value: chip.querySelector(".dice-chip-value")?.textContent,
+    }))
+
+  afterEach(async () => {
+    await i18n.changeLanguage("en")
+  })
+
+  it("reads a bonus die as one sentence, with none of its keys repeated as chips", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(
+      <DiceLine frame={{ ...check, detail: { bonus: 1, base_roll: 98, extra_tens: [6], final_tens: 6 } }} />,
+    )
+    expect(chipsOf(container)).toEqual([
+      { label: "bonus die 1", value: "rolled 98, extra tens 6, tens taken 6" },
+    ])
+    for (const raw of ["base_roll", "extra_tens", "final_tens", "bonus dice"]) {
+      expect(container.textContent).not.toContain(raw)
+    }
+    // The roll itself still shows beside it.
+    expect(container.querySelector(".dice-rolls")).toHaveTextContent("[68]")
+  })
+
+  it("reads a penalty die the same way", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(
+      <DiceLine
+        frame={{ ...check, detail: { penalty: 2, base_roll: 41, extra_tens: [7, 9], final_tens: 9 } }}
+      />,
+    )
+    expect(chipsOf(container)).toEqual([
+      { label: "penalty die 2", value: "rolled 41, extra tens 7/9, tens taken 9" },
+    ])
+  })
+
+  it("says so in Chinese too", async () => {
+    await i18n.changeLanguage("zh")
+    const { container } = render(
+      <DiceLine frame={{ ...check, detail: { bonus: 1, base_roll: 98, extra_tens: [6], final_tens: 6 } }} />,
+    )
+    expect(chipsOf(container)).toEqual([{ label: "奖励骰 1", value: "原掷 98，另掷十位 6，取十位 6" }])
+  })
+
+  it("names both counts when a bonus and a penalty die did not cancel", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(
+      <DiceLine
+        frame={{
+          ...check,
+          detail: { bonus: 2, penalty: 1, base_roll: 98, extra_tens: [6], final_tens: 6 },
+        }}
+      />,
+    )
+    expect(chipsOf(container)).toHaveLength(1)
+    expect(chipsOf(container)[0].label).toBe("bonus die 2 / penalty die 1")
+  })
+
+  it("still reads the cluster when the pack names its dice something else", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(
+      <DiceLine frame={{ ...check, detail: { base_roll: 98, extra_tens: [6], final_tens: 6 } }} />,
+    )
+    expect(chipsOf(container)).toEqual([
+      { label: "tens dice", value: "rolled 98, extra tens 6, tens taken 6" },
+    ])
+  })
+
+  it("leaves every other key alone: a modifier and a field from the future survive", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(
+      <DiceLine
+        frame={{
+          ...check,
+          detail: {
+            bonus: 1,
+            base_roll: 98,
+            extra_tens: [6],
+            final_tens: 6,
+            modifier: 5,
+            some_future_field: "moonlit",
+          },
+        }}
+      />,
+    )
+    const chips = chipsOf(container)
+    expect(chips).toHaveLength(3)
+    expect(chips[0].label).toBe("bonus die 1")
+    expect(chips.map((chip) => chip.label)).toContain("modifier")
+    expect(chips.map((chip) => chip.label)).toContain("some_future_field")
+  })
+
+  it("falls back to labelled chips when only some of the keys came", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(
+      <DiceLine frame={{ ...check, detail: { bonus: 1, base_roll: 98, final_tens: 6 } }} />,
+    )
+    expect(chipsOf(container)).toEqual([
+      { label: "bonus dice", value: "1" },
+      { label: "original roll", value: "98" },
+      { label: "tens taken", value: "6" },
+    ])
+  })
+
+  it("falls back, hiding nothing, when the cluster is malformed", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(
+      <DiceLine frame={{ ...check, detail: { base_roll: 98, extra_tens: ["six"], final_tens: 6 } }} />,
+    )
+    expect(chipsOf(container)).toEqual([
+      { label: "original roll", value: "98" },
+      { label: "extra tens", value: '["six"]' },
+      { label: "tens taken", value: "6" },
+    ])
+  })
+
+  it("keeps a kept tens digit of 0: a roll of 01-09 is a reading, not an absence", async () => {
+    await i18n.changeLanguage("en")
+    const { container } = render(<DiceLine frame={{ ...check, detail: { base_roll: 47, final_tens: 0 } }} />)
+    expect(chipsOf(container)).toContainEqual({ label: "tens taken", value: "0" })
+    // ...and inside the whole cluster, where it is simply the digit that was taken.
+    const whole = render(
+      <DiceLine frame={{ ...check, detail: { bonus: 1, base_roll: 47, extra_tens: [0], final_tens: 0 } }} />,
+    )
+    expect(chipsOf(whole.container)[0].value).toBe("rolled 47, extra tens 0, tens taken 0")
   })
 })
