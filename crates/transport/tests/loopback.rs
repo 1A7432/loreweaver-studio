@@ -9,7 +9,8 @@ use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use loreweaver_transport::client::{
-    connect, connect_with_backoff_pulse, ConnStatus, ConnectParams, NetworkProfile, TransportEvent,
+    connect, connect_with_backoff_pulse, connect_with_timeouts, ConnStatus, ConnectParams,
+    ErrorCode, NetworkProfile, Timeouts, TransportEvent,
 };
 use loreweaver_transport::codec::{encode_line, LineDecoder};
 use serde_json::{json, Value};
@@ -123,6 +124,7 @@ async fn expect_status(
             status,
             attempt,
             error,
+            ..
         } => {
             assert_eq!(status, expected, "unexpected status (error: {error:?})");
             (attempt, error)
@@ -606,6 +608,218 @@ async fn close_settles_a_pending_send() {
         result.is_err(),
         "close must fail the pending send, got {result:?}"
     );
+    expect_status(&mut rx, ConnStatus::Offline).await;
+    server.abort();
+}
+
+/// Per-attempt bounds short enough for a test to watch them fire.
+const FAST: Timeouts = Timeouts {
+    dial: Duration::from_millis(300),
+    join: Duration::from_millis(300),
+};
+
+/// The `offline` that ends a connection, with the code the UI words itself by.
+async fn expect_offline_with_code(
+    rx: &mut UnboundedReceiver<TransportEvent>,
+) -> (Option<String>, Option<ErrorCode>) {
+    match next_event(rx).await {
+        TransportEvent::Status {
+            status: ConnStatus::Offline,
+            error,
+            error_code,
+            ..
+        } => (error, error_code),
+        other => panic!("expected offline, got {other:?}"),
+    }
+}
+
+/// A host that is reachable on the wire but never answers the handshake: the
+/// endpoint is bound (so the address in the ticket is live) and never
+/// accepts. This is what a stale ticket looks like to the dialer — packets go
+/// out, nothing comes back, and iroh alone keeps trying.
+async fn bind_silent_host() -> (Endpoint, String) {
+    bind_server().await
+}
+
+#[tokio::test]
+async fn a_dial_that_gets_no_answer_times_out_with_a_code_and_does_not_redial() {
+    let (_silent, ticket) = bind_silent_host().await;
+
+    let (_handle, mut rx, _pulse) = connect_with_timeouts(params(&ticket), FAST);
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    let (error, code) = expect_offline_with_code(&mut rx).await;
+    assert_eq!(code, Some(ErrorCode::ConnectTimeout));
+    assert!(
+        error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("connect timeout"),
+        "unexpected detail: {error:?}"
+    );
+    assert!(
+        rx.recv().await.is_none(),
+        "a connection that was never welcomed must not enter the redial loop"
+    );
+}
+
+#[tokio::test]
+async fn a_host_that_never_welcomes_times_out_the_join_with_its_own_code() {
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let join = conn.read_frame().await;
+        assert_eq!(join["type"], "join");
+        // Connected and joined, then silence.
+        conn.conn.closed().await;
+    });
+
+    let (_handle, mut rx, _pulse) = connect_with_timeouts(params(&ticket), FAST);
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    let (error, code) = expect_offline_with_code(&mut rx).await;
+    assert_eq!(code, Some(ErrorCode::JoinTimeout));
+    assert!(error.unwrap_or_default().contains("join timeout"));
+    assert!(
+        rx.recv().await.is_none(),
+        "no redial after a first-attempt failure"
+    );
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn a_host_that_hangs_up_before_welcoming_ends_the_first_attempt() {
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let _join = conn.read_frame().await;
+        conn.conn.close(0u32.into(), b"go away");
+        // Closing the endpoint is what flushes the CLOSE out; dropping it
+        // straight away can swallow the frame and leave the client waiting.
+        endpoint.close().await;
+    });
+
+    let (_handle, mut rx) = connect(params(&ticket));
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    let (_, code) = expect_offline_with_code(&mut rx).await;
+    assert_eq!(code, Some(ErrorCode::ConnectFailed));
+    assert!(rx.recv().await.is_none());
+    server.await.expect("server task");
+}
+
+/// The hang this guards: a close that arrives while `endpoint.connect` is
+/// still pending used to sit in the command queue until the dial returned —
+/// which, for a stale ticket, is minutes. The replacement dial closes the
+/// incumbent exactly this way, so a close the actor cannot hear is a connect
+/// button that does nothing.
+#[tokio::test]
+async fn close_abandons_a_dial_in_flight_and_other_commands_fail_fast() {
+    let (_silent, ticket) = bind_silent_host().await;
+    // The real bounds: only the close can end this within the test.
+    let (handle, mut rx, _pulse) = connect_with_timeouts(params(&ticket), Timeouts::default());
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+
+    // Mid-dial there is no stream to send on: refuse, do not queue.
+    let verdict = tokio::time::timeout(
+        Duration::from_secs(5),
+        handle.send_frame(json!({"type": "input", "text": "too early"})),
+    )
+    .await
+    .expect("a send during a dial settles instead of waiting for it");
+    assert!(
+        verdict.is_err(),
+        "send during a dial must be Err, got {verdict:?}"
+    );
+    let fetched =
+        tokio::time::timeout(Duration::from_secs(5), handle.fetch_blob("cafe".to_owned()))
+            .await
+            .expect("a fetch during a dial settles too");
+    assert!(fetched.is_err());
+
+    let started = std::time::Instant::now();
+    handle.close();
+    let (error, code) = expect_offline_with_code(&mut rx).await;
+    assert_eq!((error, code), (None, None), "a close is not a failure");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "close took {:?}: it waited out the dial",
+        started.elapsed()
+    );
+    assert!(rx.recv().await.is_none(), "the actor ends after a close");
+}
+
+/// A replacement dial (the bridge closes the incumbent and starts a new
+/// actor) must not be held up by the one it replaces, and the replaced one
+/// must really end.
+#[tokio::test]
+async fn a_new_dial_while_one_is_stuck_connects_and_the_stuck_one_ends() {
+    let (_silent, stale_ticket) = bind_silent_host().await;
+    let (endpoint, live_ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = ServerConn::accept(&endpoint).await;
+        let _join = conn.read_frame().await;
+        conn.write_frame(&welcome_frame("1.6")).await;
+        conn.conn.closed().await;
+    });
+
+    let (stuck, mut stuck_rx, _pulse) =
+        connect_with_timeouts(params(&stale_ticket), Timeouts::default());
+    expect_status(&mut stuck_rx, ConnStatus::Connecting).await;
+
+    // What `transport_connect` does: close the occupant, seat a new actor.
+    stuck.close();
+    let (fresh, mut fresh_rx) = connect(params(&live_ticket));
+    expect_status(&mut fresh_rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut fresh_rx).await["type"], "welcome");
+    expect_status(&mut fresh_rx, ConnStatus::Online).await;
+
+    expect_offline_with_code(&mut stuck_rx).await;
+    assert!(
+        stuck_rx.recv().await.is_none(),
+        "the replaced actor is gone"
+    );
+
+    fresh.close();
+    expect_status(&mut fresh_rx, ConnStatus::Offline).await;
+    server.await.expect("server task");
+}
+
+/// After a session that WAS good, a dial that gets no answer is not fatal: the
+/// redial loop keeps going under the same dial bound, with the attempt count
+/// rising, and a close still ends it.
+#[tokio::test]
+async fn redial_after_a_good_session_is_bounded_and_keeps_going() {
+    let (endpoint, ticket) = bind_server().await;
+    let (drop_tx, drop_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let mut first = ServerConn::accept(&endpoint).await;
+        let _join = first.read_frame().await;
+        first.write_frame(&welcome_frame("1.6")).await;
+        drop_rx.await.expect("client asks the server to drop");
+        first.conn.close(0u32.into(), b"restart");
+        // Hold the endpoint and never accept: every redial dials a host that
+        // does not answer.
+        tokio::time::sleep(STEP).await;
+        drop(endpoint);
+    });
+
+    let (handle, mut rx, mut pulse) = connect_with_timeouts(params(&ticket), FAST);
+    expect_status(&mut rx, ConnStatus::Connecting).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
+    expect_status(&mut rx, ConnStatus::Online).await;
+
+    drop_tx.send(()).expect("signal the drop");
+    tokio::time::timeout(STEP, pulse.recv())
+        .await
+        .expect("actor observed the loss")
+        .expect("pulse open");
+
+    let (first_attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
+    assert_eq!(first_attempt, 1);
+    // The first redial must give up on its own (dial bound), back off, and
+    // try again as attempt 2 — not hang on attempt 1 and not go offline.
+    let (second_attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
+    assert_eq!(second_attempt, 2);
+
+    handle.close();
     expect_status(&mut rx, ConnStatus::Offline).await;
     server.abort();
 }

@@ -186,7 +186,7 @@ pub async fn transport_disconnect(
 #[cfg(test)]
 mod tests {
     use super::{bridged_event, take_for_replace, take_if_owner, Seat, SlotOwner};
-    use loreweaver_transport::client::{ConnStatus, TransportEvent};
+    use loreweaver_transport::client::{ConnStatus, ErrorCode, TransportEvent};
     use serde_json::json;
 
     fn owner(connection_id: &str, session: &str, seq: u64) -> SlotOwner {
@@ -229,6 +229,7 @@ mod tests {
             status: ConnStatus::Online,
             attempt: 0,
             error: None,
+            error_code: None,
         };
         let payload = bridged_event(&seat.owner.connection_id, &event);
         assert_eq!(payload["connectionId"], "gen-b");
@@ -297,11 +298,26 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_code_rides_the_envelope_for_the_webview_to_word() {
+        let event = TransportEvent::Status {
+            status: ConnStatus::Offline,
+            attempt: 0,
+            error: Some("connect timeout: no connection to the host within 15s".to_owned()),
+            error_code: Some(ErrorCode::ConnectTimeout),
+        };
+        let payload = bridged_event("gen-1", &event);
+        assert_eq!(payload["errorCode"], "connect_timeout");
+        assert_eq!(payload["connectionId"], "gen-1");
+        assert!(payload["error"].as_str().is_some());
+    }
+
+    #[test]
     fn stamps_status_events_the_same_way() {
         let event = TransportEvent::Status {
             status: ConnStatus::Offline,
             attempt: 0,
             error: None,
+            error_code: None,
         };
         let payload = bridged_event("gen-old", &event);
         assert_eq!(payload["connectionId"], "gen-old");
