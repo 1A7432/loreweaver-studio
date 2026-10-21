@@ -12,6 +12,7 @@ import {
 } from "../lib/transport"
 import { useAdminStore } from "./admin"
 import { useAudioStore } from "./audio"
+import { useLastTableStore, type RememberedTable } from "./lastTable"
 import { useMediaStore } from "./media"
 import { useReportStore } from "./report"
 import { useSessionStore } from "./session"
@@ -35,6 +36,18 @@ function looksLikeWelcome(frame: unknown): boolean {
   return typeof frame === "object" && frame !== null && (frame as { type?: unknown }).type === "welcome"
 }
 
+/** The hand-dialed connection waiting to be judged: remembered once its welcome
+ * is accepted, dropped again if the server rejects its key. Keyed by the dial's
+ * generation, so a later dial (the local-host button, say) can never inherit it.
+ * Module state rather than store state — nothing renders from it. */
+let pendingRemember: { connectionId: string; table: RememberedTable } | null = null
+
+export interface ConnectOptions {
+  /** This dial is a table the player entered by hand: remember it once the
+   * handshake succeeds (see `store/lastTable.ts`). */
+  remember?: boolean
+}
+
 interface ConnectionState {
   status: TransportStatus
   attempt: number
@@ -50,7 +63,7 @@ interface ConnectionState {
   /** A handshake this store refused. While set, transport statuses are ignored
    * — see `handleEvent`. Cleared only by an explicit new connect. */
   refused: boolean
-  connect: (params: DialParams) => Promise<void>
+  connect: (params: DialParams, options?: ConnectOptions) => Promise<void>
   disconnect: () => Promise<void>
   /** Single entry point for everything the Rust bridge emits. */
   handleEvent: (event: TransportEvent) => void
@@ -75,7 +88,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connectionId: null,
   refused: false,
 
-  connect: async (params) => {
+  connect: async (params, options) => {
+    pendingRemember = null
     // An explicit dial is the one thing that lifts a refusal — do it before any
     // early return, so a refused handshake cannot leave the store deaf to every
     // status that follows for the rest of the process's life.
@@ -95,6 +109,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     // travels to Rust, which seats an actor only for a dial the WebView has
     // not already outrun — the id alone says who, the session + seq say when.
     const generation = createConnection()
+    if (options?.remember) {
+      pendingRemember = {
+        connectionId: generation.connectionId,
+        table: {
+          ticket: sanitizeTicket(params.ticket),
+          key: params.key.trim(),
+          name: params.name?.trim() ?? "",
+        },
+      }
+    }
     set({
       status: "connecting",
       attempt: 0,
@@ -193,7 +217,21 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         return
       }
       set({ welcome: frame })
+      if (pendingRemember?.connectionId === event.connectionId) {
+        useLastTableStore.getState().remember(pendingRemember.table)
+        pendingRemember = null
+      }
       return
+    }
+    // The server turned the key down: a table saved with it can never connect
+    // again, and prefilling it on every launch would just repeat the failure.
+    if (
+      frame.type === "error" &&
+      frame.code === "bad_key" &&
+      pendingRemember?.connectionId === event.connectionId
+    ) {
+      useLastTableStore.getState().forgetMatching(pendingRemember.table)
+      pendingRemember = null
     }
     // Keeper-admin replies feed the admin store; they never reach the chronicle.
     if (useAdminStore.getState().ingest(frame)) return

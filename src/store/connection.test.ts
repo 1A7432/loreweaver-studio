@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PROTOCOL_VERSION } from "@loreweaver/protocol"
 import type { TransportEvent } from "../lib/transport"
 import { sanitizeTicket, useConnectionStore } from "./connection"
+import { useLastTableStore } from "./lastTable"
 import { useSessionStore } from "./session"
 
 const bridge = vi.hoisted(() => ({
@@ -60,6 +61,7 @@ function reset() {
     refused: false,
   })
   useSessionStore.getState().clear()
+  useLastTableStore.getState().forget()
 }
 
 function handle(event: { kind: "status" | "frame"; connectionId?: string; [key: string]: unknown }): void {
@@ -421,5 +423,92 @@ describe("connection generation", () => {
     expect(useConnectionStore.getState().connectionId).toBe("gen-B")
     expect(useConnectionStore.getState().status).toBe("connecting")
     expect(useConnectionStore.getState().lastError).toBeNull()
+  })
+})
+
+describe("remembering a hand-dialed table", () => {
+  const params = { ticket: " ticket=endpointabc\n123 ", key: " k-1 ", name: " Nyx " }
+
+  beforeEach(() => {
+    reset()
+    bridge.tauri = true
+  })
+
+  /** Dial as the connect form does, then let the bridge speak under that dial's id. */
+  async function dial(id: string, remember: boolean) {
+    bridge.nextIds = [id]
+    await useConnectionStore.getState().connect(params, remember ? { remember: true } : undefined)
+  }
+
+  it("remembers the (sanitized) ticket, key and name once the welcome is accepted", async () => {
+    await dial("gen-a", true)
+    // Not on dial: a table that never answered is not a table worth coming back to.
+    expect(useLastTableStore.getState().ticket).toBe("")
+    handle({ kind: "status", connectionId: "gen-a", status: "connecting", attempt: 0 })
+    expect(useLastTableStore.getState().ticket).toBe("")
+
+    handle({ kind: "frame", connectionId: "gen-a", frame: WELCOME })
+    expect(useLastTableStore.getState()).toMatchObject({
+      ticket: "endpointabc123",
+      key: "k-1",
+      name: "Nyx",
+    })
+  })
+
+  it("does not remember a dial nobody asked to remember (the local-host path)", async () => {
+    useLastTableStore.getState().remember({ ticket: "endpointold", key: "k-old", name: "" })
+    await dial("gen-b", false)
+    handle({ kind: "frame", connectionId: "gen-b", frame: WELCOME })
+    expect(useLastTableStore.getState().ticket).toBe("endpointold")
+  })
+
+  it("does not let a later plain dial inherit an earlier remembered one", async () => {
+    await dial("gen-c", true)
+    bridge.nextIds = ["gen-d"]
+    await useConnectionStore.getState().connect({ ticket: "endpointlocal", key: "k-local" })
+    // The first dial's welcome arrives late, from a generation that is gone.
+    handle({ kind: "frame", connectionId: "gen-c", frame: WELCOME })
+    handle({ kind: "frame", connectionId: "gen-d", frame: WELCOME })
+    expect(useLastTableStore.getState().ticket).toBe("")
+  })
+
+  it("does not remember a server whose handshake the app refused", async () => {
+    await dial("gen-e", true)
+    handle({ kind: "frame", connectionId: "gen-e", frame: { ...WELCOME, protocol: "99.0" } })
+    expect(useLastTableStore.getState().ticket).toBe("")
+  })
+
+  it("forgets the saved table when the server rejects its key", async () => {
+    useLastTableStore.getState().remember({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
+    await dial("gen-f", true)
+    handle({
+      kind: "frame",
+      connectionId: "gen-f",
+      frame: { type: "error", code: "bad_key", message: "unknown key" },
+    })
+    expect(useLastTableStore.getState()).toMatchObject({ ticket: "", key: "", name: "" })
+  })
+
+  it("keeps the saved table when a DIFFERENT key the player typed is the one rejected", async () => {
+    useLastTableStore.getState().remember({ ticket: "endpointabc123", key: "k-good", name: "Nyx" })
+    await dial("gen-g", true)
+    handle({
+      kind: "frame",
+      connectionId: "gen-g",
+      frame: { type: "error", code: "bad_key", message: "unknown key" },
+    })
+    expect(useLastTableStore.getState().key).toBe("k-good")
+  })
+
+  it("keeps the saved table through every other failure", async () => {
+    useLastTableStore.getState().remember({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
+    await dial("gen-h", true)
+    handle({
+      kind: "frame",
+      connectionId: "gen-h",
+      frame: { type: "error", code: "rate_limited", message: "slow down" },
+    })
+    handle({ kind: "status", connectionId: "gen-h", status: "offline", attempt: 0, error: "invalid ticket" })
+    expect(useLastTableStore.getState().key).toBe("k-1")
   })
 })
