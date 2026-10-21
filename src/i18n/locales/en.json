@@ -58,6 +58,10 @@
     "echoPending": "sending…",
     "echoFailed": "not delivered",
     "serverRefused": "The server refused it: {{message}}",
+    "npcLine": {
+      "show": "Show full line",
+      "hide": "Hide full line"
+    },
     "turnBusy": "Resolving {{actor}}'s action…",
     "turnActivity": {
       "reading": "reading the module",

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -19,20 +19,86 @@ function speakerLabel(frame: NarrativeFrame, systemLabel: string): string {
   return stripControlChars(frame.name ?? "?")
 }
 
+/** How much of an NPC line the collapsed row shows. */
+export const NPC_PREVIEW_CHARS = 24
+
+/** One line of plain text from the start of an NPC line, cut by characters
+ * (not UTF-16 units — a line in zh must not be split inside a pair). */
+function npcPreview(frame: NarrativeFrame, text: string): { text: string; cut: boolean } {
+  const flat = (frame.format === "markdown" ? text.replace(/[*_`~]|^[>#\s]+/g, "") : text)
+    .replace(/\s+/g, " ")
+    .trim()
+  const chars = Array.from(flat)
+  return chars.length > NPC_PREVIEW_CHARS
+    ? { text: chars.slice(0, NPC_PREVIEW_CHARS).join(""), cut: true }
+    : { text: flat, cut: false }
+}
+
+function EntryBody({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
+  const text = stripControlChars(frame.text)
+  return (
+    <div className="entry-body">
+      {frame.format === "markdown" ? (
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      ) : (
+        <p className="entry-plain">{text}</p>
+      )}
+      {draft ? <span className="stream-cursor" aria-hidden="true" /> : null}
+    </div>
+  )
+}
+
+/** An NPC's spoken line, folded to an attribution row until the reader opens it.
+ *
+ * The engine has the Keeper restate every line it voices through an NPC inside
+ * its own narration — by contract, because only the narration is persisted into
+ * the Keeper's memory. So the full line arrives twice, first as this bubble and
+ * then woven into the narration. The narration stays the reading surface; this
+ * keeps who spoke (and how it began) in place without making the table read a
+ * 300-character speech twice. Nothing is dropped and the order is untouched. */
+function NpcEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const preview = npcPreview(frame, stripControlChars(frame.text))
+  // A line that fits the preview has nothing to unfold.
+  if (!preview.cut) {
+    return (
+      <article className="log-entry speaker-npc npc-line">
+        <div className="npc-line-toggle">
+          <span className="entry-speaker">{speakerLabel(frame, t("log.system"))}</span>
+          <span className="npc-line-preview">{preview.text}</span>
+          {draft ? <span className="stream-cursor" aria-hidden="true" /> : null}
+        </div>
+      </article>
+    )
+  }
+  return (
+    <article className="log-entry speaker-npc npc-line">
+      <button
+        type="button"
+        className="npc-line-toggle"
+        aria-expanded={open}
+        title={t(open ? "session.npcLine.hide" : "session.npcLine.show")}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="entry-speaker">{speakerLabel(frame, t("log.system"))}</span>
+        {open ? null : <span className="npc-line-preview">{preview.text}…</span>}
+        <span className="npc-line-chevron" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open ? <EntryBody frame={frame} draft={draft} /> : null}
+    </article>
+  )
+}
+
 function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
   const { t } = useTranslation()
-  const text = stripControlChars(frame.text)
+  if (frame.speaker === "npc") return <NpcEntry frame={frame} draft={draft} />
   return (
     <article className={`log-entry speaker-${frame.speaker}`}>
       <header className="entry-speaker">{speakerLabel(frame, t("log.system"))}</header>
-      <div className="entry-body">
-        {frame.format === "markdown" ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-        ) : (
-          <p className="entry-plain">{text}</p>
-        )}
-        {draft ? <span className="stream-cursor" aria-hidden="true" /> : null}
-      </div>
+      <EntryBody frame={frame} draft={draft} />
     </article>
   )
 }

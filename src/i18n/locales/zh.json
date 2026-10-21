@@ -58,6 +58,10 @@
     "echoPending": "发送中…",
     "echoFailed": "未送达",
     "serverRefused": "服务器拒绝了这一条：{{message}}",
+    "npcLine": {
+      "show": "展开台词",
+      "hide": "收起台词"
+    },
     "turnBusy": "正在结算 {{actor}} 的行动…",
     "turnActivity": {
       "reading": "查阅资料中",
