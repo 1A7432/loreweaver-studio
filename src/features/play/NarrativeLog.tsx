@@ -13,11 +13,17 @@ import { useSessionStore, type LogEntry, type PendingEcho } from "../../store/se
 import DiceLine from "./DiceLine"
 import UiBlocks from "./UiBlocks"
 
-function speakerLabel(frame: NarrativeFrame, systemLabel: string): string {
+/**
+ * The header over a line, or `null` for none. A player line carries the seat's
+ * name only when the server knows it: a join replay of an older engine sends
+ * the player's words with no `name` at all, and a label invented for that —
+ * the "?" this used to show — is worse than none.
+ */
+function speakerLabel(frame: NarrativeFrame, systemLabel: string): string | null {
   if (frame.speaker === "kp") return "KP"
   if (frame.speaker === "npc") return stripControlChars(frame.name ?? "NPC")
   if (frame.speaker === "system") return systemLabel
-  return stripControlChars(frame.name ?? "?")
+  return stripControlChars(frame.name ?? "").trim() || null
 }
 
 /** How much of an NPC line the collapsed row shows. */
@@ -125,9 +131,10 @@ function NpcEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) 
 function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
   const { t } = useTranslation()
   if (frame.speaker === "npc") return <NpcEntry frame={frame} draft={draft} />
+  const label = speakerLabel(frame, t("log.system"))
   return (
     <article className={`log-entry speaker-${frame.speaker}`}>
-      <header className="entry-speaker">{speakerLabel(frame, t("log.system"))}</header>
+      {label ? <header className="entry-speaker">{label}</header> : null}
       <EntryBody frame={frame} draft={draft} />
     </article>
   )
@@ -142,9 +149,10 @@ function PendingEntry({ seq, pending }: { seq: number; pending: PendingEcho }) {
   const { t } = useTranslation()
   const online = useConnectionStore((s) => s.status === "online")
   const resend = useSessionStore((s) => s.resendEcho)
+  const seat = stripControlChars(pending.speaker).trim()
   return (
     <article className={`log-entry speaker-player pending${pending.failed ? " failed" : ""}`}>
-      <header className="entry-speaker">{stripControlChars(pending.speaker)}</header>
+      {seat ? <header className="entry-speaker">{seat}</header> : null}
       <div className="entry-body">
         <p className="entry-plain">{stripControlChars(pending.text)}</p>
         {pending.failed ? null : <span className="pending-mark">{t("session.echoPending")}</span>}
