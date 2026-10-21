@@ -685,6 +685,23 @@ button.npc-line-toggle {
   color: var(--danger);
 }
 
+/* The undelivered state sits below the dimmed body, so it keeps full strength. */
+.pending-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.pending-actions .pending-mark {
+  margin-top: 0;
+}
+
+.pending-resend {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 /* ---- System lines ---- */
 
 .system-line {
