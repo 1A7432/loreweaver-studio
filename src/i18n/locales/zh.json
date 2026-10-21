@@ -35,6 +35,12 @@
       "exitedUnexpectedly": "本地服务器意外停止。",
       "exitedUnexpectedlyCode": "本地服务器意外停止（代码 {{code}}）。"
     },
+    "lastTable": {
+      "label": "上一张牌桌：{{table}}",
+      "reconnect": "重新连接上一张牌桌",
+      "forget": "忘记",
+      "forgetHint": "清除保存在本机的票据与密钥"
+    },
     "attempt": "第 {{n}} 次",
     "status": {
       "offline": "离线",

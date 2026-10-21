@@ -5,6 +5,7 @@ import type { UiManifestPanel, WelcomeFrame } from "@loreweaver/protocol"
 import "../../i18n"
 import { useAudioStore } from "../../store/audio"
 import { useConnectionStore } from "../../store/connection"
+import { useLastTableStore } from "../../store/lastTable"
 import { usePanelsStore } from "../../store/panels"
 import { useSessionStore } from "../../store/session"
 import PlayView from "./PlayView"
@@ -29,6 +30,7 @@ const MODAL: UiManifestPanel = {
 function reset() {
   useConnectionStore.setState({ status: "offline", attempt: 0, lastError: null, welcome: null })
   useSessionStore.getState().clear()
+  useLastTableStore.getState().forget()
 }
 
 describe("PlayView", () => {
@@ -45,7 +47,7 @@ describe("PlayView", () => {
     expect(submit).toBeEnabled()
   })
 
-  it("submits trimmed connect parameters", async () => {
+  it("submits trimmed connect parameters, asking for the table to be remembered", async () => {
     const connect = vi.fn().mockResolvedValue(undefined)
     useConnectionStore.setState({ connect })
     const user = userEvent.setup()
@@ -53,7 +55,76 @@ describe("PlayView", () => {
     await user.type(screen.getByLabelText(/server ticket/i), "  endpoint-abc  ")
     await user.type(screen.getByLabelText(/access key/i), " k-1 ")
     await user.click(screen.getByRole("button", { name: "Connect" }))
-    expect(connect).toHaveBeenCalledWith({ ticket: "endpoint-abc", key: "k-1", name: undefined })
+    expect(connect).toHaveBeenCalledWith(
+      { ticket: "endpoint-abc", key: "k-1", name: undefined },
+      { remember: true },
+    )
+  })
+
+  describe("the last table joined by hand", () => {
+    const SAVED = { ticket: "endpointabc12345678", key: "k-saved", name: "Nyx" }
+
+    it("offers nothing when no table is saved", () => {
+      render(<PlayView />)
+      expect(screen.queryByRole("button", { name: /reconnect to last table/i })).not.toBeInTheDocument()
+      expect(screen.getByLabelText(/server ticket/i)).toHaveValue("")
+    })
+
+    it("prefills the form from the saved table, and does not dial by itself", () => {
+      const connect = vi.fn().mockResolvedValue(undefined)
+      useConnectionStore.setState({ connect })
+      useLastTableStore.getState().remember(SAVED)
+      render(<PlayView />)
+      expect(screen.getByLabelText(/server ticket/i)).toHaveValue("endpointabc12345678")
+      expect(screen.getByLabelText(/access key/i)).toHaveValue("k-saved")
+      expect(screen.getByLabelText(/display name/i)).toHaveValue("Nyx")
+      expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled()
+      expect(connect).not.toHaveBeenCalled()
+    })
+
+    it("names the saved table without showing its key", () => {
+      useLastTableStore.getState().remember(SAVED)
+      const { container } = render(<PlayView />)
+      expect(screen.getByText(/Last table: Nyx · …12345678/)).toBeInTheDocument()
+      expect(container.textContent).not.toContain("k-saved")
+    })
+
+    it("reconnects to the saved table in one press, whatever the form says now", async () => {
+      const connect = vi.fn().mockResolvedValue(undefined)
+      useConnectionStore.setState({ connect })
+      useLastTableStore.getState().remember(SAVED)
+      const user = userEvent.setup()
+      render(<PlayView />)
+      await user.clear(screen.getByLabelText(/access key/i))
+      await user.type(screen.getByLabelText(/access key/i), "half-edited")
+      await user.click(screen.getByRole("button", { name: "Reconnect to last table" }))
+      expect(connect).toHaveBeenCalledWith(
+        { ticket: "endpointabc12345678", key: "k-saved", name: "Nyx" },
+        { remember: true },
+      )
+    })
+
+    it("forgets the table on request: store, storage and the prefilled form", async () => {
+      useLastTableStore.getState().remember(SAVED)
+      const user = userEvent.setup()
+      render(<PlayView />)
+      await user.click(screen.getByRole("button", { name: "Forget" }))
+      expect(useLastTableStore.getState()).toMatchObject({ ticket: "", key: "", name: "" })
+      expect(JSON.parse(localStorage.getItem("loreweaver-studio-last-table")!).state.key).toBe("")
+      expect(screen.getByLabelText(/server ticket/i)).toHaveValue("")
+      expect(screen.getByLabelText(/access key/i)).toHaveValue("")
+      expect(screen.queryByRole("button", { name: /reconnect to last table/i })).not.toBeInTheDocument()
+    })
+
+    it("does not forget just because the player disconnected", () => {
+      useLastTableStore.getState().remember(SAVED)
+      useConnectionStore.setState({ status: "online", welcome: WELCOME })
+      const { unmount } = render(<PlayView />)
+      unmount()
+      useConnectionStore.setState({ status: "offline", welcome: null })
+      render(<PlayView />)
+      expect(screen.getByLabelText(/access key/i)).toHaveValue("k-saved")
+    })
   })
 
   it("lands on the main menu while online; Enter game opens the chronicle", async () => {
