@@ -18,7 +18,9 @@ export default function Meter({
   const ratio = span > 0 ? Math.max(0, Math.min(1, (value - min) / span)) : 0
   return (
     <div className={`meter meter-${tone}`}>
-      <span className="meter-label">{label}</span>
+      <span className="meter-label" title={label}>
+        {label}
+      </span>
       <span className="meter-track" role="presentation">
         <span className="meter-fill" style={{ width: `${ratio * 100}%` }} />
       </span>
