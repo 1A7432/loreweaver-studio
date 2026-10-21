@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next"
 import { stripControlChars, type DiceFrame } from "@loreweaver/protocol"
-import { readDiceDetail, type OpposedSide } from "./diceDetail"
+import { readDiceDetail, type OpposedSide, type TensReroll } from "./diceDetail"
 import { diceOutcomeClass } from "./rank"
 
 function OpposedRow({ side, won }: { side: OpposedSide; won: boolean }) {
@@ -16,13 +16,38 @@ function OpposedRow({ side, won }: { side: OpposedSide; won: boolean }) {
   )
 }
 
+/** The bonus/penalty-die cluster as ONE chip: "bonus die 1: rolled 98, extra
+ * tens 6, tens taken 6". The kept digit is stated, not compared with the roll's
+ * own tens — "taken" is true whether or not the extra dice changed anything. */
+function TensChip({ tens }: { tens: TensReroll }) {
+  const { t } = useTranslation()
+  const head =
+    tens.bonus > 0 && tens.penalty > 0
+      ? t("play.dice.tens.both", { bonus: tens.bonus, penalty: tens.penalty })
+      : tens.bonus > 0
+        ? t("play.dice.tens.bonus", { n: tens.bonus })
+        : tens.penalty > 0
+          ? t("play.dice.tens.penalty", { n: tens.penalty })
+          : t("play.dice.tens.plain")
+  const value =
+    tens.extra.length > 0
+      ? t("play.dice.tens.value", { base: tens.base, extra: tens.extra.join("/"), final: tens.final })
+      : t("play.dice.tens.valueBare", { base: tens.base, final: tens.final })
+  return (
+    <span className="dice-chip">
+      <span className="dice-chip-label">{head}</span>
+      <span className="dice-chip-value">{value}</span>
+    </span>
+  )
+}
+
 export default function DiceLine({ frame }: { frame: DiceFrame }) {
   const { t } = useTranslation()
   const outcome = frame.outcome
   // `detail` is system-declared data a client "may surface verbatim but never
   // needs to understand" — so the two shapes the protocol names get layout, and
   // the rest is shown as-is rather than dropped.
-  const { opposed, chips } = readDiceDetail(frame)
+  const { opposed, tens, chips } = readDiceDetail(frame)
 
   return (
     <div className={`dice-line ${diceOutcomeClass(outcome)}`} data-kind={frame.kind}>
@@ -54,8 +79,9 @@ export default function DiceLine({ frame }: { frame: DiceFrame }) {
           ) : null}
         </span>
       ) : null}
-      {chips.length > 0 ? (
+      {tens !== null || chips.length > 0 ? (
         <span className="dice-detail">
+          {tens !== null ? <TensChip tens={tens} /> : null}
           {chips.map((chip) => (
             <span className="dice-chip" key={chip.key}>
               <span className="dice-chip-label">
