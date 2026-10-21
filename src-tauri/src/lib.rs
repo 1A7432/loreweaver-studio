@@ -8,10 +8,25 @@ mod panel_serve;
 mod report;
 mod transport_bridge;
 
+use tauri_plugin_window_state::StateFlags;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // The window reopens where and as large as it was left. Only the
+        // geometry is kept: a saved "hidden" or "undecorated" must never be
+        // able to bring the app back up as a window nobody can see or move.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    StateFlags::SIZE
+                        | StateFlags::POSITION
+                        | StateFlags::MAXIMIZED
+                        | StateFlags::FULLSCREEN,
+                )
+                .build(),
+        )
         // Opener is driven from Rust only (`report::report_open`); no capability
         // grants it to the WebView.
         .plugin(tauri_plugin_opener::init())
