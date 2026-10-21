@@ -2,7 +2,7 @@
 // item among character/settings and the keeper screens) → the chronicle or a
 // management screen. Esc anywhere below the menu returns to it.
 
-import { useEffect, useState, type FormEvent } from "react"
+import { useEffect, useId, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
 import { pickDirectory } from "../../lib/native"
 import { isTauri } from "../../lib/transport"
@@ -153,6 +153,53 @@ function OnlineView() {
   }
 }
 
+/** The access key is a credential: it never sits on screen in clear text
+ * unless the operator asks (screenshots and recordings of this form are
+ * routine). The toggle is a button beside the field, not inside its label, so
+ * the field keeps the plain name "Access key" (and the button must not repeat
+ * those words in an aria-label, or the field would have two matches by name). */
+function SecretField({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string
+  value: string
+  placeholder: string
+  onChange: (value: string) => void
+}) {
+  const { t } = useTranslation()
+  const id = useId()
+  const [shown, setShown] = useState(false)
+  return (
+    <div className="connect-secret">
+      <label htmlFor={id}>{label}</label>
+      <div className="connect-secret-row">
+        <input
+          id={id}
+          type={shown ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          className="ghost-button"
+          aria-controls={id}
+          title={t(shown ? "connect.hideKeyLabel" : "connect.showKeyLabel")}
+          onClick={() => setShown(!shown)}
+        >
+          {t(shown ? "connect.hideKey" : "connect.showKey")}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function PlayView() {
   const { t } = useTranslation()
   const status = useConnectionStore((s) => s.status)
@@ -162,6 +209,7 @@ export default function PlayView() {
   const savedKey = useLastTableStore((s) => s.key)
   const savedName = useLastTableStore((s) => s.name)
   const forgetSaved = useLastTableStore((s) => s.forget)
+  const disconnect = useConnectionStore((s) => s.disconnect)
 
   // The form starts from the last table joined by hand, so a reload lands on
   // something the player only has to confirm. Nothing dials until they do.
@@ -175,8 +223,12 @@ export default function PlayView() {
     return <OnlineView />
   }
 
-  const offline = status === "offline"
-  const canSubmit = offline && ticket.trim().length > 0 && key.trim().length > 0
+  // A dial in flight does not lock the form. Connecting again replaces it (the
+  // bridge closes the dial it outran), so a ticket pasted over a stale one
+  // takes effect at once instead of waiting for the old attempt to give up;
+  // Cancel drops the attempt and leaves the form as it was.
+  const dialing = status === "connecting"
+  const canSubmit = (status === "offline" || dialing) && ticket.trim().length > 0 && key.trim().length > 0
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault()
@@ -192,7 +244,8 @@ export default function PlayView() {
   }
 
   const hasSaved = savedTicket !== "" && savedKey !== ""
-  // Dials the SAVED table, whatever the form has been edited to since.
+  // Dials the SAVED table, whatever the form has been edited to since. Like
+  // Connect it stays live while a dial is in flight: dialing again replaces it.
   const reconnectLast = () => {
     void connect(
       { ticket: savedTicket, key: savedKey, name: savedName ? savedName : undefined },
@@ -224,7 +277,7 @@ export default function PlayView() {
               })}
             </p>
             <div className="last-table-actions">
-              <button type="button" className="last-table-button" disabled={!offline} onClick={reconnectLast}>
+              <button type="button" className="last-table-button" onClick={reconnectLast}>
                 {t("connect.lastTable.reconnect")}
               </button>
               <button
@@ -248,31 +301,32 @@ export default function PlayView() {
               placeholder={t("connect.ticketPlaceholder")}
               rows={3}
               spellCheck={false}
-              disabled={!offline}
             />
           </label>
-          <label>
-            {t("connect.key")}
-            <input
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder={t("connect.keyPlaceholder")}
-              spellCheck={false}
-              disabled={!offline}
-            />
-          </label>
+          <SecretField
+            label={t("connect.key")}
+            value={key}
+            placeholder={t("connect.keyPlaceholder")}
+            onChange={setKey}
+          />
           <label>
             {t("connect.name")}
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t("connect.namePlaceholder")}
-              disabled={!offline}
             />
           </label>
-          <button type="submit" disabled={!canSubmit}>
-            {t("connect.submit")}
-          </button>
+          <div className="connect-actions">
+            <button type="submit" disabled={!canSubmit}>
+              {t("connect.submit")}
+            </button>
+            {dialing ? (
+              <button type="button" className="ghost-button" onClick={() => void disconnect()}>
+                {t("connect.cancel")}
+              </button>
+            ) : null}
+          </div>
         </form>
 
         {lastError ? (
