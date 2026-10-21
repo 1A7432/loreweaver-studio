@@ -160,6 +160,88 @@ describe("NarrativeLog", () => {
       )
     })
 
+    describe("with a mood parenthetical", () => {
+      const WORDS = "哎哟哟，停手停手！我这把老骨头还经不起你这样折腾，快放下快放下，别把东西摔了。"
+      const head = Array.from(WORDS).slice(0, NPC_PREVIEW_CHARS).join("")
+
+      it("leads with the spoken words after a full-width parenthetical, and keeps the mood apart", async () => {
+        const user = userEvent.setup()
+        const mood = "嘴上嫌他手笨、念叨个不停、心里却领了他这份不收钱的好意"
+        const line = `（${mood}）“${WORDS}”`
+        ingest({ type: "narrative", id: "m1", speaker: "npc", name: "沈墨", text: line, format: "markdown" })
+        const { container } = render(<NarrativeLog />)
+
+        const toggle = screen.getByRole("button", { name: /沈墨/ })
+        // The words, minus their opening quote — not the stage direction.
+        expect(container.querySelector(".npc-line-preview")).toHaveTextContent(`${head}…`)
+        expect(container.querySelector(".npc-line-preview")).not.toHaveTextContent("嘴上嫌他")
+        // The mood is its own muted piece, whole in the tooltip.
+        expect(container.querySelector(".npc-line-mood")).toHaveTextContent(mood)
+        expect(screen.getByTitle(mood)).toBeInTheDocument()
+
+        // Unfolded, it is the original line: mood and quotes untouched.
+        await user.click(toggle)
+        expect(screen.getByText(line)).toBeInTheDocument()
+        expect(container.querySelector(".npc-line-mood")).toBeNull()
+      })
+
+      it("does the same with an ASCII parenthetical and straight quotes", () => {
+        const text =
+          '(sighs, wiping the counter) "Nobody drinks at the Anchor after dusk, stranger — not since the tide turned wrong."'
+        ingest({ type: "narrative", id: "m2", speaker: "npc", name: "Bram", text, format: "markdown" })
+        const { container } = render(<NarrativeLog />)
+
+        expect(container.querySelector(".npc-line-preview")).toHaveTextContent("Nobody drinks at the Anc…")
+        expect(container.querySelector(".npc-line-mood")).toHaveTextContent("sighs, wiping the counter")
+      })
+
+      it("shows a short spoken line inline, unquoted, beside its mood", () => {
+        ingest({
+          type: "narrative",
+          id: "m3",
+          speaker: "npc",
+          name: "沈墨",
+          text: "（笑）“好。”",
+          format: "plain",
+        })
+        const { container } = render(<NarrativeLog />)
+
+        expect(screen.queryByRole("button")).toBeNull()
+        expect(container.querySelector(".npc-line-preview")).toHaveTextContent(/^好。$/)
+        expect(container.querySelector(".npc-line-mood")).toHaveTextContent("笑")
+      })
+
+      it("shows a line that is only a parenthetical as it is", () => {
+        ingest({
+          type: "narrative",
+          id: "m4",
+          speaker: "npc",
+          name: "沈墨",
+          text: "（沉默）",
+          format: "plain",
+        })
+        const { container } = render(<NarrativeLog />)
+
+        expect(container.querySelector(".npc-line-preview")).toHaveTextContent("（沉默）")
+        expect(container.querySelector(".npc-line-mood")).toBeNull()
+      })
+
+      it("has no mood piece when the line does not open with a parenthetical", () => {
+        ingest({
+          type: "narrative",
+          id: "m5",
+          speaker: "npc",
+          name: "沈墨",
+          text: `${WORDS}（他停了停）`,
+          format: "markdown",
+        })
+        const { container } = render(<NarrativeLog />)
+
+        expect(container.querySelector(".npc-line-mood")).toBeNull()
+        expect(container.querySelector(".npc-line-preview")).toHaveTextContent(`${head}…`)
+      })
+    })
+
     it("leaves every other speaker's text in full", () => {
       narrate()
       render(<NarrativeLog />)

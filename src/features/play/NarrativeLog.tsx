@@ -22,16 +22,31 @@ function speakerLabel(frame: NarrativeFrame, systemLabel: string): string {
 /** How much of an NPC line the collapsed row shows. */
 export const NPC_PREVIEW_CHARS = 24
 
+/** The engine's NPC table line usually opens with a mood parenthetical, full-width
+ * or ASCII — `（嘴上嫌他手笨…）“哎哟哟，停手！…”`. */
+const NPC_MOOD = /^\s*[（(]([^）)]*)[）)]\s*/
+const NPC_OPEN_QUOTES = /^[“"「『‘]+/
+const NPC_CLOSE_QUOTES = /[”"」』’]+$/
+
 /** One line of plain text from the start of an NPC line, cut by characters
- * (not UTF-16 units — a line in zh must not be split inside a pair). */
-function npcPreview(frame: NarrativeFrame, text: string): { text: string; cut: boolean } {
+ * (not UTF-16 units — a line in zh must not be split inside a pair).
+ *
+ * A leading mood parenthetical is not the line: the preview starts at the
+ * spoken words (without their opening quote) and the mood comes back apart, so
+ * the row shows what was SAID rather than the stage direction. */
+function npcPreview(frame: NarrativeFrame, text: string): { text: string; mood: string; cut: boolean } {
   const flat = (frame.format === "markdown" ? text.replace(/[*_`~]|^[>#\s]+/g, "") : text)
     .replace(/\s+/g, " ")
     .trim()
-  const chars = Array.from(flat)
+  const parsed = NPC_MOOD.exec(flat)
+  const spoken = parsed ? flat.slice(parsed[0].length).replace(NPC_OPEN_QUOTES, "").trim() : ""
+  // No parenthetical — or one with no words after it — leaves the line whole.
+  const mood = spoken === "" ? "" : (parsed?.[1] ?? "").trim()
+  const words = spoken === "" ? flat.replace(NPC_OPEN_QUOTES, "") : spoken
+  const chars = Array.from(words)
   return chars.length > NPC_PREVIEW_CHARS
-    ? { text: chars.slice(0, NPC_PREVIEW_CHARS).join(""), cut: true }
-    : { text: flat, cut: false }
+    ? { text: chars.slice(0, NPC_PREVIEW_CHARS).join(""), mood, cut: true }
+    : { text: words.replace(NPC_CLOSE_QUOTES, ""), mood, cut: false }
 }
 
 function EntryBody({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
@@ -48,6 +63,17 @@ function EntryBody({ frame, draft }: { frame: NarrativeFrame; draft?: boolean })
   )
 }
 
+/** The line's mood, muted after the words. It takes only the room the words
+ * leave (CSS), and its full text is the tooltip. */
+function NpcMood({ mood }: { mood: string }) {
+  if (mood === "") return null
+  return (
+    <span className="npc-line-mood" title={mood}>
+      {mood}
+    </span>
+  )
+}
+
 /** An NPC's spoken line, folded to an attribution row until the reader opens it.
  *
  * The engine has the Keeper restate every line it voices through an NPC inside
@@ -55,7 +81,8 @@ function EntryBody({ frame, draft }: { frame: NarrativeFrame; draft?: boolean })
  * the Keeper's memory. So the full line arrives twice, first as this bubble and
  * then woven into the narration. The narration stays the reading surface; this
  * keeps who spoke (and how it began) in place without making the table read a
- * 300-character speech twice. Nothing is dropped and the order is untouched. */
+ * 300-character speech twice. Nothing is dropped and the order is untouched.
+ * The unfolded view is always the original line, mood and quotes included. */
 function NpcEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -67,6 +94,7 @@ function NpcEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) 
         <div className="npc-line-toggle">
           <span className="entry-speaker">{speakerLabel(frame, t("log.system"))}</span>
           <span className="npc-line-preview">{preview.text}</span>
+          <NpcMood mood={preview.mood} />
           {draft ? <span className="stream-cursor" aria-hidden="true" /> : null}
         </div>
       </article>
@@ -83,6 +111,7 @@ function NpcEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) 
       >
         <span className="entry-speaker">{speakerLabel(frame, t("log.system"))}</span>
         {open ? null : <span className="npc-line-preview">{preview.text}…</span>}
+        {open ? null : <NpcMood mood={preview.mood} />}
         <span className="npc-line-chevron" aria-hidden="true">
           {open ? "▾" : "▸"}
         </span>

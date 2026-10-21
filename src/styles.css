@@ -459,13 +459,24 @@ button.npc-line-toggle {
 }
 
 .npc-line-preview {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 13px/1.4 var(--font-story);
   color: var(--ink-dim);
+}
+
+.npc-line-mood {
+  /* Takes whatever the words leave and no more: the words shrink first. */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: italic 12px/1.4 var(--font-story);
+  color: var(--ink-faint);
 }
 
 .npc-line-chevron {
