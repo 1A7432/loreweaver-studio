@@ -2,13 +2,27 @@ import { act, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "../../i18n"
+import { useConnectionStore } from "../../store/connection"
 import { PENDING_ECHO_TIMEOUT_MS, useSessionStore } from "../../store/session"
 import NarrativeLog, { ECHO_SWEEP_MS, NPC_PREVIEW_CHARS } from "./NarrativeLog"
+
+const transport = vi.hoisted(() => ({ send: vi.fn() }))
+vi.mock("../../lib/transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/transport")>()),
+  transportSend: (frame: unknown) => {
+    transport.send(frame)
+    return Promise.resolve()
+  },
+}))
 
 const ingest = useSessionStore.getState().ingest
 
 describe("NarrativeLog", () => {
-  beforeEach(() => useSessionStore.getState().clear())
+  beforeEach(() => {
+    useSessionStore.getState().clear()
+    useConnectionStore.setState({ status: "offline" })
+    transport.send.mockClear()
+  })
 
   it("renders markdown narrative as rich text", () => {
     ingest({
@@ -413,5 +427,69 @@ describe("NarrativeLog", () => {
     const notice = container.querySelector(".system-line")
     expect(notice?.className).toContain("level-info")
     expect(notice?.className).not.toContain("level-error")
+  })
+  describe("an undelivered line", () => {
+    const undelivered = (text = "I check the ledger.") => {
+      let seq = 0
+      act(() => {
+        seq = useSessionStore.getState().echoLocalInput(text, "Nyx", Date.now())
+        useSessionStore.getState().failEcho(seq)
+      })
+      return seq
+    }
+
+    it("offers to resend, and sends the same words once the table is back", () => {
+      undelivered()
+      act(() => useConnectionStore.setState({ status: "online" }))
+      const { container } = render(<NarrativeLog />)
+      expect(screen.getByText("not delivered")).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole("button", { name: "Resend" }))
+
+      expect(transport.send).toHaveBeenCalledTimes(1)
+      expect(transport.send).toHaveBeenCalledWith({ type: "input", text: "I check the ledger." })
+      // Back to waiting, in place: the failure mark and the button are gone.
+      expect(container.querySelector(".log-entry.pending.failed")).toBeNull()
+      expect(screen.queryByRole("button", { name: "Resend" })).toBeNull()
+      expect(screen.getByText("sending…")).toBeInTheDocument()
+      expect(screen.getAllByText("I check the ledger.")).toHaveLength(1)
+    })
+
+    it("cannot be sent twice by a double click", () => {
+      undelivered()
+      act(() => useConnectionStore.setState({ status: "online" }))
+      render(<NarrativeLog />)
+      const button = screen.getByRole("button", { name: "Resend" })
+
+      fireEvent.click(button)
+      fireEvent.click(button)
+
+      expect(transport.send).toHaveBeenCalledTimes(1)
+    })
+
+    it("is disabled while offline, and says why", () => {
+      undelivered()
+      render(<NarrativeLog />)
+      const button = screen.getByRole("button", { name: "Resend" })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute("title", "Offline — you can resend once you are reconnected.")
+
+      fireEvent.click(button)
+      expect(transport.send).not.toHaveBeenCalled()
+
+      // The link comes back: the same button is live.
+      act(() => useConnectionStore.setState({ status: "online" }))
+      expect(screen.getByRole("button", { name: "Resend" })).toBeEnabled()
+    })
+
+    it("is offered on failed lines only", () => {
+      act(() => {
+        useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx", Date.now())
+      })
+      act(() => useConnectionStore.setState({ status: "online" }))
+      render(<NarrativeLog />)
+      expect(screen.getByText("sending…")).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Resend" })).toBeNull()
+    })
   })
 })
