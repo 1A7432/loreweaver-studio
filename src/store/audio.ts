@@ -13,11 +13,19 @@
 // attempt before the first interaction can fail — silently, in most engines.
 // That is handled rather than ignored, and without guessing: the player ALWAYS
 // tries to play, and only when the webview refuses does the layer wait
-// (`waitingForUnlock`) and the UI say so. The first gesture anywhere in the
-// window (`armGestureUnlock`), or the one click on the notice, retries
-// everything that was waiting — nothing queued is lost. Gating on our own
-// "has the player clicked our button" flag instead left the sound off for
-// players whose webview would have allowed it all along.
+// (`waitingForUnlock`) and the UI say so. Gating on our own "has the player
+// clicked our button" flag instead left the sound off for players whose
+// webview would have allowed it all along.
+//
+// "Refuses" is not always a rejection. WebKit (WKWebView, so Tauri on macOS)
+// answers a blocked `play()` with a promise that NEVER settles — no
+// NotAllowedError — and leaves the element paused. So a play still unsettled
+// and still paused after a short grace counts as refused too.
+//
+// And the retry must happen INSIDE the gesture. A React effect runs after the
+// event, where the same `play()` is blocked again, so the gesture handler
+// (`unlockFromGesture`) calls `play()` itself on every live element that
+// should be sounding, then records the unlock. Nothing queued is lost.
 
 import { create } from "zustand"
 import type { AudioControlFrame, AudioLayer, AudioLayerState, ServerFrame } from "@loreweaver/protocol"
@@ -75,6 +83,8 @@ interface AudioState {
   unlock: () => void
   /** The webview refused to start this layer: remember the cue and say so. */
   markBlocked: (layer: AudioLayer) => void
+  /** This layer's play() went through after all: stop saying it is waiting. */
+  markAudible: (layer: AudioLayer) => void
   setMuted: (muted: boolean) => void
   setLayerMuted: (layer: AudioLayer, muted: boolean) => void
   setLayerGain: (layer: AudioLayer, gain: number) => void
@@ -181,6 +191,9 @@ export const useAudioStore = create<AudioState>()((set) => ({
 
   unlock: () =>
     set((state) => {
+      // The gesture listener calls this on every click and key press for the
+      // life of the window; with nothing to change it must not re-render the deck.
+      if (state.unlocked && !AUDIO_LAYERS.some((layer) => state.layers[layer].waitingForUnlock)) return state
       const layers = { ...state.layers }
       for (const layer of AUDIO_LAYERS) {
         layers[layer] = { ...layers[layer], waitingForUnlock: false }
@@ -196,6 +209,13 @@ export const useAudioStore = create<AudioState>()((set) => ({
       // changed nothing would feed straight back into another refused attempt.
       if (!current.playing || current.waitingForUnlock) return state
       return { layers: { ...state.layers, [layer]: { ...current, waitingForUnlock: true } } }
+    }),
+
+  markAudible: (layer) =>
+    set((state) => {
+      const current = state.layers[layer]
+      if (!current.waitingForUnlock) return state
+      return { layers: { ...state.layers, [layer]: { ...current, waitingForUnlock: false } } }
     }),
 
   setMuted: (muted) => set({ muted }),
@@ -231,24 +251,115 @@ export const useAudioStore = create<AudioState>()((set) => ({
   reset: () => set({ layers: initialLayers(), muted: false }),
 }))
 
-const GESTURE_EVENTS = ["pointerdown", "keydown"] as const
+/** How long a `play()` may stay unsettled with its element still paused before
+ * it counts as refused. WebKit never rejects a blocked play — see the header. */
+export const PLAY_GRACE_MS = 800
+
+/** The `<audio>` element each layer is playing through right now. The gesture
+ * handler needs them to call `play()` synchronously, which a React effect
+ * cannot do. */
+const liveElements = new Map<AudioLayer, HTMLAudioElement>()
+const graceTimers = new Map<HTMLAudioElement, ReturnType<typeof setTimeout>>()
+
+function dropGrace(audio: HTMLAudioElement) {
+  const timer = graceTimers.get(audio)
+  if (timer === undefined) return
+  clearTimeout(timer)
+  graceTimers.delete(audio)
+}
+
+/** Record the element a layer plays through; the disposer forgets it (and its
+ * pending grace timer) when the element goes. */
+export function registerLayerElement(layer: AudioLayer, audio: HTMLAudioElement): () => void {
+  liveElements.set(layer, audio)
+  return () => {
+    dropGrace(audio)
+    if (liveElements.get(layer) === audio) liveElements.delete(layer)
+  }
+}
+
+/** Stop waiting on an element's last play() — it was paused or replaced. */
+export function cancelPlay(audio: HTMLAudioElement) {
+  dropGrace(audio)
+}
+
+/** Call `play()` and watch for the webview saying no, in either of its voices:
+ * a NotAllowedError rejection (or a throw), or no answer at all while the
+ * element stays paused. An AbortError is a pause or a newer source interrupting
+ * this attempt, not a policy. */
+export function attemptPlay(layer: AudioLayer, audio: HTMLAudioElement): void {
+  dropGrace(audio)
+  const timer = setTimeout(() => {
+    graceTimers.delete(audio)
+    // `ended` also reads as paused: a short one-shot that already finished is
+    // not a refusal.
+    if (audio.paused && !audio.ended && !audio.error) blocked()
+  }, PLAY_GRACE_MS)
+  graceTimers.set(audio, timer)
+  const settle = () => {
+    clearTimeout(timer)
+    if (graceTimers.get(audio) === timer) graceTimers.delete(audio)
+  }
+  const blocked = () => {
+    settle()
+    if (liveElements.get(layer) === audio) useAudioStore.getState().markBlocked(layer)
+  }
+  try {
+    const attempt = audio.play()
+    if (attempt !== undefined && typeof attempt.then === "function") {
+      attempt.then(
+        () => {
+          settle()
+          if (liveElements.get(layer) === audio) useAudioStore.getState().markAudible(layer)
+        },
+        (cause: unknown) => {
+          if ((cause as { name?: unknown } | null)?.name === "NotAllowedError") blocked()
+          else settle()
+        },
+      )
+    }
+  } catch {
+    // jsdom (and some webviews) throw instead of returning a rejected promise.
+    // Either way the element stays paused, and the player is told.
+    blocked()
+  }
+}
+
+/** Start every layer that should be sounding but is paused. Call it from inside
+ * a user gesture: that is the only place the webview will say yes. */
+export function playWaitingLayers(): void {
+  const { layers } = useAudioStore.getState()
+  for (const layer of AUDIO_LAYERS) {
+    const audio = liveElements.get(layer)
+    if (audio === undefined || !layers[layer].playing) continue
+    // A one-shot that played out is paused too, and `play()` would restart it.
+    if (audio.paused && !audio.ended && !audio.error) attemptPlay(layer, audio)
+  }
+}
+
+/** What a gesture does for sound: ask for it right here, then record the unlock.
+ * The same call serves the window listener and both "turn sound on" buttons. */
+export function unlockFromGesture(): void {
+  playWaitingLayers()
+  useAudioStore.getState().unlock()
+}
+
+// The events a webview counts as user activation (WebKit: click, keydown,
+// mouseup/pointerup, touchend). `pointerdown` is not one of them for a mouse.
+const GESTURE_EVENTS = ["click", "keydown", "pointerup", "touchend"] as const
 
 let disarmGesture: (() => void) | null = null
 
-/** Unlock on the first real user gesture anywhere in the window.
+/** Let sound start on a user gesture anywhere in the window, not only on the
+ * audio card's own button.
  *
- * Capture phase, so nothing in the app can swallow it; once, so it removes
- * itself after firing. A webview treats ANY gesture as user activation, which
- * is why the audio card's own button is not the only way in. Idempotent while
- * armed, and a no-op once a gesture has already been seen. Returns the
- * disposer. */
+ * Capture phase, so nothing in the app can swallow it. It stays armed rather
+ * than firing once: WebKit grants the permission per element and a later cue
+ * brings a new element, so a gesture that came before the cue must not be the
+ * last one that counts. Idempotent while armed. Returns the disposer. */
 export function armGestureUnlock(): () => void {
   if (disarmGesture !== null) return disarmGesture
-  if (useAudioStore.getState().unlocked) return () => undefined
-  const fire = () => {
-    disarm()
-    useAudioStore.getState().unlock()
-  }
+  const fire = () => unlockFromGesture()
   const disarm = () => {
     for (const type of GESTURE_EVENTS) window.removeEventListener(type, fire, true)
     disarmGesture = null

@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AudioControlFrame } from "@loreweaver/protocol"
-import { applyControl, armGestureUnlock, effectiveVolume, useAudioStore } from "./audio"
+import {
+  applyControl,
+  armGestureUnlock,
+  attemptPlay,
+  cancelPlay,
+  effectiveVolume,
+  PLAY_GRACE_MS,
+  registerLayerElement,
+  useAudioStore,
+} from "./audio"
 
 function control(patch: Partial<AudioControlFrame>): AudioControlFrame {
   return { type: "audio_control", id: "c1", action: "play", layer: "bgm", ...patch }
@@ -150,8 +159,24 @@ describe("audio store", () => {
   })
 })
 
+/** An <audio> element whose paused/ended state the test controls (jsdom has no
+ * media pipeline) and whose play() is a spy. */
+function fakeAudio(play: () => Promise<void> | undefined = () => Promise.resolve()) {
+  const audio = document.createElement("audio")
+  let paused = true
+  Object.defineProperty(audio, "paused", { get: () => paused, configurable: true })
+  Object.defineProperty(audio, "ended", { value: false, writable: true, configurable: true })
+  const spy = vi.fn(() => {
+    paused = false
+    return play()
+  })
+  audio.play = spy as unknown as typeof audio.play
+  return { audio, spy, setPaused: (value: boolean) => (paused = value) }
+}
+
 describe("armGestureUnlock", () => {
   let disarm: () => void = () => undefined
+  const click = () => document.body.dispatchEvent(new Event("click", { bubbles: true }))
 
   beforeEach(() => {
     useAudioStore.getState().reset()
@@ -160,45 +185,204 @@ describe("armGestureUnlock", () => {
 
   afterEach(() => disarm())
 
-  it("unlocks on the first pointer gesture anywhere, and starts what was waiting", () => {
+  it("unlocks on a click anywhere, and starts what was waiting", () => {
     useAudioStore.getState().ingest(control({ hash: "abc" }))
     useAudioStore.getState().markBlocked("bgm")
     disarm = armGestureUnlock()
 
     // Not on our button, not even on a focusable element: anywhere in the window.
-    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+    click()
 
     expect(useAudioStore.getState().unlocked).toBe(true)
     expect(useAudioStore.getState().layers.bgm).toMatchObject({ waitingForUnlock: false, playing: true })
   })
 
-  it("unlocks on a key press too, and is spent after one gesture", () => {
+  it("counts the events a webview treats as activation, and not pointerdown", () => {
     disarm = armGestureUnlock()
-    window.dispatchEvent(new Event("keydown"))
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+    expect(useAudioStore.getState().unlocked).toBe(false)
+
+    for (const type of ["keydown", "pointerup", "touchend"]) {
+      useAudioStore.setState({ unlocked: false })
+      document.body.dispatchEvent(new Event(type, { bubbles: true }))
+      expect(useAudioStore.getState().unlocked, type).toBe(true)
+    }
+  })
+
+  it("stays armed: a cue refused after an earlier gesture starts on the next one", () => {
+    // WebKit grants the permission per element, and a later cue is a new element.
+    disarm = armGestureUnlock()
+    click()
     expect(useAudioStore.getState().unlocked).toBe(true)
 
-    // Removed after firing: a later refusal is not wiped by the next click.
     useAudioStore.getState().ingest(control({ hash: "abc" }))
     useAudioStore.getState().markBlocked("bgm")
-    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
-    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(true)
+    click()
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
   })
 
   it("is installed once, and the disposer takes it away", () => {
     disarm = armGestureUnlock()
     expect(armGestureUnlock()).toBe(disarm)
     disarm()
-    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+    click()
     expect(useAudioStore.getState().unlocked).toBe(false)
   })
 
-  it("arms nothing once a gesture has already been seen", () => {
+  it("does not re-render anything for a gesture that changes nothing", () => {
     useAudioStore.getState().unlock()
-    disarm = armGestureUnlock()
+    const before = useAudioStore.getState()
+    useAudioStore.getState().unlock()
+    expect(useAudioStore.getState()).toBe(before)
+  })
+
+  it("calls play() on a live element synchronously, inside the gesture", () => {
+    // A React effect runs after the event, where WebKit blocks the same call.
+    const { audio, spy } = fakeAudio()
+    const forget = registerLayerElement("bgm", audio)
     useAudioStore.getState().ingest(control({ hash: "abc" }))
     useAudioStore.getState().markBlocked("bgm")
-    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))
-    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(true)
+    disarm = armGestureUnlock()
+
+    click()
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    forget()
+  })
+
+  it("asks only the layers that should be sounding and are paused", () => {
+    const stopped = fakeAudio()
+    const playingNow = fakeAudio()
+    playingNow.setPaused(false)
+    const playedOut = fakeAudio()
+    Object.defineProperty(playedOut.audio, "ended", { value: true })
+    const forgets = [
+      registerLayerElement("bgm", stopped.audio),
+      registerLayerElement("ambience", playingNow.audio),
+      registerLayerElement("sfx", playedOut.audio),
+    ]
+    // bgm never started; ambience is already audible; sfx played out (a replay
+    // would restart a one-shot on every keystroke).
+    useAudioStore.getState().ingest(control({ layer: "ambience", hash: "b" }))
+    useAudioStore.getState().ingest(control({ layer: "sfx", hash: "c" }))
+    disarm = armGestureUnlock()
+
+    click()
+
+    expect(stopped.spy).not.toHaveBeenCalled()
+    expect(playingNow.spy).not.toHaveBeenCalled()
+    expect(playedOut.spy).not.toHaveBeenCalled()
+    forgets.forEach((forget) => forget())
+  })
+})
+
+describe("attemptPlay", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useAudioStore.getState().reset()
+    useAudioStore.getState().ingest(control({ hash: "abc" }))
+  })
+
+  afterEach(() => vi.useRealTimers())
+
+  const waiting = () => useAudioStore.getState().layers.bgm.waitingForUnlock
+
+  it("counts a play() that never settles on a paused element as refused, after the grace", () => {
+    // WebKit's answer to a blocked play: a promise that never settles, no
+    // NotAllowedError, and the element left paused.
+    const { audio, setPaused } = fakeAudio(() => new Promise(() => undefined))
+    const forget = registerLayerElement("bgm", audio)
+    attemptPlay("bgm", audio)
+    setPaused(true)
+
+    vi.advanceTimersByTime(PLAY_GRACE_MS - 1)
+    expect(waiting()).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(waiting()).toBe(true)
+    forget()
+  })
+
+  it("does not call a play() refused when the element is audible or still loading", () => {
+    const { audio } = fakeAudio(() => new Promise(() => undefined))
+    const forget = registerLayerElement("bgm", audio)
+    attemptPlay("bgm", audio)
+
+    vi.advanceTimersByTime(PLAY_GRACE_MS * 2)
+    expect(waiting()).toBe(false)
+    forget()
+  })
+
+  it("does not call a one-shot that already played out refused", () => {
+    const { audio, setPaused } = fakeAudio(() => new Promise(() => undefined))
+    const forget = registerLayerElement("bgm", audio)
+    attemptPlay("bgm", audio)
+    setPaused(true)
+    Object.defineProperty(audio, "ended", { value: true })
+
+    vi.advanceTimersByTime(PLAY_GRACE_MS * 2)
+    expect(waiting()).toBe(false)
+    forget()
+  })
+
+  it("stops watching once the play resolves, is cancelled, or the element goes", async () => {
+    const resolved = fakeAudio()
+    const cancelled = fakeAudio(() => new Promise(() => undefined))
+    const gone = fakeAudio(() => new Promise(() => undefined))
+    registerLayerElement("bgm", resolved.audio)
+    attemptPlay("bgm", resolved.audio)
+    await Promise.resolve()
+    resolved.setPaused(true)
+    vi.advanceTimersByTime(PLAY_GRACE_MS * 2)
+    expect(waiting()).toBe(false)
+
+    registerLayerElement("bgm", cancelled.audio)
+    attemptPlay("bgm", cancelled.audio)
+    cancelled.setPaused(true)
+    cancelPlay(cancelled.audio)
+    vi.advanceTimersByTime(PLAY_GRACE_MS * 2)
+    expect(waiting()).toBe(false)
+
+    const forget = registerLayerElement("bgm", gone.audio)
+    attemptPlay("bgm", gone.audio)
+    gone.setPaused(true)
+    forget()
+    vi.advanceTimersByTime(PLAY_GRACE_MS * 2)
+    expect(waiting()).toBe(false)
+  })
+
+  it("treats a NotAllowedError rejection and a throw as refused at once, an AbortError as not", async () => {
+    const denied = fakeAudio(() => Promise.reject(new DOMException("no", "NotAllowedError")))
+    const forget = registerLayerElement("bgm", denied.audio)
+    attemptPlay("bgm", denied.audio)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(waiting()).toBe(true)
+    forget()
+
+    useAudioStore.getState().unlock()
+    const aborted = fakeAudio(() => Promise.reject(new DOMException("interrupted", "AbortError")))
+    const forgetAborted = registerLayerElement("bgm", aborted.audio)
+    attemptPlay("bgm", aborted.audio)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(waiting()).toBe(false)
+    forgetAborted()
+
+    const thrower = fakeAudio(() => {
+      throw new DOMException("no", "NotAllowedError")
+    })
+    const forgetThrower = registerLayerElement("bgm", thrower.audio)
+    attemptPlay("bgm", thrower.audio)
+    expect(waiting()).toBe(true)
+    forgetThrower()
+  })
+
+  it("lets a play that goes through after all clear the waiting mark", async () => {
+    const { audio } = fakeAudio()
+    const forget = registerLayerElement("bgm", audio)
+    useAudioStore.getState().markBlocked("bgm")
+    attemptPlay("bgm", audio)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(waiting()).toBe(false)
+    forget()
   })
 })
 
