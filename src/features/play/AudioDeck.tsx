@@ -9,12 +9,15 @@
 //
 // Autoplay is handled, not hoped for. A webview may refuse sound before a user
 // gesture, and the failure is silent in most engines — so every play is
-// ATTEMPTED, and only a refusal (NotAllowedError) marks the layer
-// `waitingForUnlock`: the deck and a notice above the chronicle then offer one
-// button, and the first gesture anywhere in the window does the same job. A
-// staged BGM cue is something the author composed; losing it to a policy
-// nobody surfaced is the bug this avoids — and so is withholding it behind a
-// button of our own when the webview would have played it anyway.
+// ATTEMPTED, and only a refusal marks the layer `waitingForUnlock`: the deck and
+// a notice above the chronicle then offer one button, and a gesture anywhere in
+// the window does the same job. A refusal is a NotAllowedError, a throw, or —
+// in WebKit, which never rejects — a play() that stays unsettled with the
+// element paused (`attemptPlay`). A staged BGM cue is something the author
+// composed; losing it to a policy nobody surfaced is the bug this avoids — and
+// so is withholding it behind a button of our own when the webview would have
+// played it anyway. The retry on a gesture is a `play()` made INSIDE the
+// gesture (`unlockFromGesture`), never left to an effect that runs after it.
 //
 // Fetch/read/decode failures are NOT silent. Each layer records its own
 // `loadError`; a retry (or a new play / hash change) clears only that layer.
@@ -22,10 +25,19 @@
 // shows it as a tooltip and a listener reading zh must not be handed an English
 // cause string. The cause itself goes to the console, for whoever is debugging.
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { AudioLayer } from "@loreweaver/protocol"
-import { AUDIO_LAYERS, effectiveVolume, useAudioStore, type LayerState } from "../../store/audio"
+import {
+  attemptPlay,
+  AUDIO_LAYERS,
+  cancelPlay,
+  effectiveVolume,
+  registerLayerElement,
+  unlockFromGesture,
+  useAudioStore,
+  type LayerState,
+} from "../../store/audio"
 import { isTauri, transportSend } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useMediaStore } from "../../store/media"
@@ -52,9 +64,31 @@ function LayerPlayer({ layer }: { layer: LayerState }) {
   const [load, setLoad] = useState<{ url: string; token: number } | null>(null)
   const masterMuted = useAudioStore((s) => s.muted)
   const unlocked = useAudioStore((s) => s.unlocked)
-  const markBlocked = useAudioStore((s) => s.markBlocked)
   const setLayerLoadError = useAudioStore((s) => s.setLayerLoadError)
   const hash = layer.hash ?? ""
+  const layerName = layer.layer
+
+  // Stable on purpose. An inline ref callback is a new function every render, so
+  // React ran the old one's cleanup — which pauses a playing element — each time
+  // the deck re-rendered for ANOTHER layer's change, and nothing started it
+  // again. This runs once per element: on attach, and on detach.
+  const attach = useCallback(
+    (node: HTMLAudioElement | null) => {
+      element.current = node
+      // React only passes null when a ref callback returns no cleanup, so
+      // this is the type's shape rather than a case that happens here.
+      if (node === null) return
+      const forget = registerLayerElement(layerName, node)
+      return () => {
+        forget()
+        // The element a newer load replaced is detached, and a detached media
+        // element goes on playing. Silence it on the way out.
+        if (!node.paused) node.pause()
+        if (element.current === node) element.current = null
+      }
+    },
+    [layerName],
+  )
 
   // Let go of what the element has already moved off. Revoking a URL an
   // attached element is still pointing at makes that element raise `error` for
@@ -124,29 +158,14 @@ function LayerPlayer({ layer }: { layer: LayerState }) {
     audio.loop = layer.loop === true
     if (layer.playing && !layer.waitingForUnlock && load !== null) {
       // Attempt regardless of `unlocked`: that flag only records that a gesture
-      // happened, and the webview may allow sound without one. Only a refusal
-      // means "waiting" — an AbortError is a pause or a newer source
-      // interrupting this very attempt, not a policy. A layer already waiting
-      // is not asked again; the unlock that clears it is what asks.
-      const blocked = () => {
-        if (element.current === audio) markBlocked(layer.layer)
-      }
-      try {
-        const attempt = audio.play()
-        if (attempt !== undefined && typeof attempt.catch === "function") {
-          void attempt.catch((cause: unknown) => {
-            if ((cause as { name?: unknown } | null)?.name === "NotAllowedError") blocked()
-          })
-        }
-      } catch {
-        // jsdom (and some webviews) throw instead of returning a rejected
-        // promise. Either way the element stays paused, and the player is told.
-        blocked()
-      }
+      // happened, and the webview may allow sound without one. A layer already
+      // waiting is not asked again; the unlock that clears it is what asks.
+      attemptPlay(layer.layer, audio)
     } else {
+      cancelPlay(audio)
       audio.pause()
     }
-  }, [layer, masterMuted, unlocked, load, markBlocked])
+  }, [layer, masterMuted, unlocked, load])
 
   if (load === null) return null
   // Not `controls`: the keeper drives playback, and the listener's own controls
@@ -157,18 +176,7 @@ function LayerPlayer({ layer }: { layer: LayerState }) {
       // say which load its late `error` belongs to, and this one is the only
       // place that answer exists.
       key={load.token}
-      ref={(node) => {
-        element.current = node
-        // React only passes null when a ref callback returns no cleanup, so
-        // this is the type's shape rather than a case that happens here.
-        if (node === null) return
-        return () => {
-          // The element a newer load replaced is detached, and a detached media
-          // element goes on playing. Silence it on the way out.
-          if (!node.paused) node.pause()
-          if (element.current === node) element.current = null
-        }
-      }}
+      ref={attach}
       src={load.url}
       preload="auto"
       onError={() => {
@@ -361,12 +369,11 @@ function KeeperControls() {
 export function AudioUnlockNotice() {
   const { t } = useTranslation()
   const waiting = useAudioStore((s) => AUDIO_LAYERS.some((name) => s.layers[name].waitingForUnlock))
-  const unlock = useAudioStore((s) => s.unlock)
   if (!waiting) return null
   return (
     <div className="panel-notice" role="status">
       <span className="panel-notice-text">{t("play.audio.unlockNotice")}</span>
-      <button type="button" className="primary-button" onClick={() => unlock()}>
+      <button type="button" className="primary-button" onClick={() => unlockFromGesture()}>
         {t("play.audio.unlock")}
       </button>
     </div>
@@ -376,7 +383,6 @@ export function AudioUnlockNotice() {
 export default function AudioDeck() {
   const { t } = useTranslation()
   const layers = useAudioStore((s) => s.layers)
-  const unlock = useAudioStore((s) => s.unlock)
   const muted = useAudioStore((s) => s.muted)
   const setMuted = useAudioStore((s) => s.setMuted)
 
@@ -408,7 +414,7 @@ export default function AudioDeck() {
         // there no sound" is otherwise unanswerable from inside the app.
         <p className="studio-notice" role="status">
           {t("play.audio.unlockHint")}{" "}
-          <button type="button" className="primary-button" onClick={() => unlock()}>
+          <button type="button" className="primary-button" onClick={() => unlockFromGesture()}>
             {t("play.audio.unlock")}
           </button>
         </p>

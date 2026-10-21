@@ -19,7 +19,7 @@ vi.mock("./panels/assets", () => ({
 
 import "../../i18n"
 import { assetFetch, assetReadBase64 } from "./panels/assets"
-import { armGestureUnlock, useAudioStore } from "../../store/audio"
+import { armGestureUnlock, PLAY_GRACE_MS, useAudioStore } from "../../store/audio"
 import { useConnectionStore } from "../../store/connection"
 import AudioDeck, { AudioUnlockNotice } from "./AudioDeck"
 
@@ -303,13 +303,107 @@ describe("AudioDeck autoplay", () => {
 
     // Not the deck's button — a click on the page body.
     act(() => {
-      fireEvent.pointerDown(document.body)
+      fireEvent.click(document.body)
     })
 
-    await vi.waitFor(() => expect(playSpy).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(unlockButton()).toHaveLength(0))
+    expect(playSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(useAudioStore.getState().unlocked).toBe(true)
     expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+  })
+
+  it("calls play() inside the gesture itself — a click anywhere, and the button — not in an effect after it", async () => {
+    // WebKit blocks a play() made after the event; only one made in it counts.
+    playSpy.mockRejectedValueOnce(refused()).mockResolvedValue(undefined)
+    let playsAtEndOfEvent = -1
+    const observe = () => {
+      playsAtEndOfEvent = playSpy.mock.calls.length
+    }
+    window.addEventListener("click", observe)
+    try {
+      disarm = armGestureUnlock()
+      act(() => play("bgm", HASH_BGM, "Tide"))
+      render(<AudioDeck />)
+      await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
+      expect(playSpy).toHaveBeenCalledTimes(1)
+
+      // Dispatched bare: no act(), so React has not re-rendered when it returns.
+      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+      expect(playsAtEndOfEvent).toBe(2)
+    } finally {
+      window.removeEventListener("click", observe)
+    }
+  })
+
+  it("calls play() inside the button's own click handler too", async () => {
+    playSpy.mockRejectedValueOnce(refused()).mockResolvedValue(undefined)
+    let playsAtEndOfEvent = -1
+    const observe = () => {
+      playsAtEndOfEvent = playSpy.mock.calls.length
+    }
+    window.addEventListener("click", observe)
+    try {
+      act(() => play("bgm", HASH_BGM, "Tide"))
+      render(<AudioDeck />)
+      await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
+      expect(playSpy).toHaveBeenCalledTimes(1)
+
+      // Our button only: the window listener is not armed in this test.
+      unlockButton()[0].dispatchEvent(new MouseEvent("click", { bubbles: true }))
+      expect(playsAtEndOfEvent).toBe(2)
+    } finally {
+      window.removeEventListener("click", observe)
+    }
+  })
+
+  it("shows the hint when play() never settles and the element stays paused, as in WebKit", async () => {
+    // WKWebView does not reject a blocked play(): the promise just never
+    // settles. The refusal is only visible as a paused element after a grace.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    try {
+      playSpy.mockImplementation(() => new Promise<void>(() => undefined))
+      act(() => play("bgm", HASH_BGM, "Tide"))
+      render(
+        <>
+          <AudioUnlockNotice />
+          <AudioDeck />
+        </>,
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PLAY_GRACE_MS - 100)
+      })
+      expect(playSpy).toHaveBeenCalled()
+      expect(unlockButton()).toHaveLength(0)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      expect(unlockButton()).toHaveLength(2)
+      expect(useAudioStore.getState().layers.bgm).toMatchObject({ playing: true, waitingForUnlock: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not pause a playing layer because ANOTHER layer changed", async () => {
+    // The ref callback used to be a new function every render, and React ran
+    // the old one's cleanup — which pauses its element — whenever the deck
+    // re-rendered for a different layer's change. Nothing started it again.
+    playSpy.mockResolvedValue(undefined)
+    const pause = vi.mocked(HTMLMediaElement.prototype.pause)
+    act(() => play("ambience", HASH_AMB, "Rain"))
+    const { container } = render(<AudioDeck />)
+    await vi.waitFor(() => expect(container.querySelector("audio")).not.toBeNull())
+    const rain = container.querySelector("audio") as HTMLAudioElement
+    Object.defineProperty(rain, "paused", { value: false, configurable: true })
+    pause.mockClear()
+
+    act(() => useAudioStore.getState().setLayerMuted("bgm", true))
+    act(() => play("sfx", HASH_BGM, "Bell"))
+
+    expect(pause.mock.contexts).not.toContain(rain)
+    // jsdom's own cleanup pause is not implemented; leave the element as it found it.
+    Object.defineProperty(rain, "paused", { value: true, configurable: true })
   })
 
   it("starts it from the notice's own button too", async () => {

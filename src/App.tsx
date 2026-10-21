@@ -25,8 +25,8 @@ export default function App() {
     }
   }, [])
 
-  // Any first gesture in the window lets the webview make sound; arm it at the
-  // root so a click on the mode tab or the connect form counts too.
+  // A gesture anywhere in the window starts the sound that is waiting for one;
+  // armed at the root so a click on the mode tab or the connect form counts too.
   useEffect(() => armGestureUnlock(), [])
 
   return (
