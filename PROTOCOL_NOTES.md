@@ -83,12 +83,20 @@ pc`, `world` → the keeper-only `.import <ref> world`. Before it existed the st
    closed by a `narrative` with the same `id` whose full text REPLACES the draft (empty
    text drops it). The studio implements exactly that; no ambiguity left.
 
-3. **History replay interacts with reconnects only for narrative/media.** On every join
-   the server replays recent `narrative` (and media/audio state). Narrative replay is
-   deduplicatable via `id` (we do); `dice` and `system` frames have no id and are not
-   replayed, so a reconnect keeps them only as long as the local scrollback survives.
-   Documenting the replay window (last 30) and its dedup contract in protocol.md would
-   help client authors — today it is only discoverable from the server source.
+3. **History replay interacts with reconnects.** On every join the server replays the
+   last 30 chat-history entries as `narrative` frames, plus (since 2.3) the `dice` and
+   npc `narrative` frames recorded between them, plus media/audio state — all in FRESH
+   frames: a replayed `narrative` gets a new `id` every time (`render_frame` in
+   `net/session.py`), so `id` cannot dedupe a replay against what the client already
+   shows (`docs/protocol.md` says clients "dedupe a `narrative` by `id`"; that holds
+   for a live stream's closing frame, not for a replay). The studio therefore rebuilds
+   its log from the replay on every `welcome` instead of appending to it. Not replayed
+   at all: `system` frames, command replies (`speaker:"system"`), `ui` blocks, `error`s,
+   and a player's dot/slash command lines — the log drops those on a reconnect, and
+   keeps the player's own un-echoed lines as "not delivered". A replayed player line
+   from an engine that does not yet name the seat has no `name`. Still worth stating in
+   protocol.md for client authors: the replay window, the fresh ids, and that
+   `state` is the frame that ends it.
 
 4. **`state.variables` enum entries carry no options list.** `ModuleVariable` for
    `kind:"enum"` sends only the current value, while the server-side modvars spec knows
