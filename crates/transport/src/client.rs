@@ -4,7 +4,18 @@
 //! it through a [`ClientHandle`] (send frame / close) and consumes
 //! [`TransportEvent`]s from the returned receiver. Lifecycle mirrors the
 //! reference TUI client: `connecting → online → reconnecting → offline`, where
-//! `offline` is only reached by an explicit close or a fatal join error.
+//! `offline` is only reached by an explicit close, a fatal join error, or the
+//! first attempt failing.
+//!
+//! Every wait on the network is bounded and abortable. The dial (connect,
+//! open the control stream, write `join`) has [`DIAL_TIMEOUT`], the wait for
+//! `welcome` has [`JOIN_TIMEOUT`], and a [`ClientHandle::close`] is answered
+//! even in the middle of a dial — iroh itself keeps dialing a ticket whose
+//! addresses went stale for minutes, so neither the bound nor the abort can be
+//! left to it. A connection that has never been welcomed has nothing to
+//! rejoin: its first failed attempt ends it with a reason and a stable
+//! [`ErrorCode`] instead of a redial loop. Only a session that was once good is
+//! redialed (with backoff, under the same bounds).
 //!
 //! [`ClientHandle::send_frame`] is a delivery verdict, not an enqueue: it
 //! resolves `Ok` only after the control stream accepted the write, and `Err`
@@ -23,10 +34,37 @@ use crate::codec::{encode_line, LineDecoder, MAX_LINE_BYTES};
 use crate::frames::{self, ALPN};
 use crate::limits::accepted_blob_size;
 
+/// How long one dial may take: connect to the endpoint, open the control
+/// stream and write `join`. A healthy path (direct or via relay) is up in a
+/// second or two; what runs past this is a ticket whose direct addresses went
+/// stale (the host restarted on a new port) or a host that is gone, which iroh
+/// alone would keep trying for minutes.
+pub const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// How long we wait for `welcome` (or `error`) after sending `join`. The
 /// server's own handshake timeout defaults to 10s; ours is slightly larger so
-/// the server-side verdict usually arrives first.
+/// the server-side verdict usually arrives first. With [`DIAL_TIMEOUT`] this
+/// caps one attempt at 30 s.
 pub const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The two per-attempt bounds. Production always runs [`Timeouts::default`];
+/// the type exists so the integration tests can watch a deadline fire in
+/// milliseconds instead of waiting out the real ones.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct Timeouts {
+    pub dial: Duration,
+    pub join: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            dial: DIAL_TIMEOUT,
+            join: JOIN_TIMEOUT,
+        }
+    }
+}
 
 /// End-to-end deadline for one blob fetch, header and body included.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -71,10 +109,30 @@ pub enum TransportEvent {
         attempt: u32,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// A stable machine-readable twin of `error` for the failures the UI
+        /// words itself (the `error` text is English detail for logs). Absent
+        /// for every other reason, which the UI shows as `error` verbatim.
+        #[serde(rename = "errorCode", skip_serializing_if = "Option::is_none")]
+        error_code: Option<ErrorCode>,
     },
     Frame {
         frame: Value,
     },
+}
+
+/// Why a connection that never came online gave up. The wire spelling is the
+/// snake_case name and the UI picks its wording by it (`connect.error.*` in
+/// the locale files), so renaming one is a change on both sides of the bridge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// No connection to the host within [`DIAL_TIMEOUT`]: a stale ticket
+    /// (the host restarted on a new port) or a host that is gone.
+    ConnectTimeout,
+    /// Connected, but no `welcome` within [`JOIN_TIMEOUT`].
+    JoinTimeout,
+    /// The dial failed outright, or the host closed before welcoming us.
+    ConnectFailed,
 }
 
 /// Mirrors `ConnectionStatus` in `@loreweaver/protocol`.
@@ -171,7 +229,24 @@ impl ClientHandle {
 
 /// Spawn the connection actor on the current tokio runtime.
 pub fn connect(params: ConnectParams) -> (ClientHandle, mpsc::UnboundedReceiver<TransportEvent>) {
-    spawn_actor(params, None)
+    spawn_actor(params, Timeouts::default(), None)
+}
+
+/// Test-only: same as [`connect`] with the per-attempt bounds replaced, and
+/// the same backoff pulse as [`connect_with_backoff_pulse`]. Hidden from
+/// rustdoc for the same reason.
+#[doc(hidden)]
+pub fn connect_with_timeouts(
+    params: ConnectParams,
+    timeouts: Timeouts,
+) -> (
+    ClientHandle,
+    mpsc::UnboundedReceiver<TransportEvent>,
+    mpsc::UnboundedReceiver<()>,
+) {
+    let (pulse_tx, pulse_rx) = mpsc::unbounded_channel();
+    let (handle, events) = spawn_actor(params, timeouts, Some(pulse_tx));
+    (handle, events, pulse_rx)
 }
 
 /// Test-only: same as [`connect`], plus a pulse each time the actor begins a
@@ -188,17 +263,18 @@ pub fn connect_with_backoff_pulse(
     mpsc::UnboundedReceiver<()>,
 ) {
     let (pulse_tx, pulse_rx) = mpsc::unbounded_channel();
-    let (handle, events) = spawn_actor(params, Some(pulse_tx));
+    let (handle, events) = spawn_actor(params, Timeouts::default(), Some(pulse_tx));
     (handle, events, pulse_rx)
 }
 
 fn spawn_actor(
     params: ConnectParams,
+    timeouts: Timeouts,
     backoff_pulse: Option<mpsc::UnboundedSender<()>>,
 ) -> (ClientHandle, mpsc::UnboundedReceiver<TransportEvent>) {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
-    tokio::spawn(run(params, event_tx, cmd_rx, backoff_pulse));
+    tokio::spawn(run(params, timeouts, event_tx, cmd_rx, backoff_pulse));
     (ClientHandle { cmd: cmd_tx }, event_rx)
 }
 
@@ -207,6 +283,57 @@ fn status(status: ConnStatus, attempt: u32, error: Option<String>) -> TransportE
         status,
         attempt,
         error,
+        error_code: None,
+    }
+}
+
+/// How one attempt failed before it was welcomed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AttemptFailure {
+    DialTimeout,
+    JoinTimeout,
+    /// connect / open stream / write join failed outright.
+    Dial(String),
+    /// The host closed the connection before it sent `welcome`.
+    ClosedBeforeWelcome,
+}
+
+impl AttemptFailure {
+    fn code(&self) -> ErrorCode {
+        match self {
+            Self::DialTimeout => ErrorCode::ConnectTimeout,
+            Self::JoinTimeout => ErrorCode::JoinTimeout,
+            Self::Dial(_) | Self::ClosedBeforeWelcome => ErrorCode::ConnectFailed,
+        }
+    }
+
+    /// English detail for logs and the UI's fallback; the UI words the
+    /// [`ErrorCode`] itself.
+    fn detail(&self, timeouts: &Timeouts) -> String {
+        match self {
+            Self::DialTimeout => format!(
+                "connect timeout: no connection to the host within {}s",
+                timeouts.dial.as_secs_f32()
+            ),
+            Self::JoinTimeout => format!(
+                "join timeout: connected, but no welcome within {}s",
+                timeouts.join.as_secs_f32()
+            ),
+            Self::Dial(err) => format!("connect failed: {err}"),
+            Self::ClosedBeforeWelcome => {
+                "connect failed: the host closed the connection before it welcomed us".to_owned()
+            }
+        }
+    }
+
+    /// The `offline` event that ends a connection which never came online.
+    fn into_offline(self, timeouts: &Timeouts) -> TransportEvent {
+        TransportEvent::Status {
+            status: ConnStatus::Offline,
+            attempt: 0,
+            error: Some(self.detail(timeouts)),
+            error_code: Some(self.code()),
+        }
     }
 }
 
@@ -259,8 +386,10 @@ fn reject_offline_command(cmd: Command) -> OfflineAction {
 
 enum SessionOutcome {
     /// The connection dropped; `settled` is true when a welcome had arrived.
+    /// `why` says how an attempt that never settled ended (ignored when it did).
     Lost {
         settled: bool,
+        why: AttemptFailure,
     },
     /// Give up for good and surface the reason.
     Fatal(String),
@@ -269,6 +398,7 @@ enum SessionOutcome {
 
 async fn run(
     params: ConnectParams,
+    timeouts: Timeouts,
     events: mpsc::UnboundedSender<TransportEvent>,
     mut cmds: mpsc::UnboundedReceiver<Command>,
     backoff_pulse: Option<mpsc::UnboundedSender<()>>,
@@ -298,6 +428,11 @@ async fn run(
 
     let mut backoff = Backoff::default();
     let mut attempt: u32 = 0;
+    // Whether any attempt was ever welcomed. Redial exists to restore a session
+    // that was good; before the first welcome there is nothing to restore, so a
+    // failed first attempt is reported to the operator instead of retried in
+    // the dark (a form that says "connecting" for as long as the host is gone).
+    let mut ever_online = false;
     loop {
         let phase = if attempt == 0 {
             ConnStatus::Connecting
@@ -313,6 +448,7 @@ async fn run(
             &events,
             &mut cmds,
             &mut backoff,
+            &timeouts,
         )
         .await
         {
@@ -324,7 +460,16 @@ async fn run(
                 let _ = events.send(status(ConnStatus::Offline, 0, Some(reason)));
                 break;
             }
-            SessionOutcome::Lost { settled } => {
+            SessionOutcome::Lost { settled, why } => {
+                ever_online |= settled;
+                if !ever_online {
+                    tracing::debug!(?why, "first attempt failed; not redialing");
+                    let _ = events.send(why.into_offline(&timeouts));
+                    break;
+                }
+                if !settled {
+                    tracing::debug!(?why, attempt, "redial attempt failed");
+                }
                 if settled {
                     attempt = 0;
                 }
@@ -380,6 +525,89 @@ async fn bind_endpoint(profile: NetworkProfile) -> Result<iroh::Endpoint, String
     bound.map_err(|err| format!("endpoint bind failed: {err}"))
 }
 
+/// The control stream ended under us. Before the welcome that is a failed
+/// attempt ([`AttemptFailure::ClosedBeforeWelcome`]); after it, an ordinary
+/// loss the redial loop restores (and `why` is not read).
+fn dropped(settled: bool) -> SessionOutcome {
+    SessionOutcome::Lost {
+        settled,
+        why: AttemptFailure::ClosedBeforeWelcome,
+    }
+}
+
+/// The pieces of a live control stream, once the dial has gone through.
+struct Dialed {
+    conn: iroh::endpoint::Connection,
+    send: iroh::endpoint::SendStream,
+    recv: iroh::endpoint::RecvStream,
+}
+
+enum DialOutcome {
+    Ready(Dialed),
+    Failed(AttemptFailure),
+    /// A close arrived (or every handle was dropped) mid-dial.
+    Closed,
+}
+
+/// Connect, open the control stream and write `join` — all inside one
+/// `limit`, and all abortable by a close. Dropping the in-flight future is what
+/// actually abandons the attempt; without the race below a `Close` would sit
+/// in the command queue behind an `endpoint.connect` that never returns, and
+/// the replacement dial would never be able to cancel it.
+///
+/// Other commands get the same fail-fast verdict they get during a redial
+/// backoff: there is no live stream to send on, fetch from or upload to.
+async fn dial(
+    endpoint: &iroh::Endpoint,
+    addr: iroh::EndpointAddr,
+    params: &ConnectParams,
+    cmds: &mut mpsc::UnboundedReceiver<Command>,
+    limit: Duration,
+) -> DialOutcome {
+    let handshake = async {
+        let conn = endpoint
+            .connect(addr, ALPN)
+            .await
+            .map_err(|err| format!("connect: {err}"))?;
+        let (mut send, recv) = conn
+            .open_bi()
+            .await
+            .map_err(|err| format!("control stream: {err}"))?;
+        let join = frames::join_frame(
+            &params.key,
+            params.name.as_deref(),
+            &params.client_name,
+            &params.client_version,
+        );
+        send.write_all(&encode_line(&join))
+            .await
+            .map_err(|err| format!("join write: {err}"))?;
+        Ok::<_, String>(Dialed { conn, send, recv })
+    };
+    tokio::pin!(handshake);
+    let deadline = tokio::time::sleep(limit);
+    tokio::pin!(deadline);
+
+    loop {
+        tokio::select! {
+            result = &mut handshake => {
+                return match result {
+                    Ok(dialed) => DialOutcome::Ready(dialed),
+                    Err(err) => DialOutcome::Failed(AttemptFailure::Dial(err)),
+                };
+            }
+            _ = &mut deadline => return DialOutcome::Failed(AttemptFailure::DialTimeout),
+            cmd = cmds.recv() => match cmd {
+                None => return DialOutcome::Closed,
+                Some(cmd) => match reject_offline_command(cmd) {
+                    OfflineAction::Continue => {}
+                    OfflineAction::Stop => return DialOutcome::Closed,
+                },
+            },
+        }
+    }
+}
+
 async fn session(
     endpoint: &iroh::Endpoint,
     addr: iroh::EndpointAddr,
@@ -387,43 +615,37 @@ async fn session(
     events: &mpsc::UnboundedSender<TransportEvent>,
     cmds: &mut mpsc::UnboundedReceiver<Command>,
     backoff: &mut Backoff,
+    timeouts: &Timeouts,
 ) -> SessionOutcome {
-    let conn = match endpoint.connect(addr, ALPN).await {
-        Ok(conn) => conn,
-        Err(err) => {
-            tracing::debug!(error = %err, "connect failed");
-            return SessionOutcome::Lost { settled: false };
+    let Dialed {
+        conn,
+        mut send,
+        mut recv,
+    } = match dial(endpoint, addr, params, cmds, timeouts.dial).await {
+        DialOutcome::Ready(dialed) => dialed,
+        DialOutcome::Failed(why) => {
+            tracing::debug!(?why, "dial failed");
+            return SessionOutcome::Lost {
+                settled: false,
+                why,
+            };
         }
+        DialOutcome::Closed => return SessionOutcome::ClosedByUser,
     };
-    let (mut send, mut recv) = match conn.open_bi().await {
-        Ok(pair) => pair,
-        Err(err) => {
-            tracing::debug!(error = %err, "control stream failed");
-            return SessionOutcome::Lost { settled: false };
-        }
-    };
-
-    let join = frames::join_frame(
-        &params.key,
-        params.name.as_deref(),
-        &params.client_name,
-        &params.client_version,
-    );
-    if let Err(err) = send.write_all(&encode_line(&join)).await {
-        tracing::debug!(error = %err, "join write failed");
-        return SessionOutcome::Lost { settled: false };
-    }
 
     let mut decoder = LineDecoder::new();
     let mut settled = false;
-    let join_deadline = Instant::now() + JOIN_TIMEOUT;
+    let join_deadline = Instant::now() + timeouts.join;
     let mut buf = vec![0u8; READ_CHUNK];
 
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(join_deadline), if !settled => {
                 conn.close(1u32.into(), b"join timeout");
-                return SessionOutcome::Lost { settled: false };
+                return SessionOutcome::Lost {
+                    settled: false,
+                    why: AttemptFailure::JoinTimeout,
+                };
             }
             cmd = cmds.recv() => match cmd {
                 None | Some(Command::Close) => {
@@ -437,7 +659,7 @@ async fn session(
                         }
                         Err(err) => {
                             let _ = reply.send(Err(format!("send failed: {err}")));
-                            return SessionOutcome::Lost { settled };
+                            return dropped(settled);
                         }
                     }
                 }
@@ -480,7 +702,7 @@ async fn session(
             read = recv.read(&mut buf) => {
                 let n = match read {
                     Ok(Some(n)) => n,
-                    Ok(None) | Err(_) => return SessionOutcome::Lost { settled },
+                    Ok(None) | Err(_) => return dropped(settled),
                 };
                 let batch = match decoder.push(&buf[..n]) {
                     Ok(batch) => batch,
@@ -492,7 +714,7 @@ async fn session(
                 for frame in batch {
                     if let Some(pong) = frames::ping_reply(&frame) {
                         if send.write_all(&encode_line(&pong)).await.is_err() {
-                            return SessionOutcome::Lost { settled };
+                            return dropped(settled);
                         }
                         continue;
                     }
@@ -746,6 +968,67 @@ mod tests {
             put_rx.try_recv().expect("put waiter settled"),
             Err("transport offline".to_owned())
         );
+    }
+
+    #[test]
+    fn each_failure_has_its_own_code_and_an_english_detail() {
+        let timeouts = Timeouts::default();
+        let cases = [
+            (
+                AttemptFailure::DialTimeout,
+                ErrorCode::ConnectTimeout,
+                "connect timeout: no connection to the host within 15s",
+            ),
+            (
+                AttemptFailure::JoinTimeout,
+                ErrorCode::JoinTimeout,
+                "join timeout: connected, but no welcome within 15s",
+            ),
+            (
+                AttemptFailure::Dial("connect: boom".to_owned()),
+                ErrorCode::ConnectFailed,
+                "connect failed: connect: boom",
+            ),
+            (
+                AttemptFailure::ClosedBeforeWelcome,
+                ErrorCode::ConnectFailed,
+                "connect failed: the host closed the connection before it welcomed us",
+            ),
+        ];
+        for (failure, code, detail) in cases {
+            assert_eq!(failure.code(), code);
+            assert_eq!(failure.detail(&timeouts), detail);
+        }
+    }
+
+    #[test]
+    fn a_failed_first_attempt_ends_offline_with_reason_and_code() {
+        let event = AttemptFailure::DialTimeout.into_offline(&Timeouts::default());
+        assert_eq!(
+            serde_json::to_value(&event).expect("serializes"),
+            json!({
+                "kind": "status",
+                "status": "offline",
+                "attempt": 0,
+                "error": "connect timeout: no connection to the host within 15s",
+                "errorCode": "connect_timeout",
+            })
+        );
+    }
+
+    #[test]
+    fn a_status_without_a_code_keeps_the_old_wire_shape() {
+        let event = status(ConnStatus::Online, 0, None);
+        assert_eq!(
+            serde_json::to_value(&event).expect("serializes"),
+            json!({"kind": "status", "status": "online", "attempt": 0})
+        );
+    }
+
+    #[test]
+    fn one_attempt_is_bounded_to_thirty_seconds() {
+        let timeouts = Timeouts::default();
+        assert!(timeouts.dial + timeouts.join <= Duration::from_secs(30));
     }
 
     #[test]
