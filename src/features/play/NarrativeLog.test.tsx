@@ -264,6 +264,27 @@ describe("NarrativeLog", () => {
     })
   })
 
+  // A join replay from an engine that does not name the seat yet sends the
+  // player's words with no `name`. The header used to read "?".
+  it("gives a nameless player line no header instead of a question mark", () => {
+    ingest({ type: "narrative", id: "r1", speaker: "player", text: "I step back.", format: "plain" })
+    ingest({ type: "narrative", id: "r2", speaker: "kp", text: "The pier creaks.", format: "markdown" })
+    const { container } = render(<NarrativeLog />)
+
+    expect(screen.getByText("I step back.")).toBeInTheDocument()
+    expect(screen.queryByText("?")).toBeNull()
+    const player = container.querySelector(".log-entry.speaker-player") as HTMLElement
+    expect(player.querySelector(".entry-speaker")).toBeNull()
+    // The other speakers keep their headers.
+    expect(container.querySelector(".log-entry.speaker-kp .entry-speaker")).toHaveTextContent("KP")
+  })
+
+  it("treats a blank or control-character name as no name", () => {
+    ingest({ type: "narrative", id: "r1", speaker: "player", name: " \u0007 ", text: "Hm.", format: "plain" })
+    const { container } = render(<NarrativeLog />)
+    expect(container.querySelector(".entry-speaker")).toBeNull()
+  })
+
   it("shows a blinking cursor only while the draft is open", () => {
     ingest({
       type: "narrative_delta",
