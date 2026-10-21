@@ -207,6 +207,49 @@ describe("connection store", () => {
     expect(useConnectionStore.getState().attempt).toBe(3)
   })
 
+  it("rebuilds the log from the join replay after the transport redials by itself", () => {
+    // The welcome never used to reach the session store, so every automatic
+    // reconnect appended the server's replay (fresh ids and all) to the log.
+    let replayId = 0
+    const join = (status: "connecting" | "reconnecting") => {
+      handle({ kind: "status", status, attempt: 1 })
+      handle({ kind: "frame", frame: WELCOME })
+      handle({ kind: "status", status: "online", attempt: 0 })
+      for (const text of ["The pier creaks.", "A lantern gutters."]) {
+        replayId += 1
+        handle({
+          kind: "frame",
+          frame: { type: "narrative", id: `replay-${replayId}`, speaker: "kp", text, format: "markdown" },
+        })
+      }
+      handle({ kind: "frame", frame: { type: "state", party: [], initiative: [], online: 1 } })
+    }
+    const texts = () =>
+      useSessionStore
+        .getState()
+        .entries.map((entry) => (entry.kind === "narrative" ? entry.frame.text : entry.kind))
+
+    join("connecting")
+    handle({ kind: "status", status: "reconnecting", attempt: 1 })
+    join("reconnecting")
+    handle({ kind: "status", status: "reconnecting", attempt: 1 })
+    join("reconnecting")
+
+    expect(texts()).toEqual(["The pier creaks.", "A lantern gutters."])
+  })
+
+  it("leaves the log alone when it refuses the welcome", () => {
+    useSessionStore.getState().ingest({
+      type: "narrative",
+      id: "n1",
+      speaker: "kp",
+      text: "The pier creaks.",
+      format: "markdown",
+    })
+    handle({ kind: "frame", frame: { ...WELCOME, protocol: "4.0" } })
+    expect(useSessionStore.getState().entries).toHaveLength(1)
+  })
+
   it("refuses to connect outside the tauri shell", async () => {
     await useConnectionStore.getState().connect({ ticket: "endpoint-x", key: "k" })
     const state = useConnectionStore.getState()

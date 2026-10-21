@@ -476,3 +476,240 @@ describe("pending echoes", () => {
     expect(useSessionStore.getState().entries.at(-1)).toMatchObject({ kind: "error" })
   })
 })
+
+// A redial after a restart or a dropped link is answered like a first join: a
+// `welcome`, then the server's replay of its recent history (`net/session.py:
+// _replay_history`) in FRESH frames — every replayed narrative gets a new id
+// (`new_id()`), so nothing in the log can be matched against it — and then the
+// `state` snapshot. The replay is the whole truth about the past, so the log is
+// rebuilt from it.
+describe("reconnect — the join replay rebuilds the log", () => {
+  beforeEach(() => useSessionStore.getState().clear())
+
+  const WELCOME: ServerFrame = {
+    type: "welcome",
+    protocol: "2.4",
+    room: "r1",
+    you: { id: "u1", name: "Nyx", role: "player" },
+    locale: "en",
+    server: "loreweaver/1",
+  }
+  const STATE: ServerFrame = { type: "state", party: [], initiative: [], online: 1 }
+  const ROLL: ServerFrame = {
+    type: "dice",
+    actor: "Nyx",
+    kind: "check",
+    expr: "1d100",
+    rolls: [34],
+    total: 34,
+  }
+
+  type Line = ["kp" | "player" | "npc", string] | "roll"
+  let ids = 0
+
+  /** What the server sends a joining member: a fresh id on every line, every time. */
+  const replayLines = (lines: Line[]) => {
+    for (const line of lines) {
+      if (line === "roll") ingest(ROLL)
+      else {
+        const [speaker, text] = line
+        ingest(
+          narrative(`replay-${(ids += 1)}`, text, {
+            speaker,
+            format: speaker === "kp" ? "markdown" : "plain",
+            ...(speaker === "npc" ? { name: "Maren" } : {}),
+          }),
+        )
+      }
+    }
+  }
+  const join = (lines: Line[]) => {
+    ingest(WELCOME)
+    replayLines(lines)
+    ingest(STATE)
+  }
+  const shown = () =>
+    useSessionStore.getState().entries.map((entry) => {
+      if (entry.kind === "narrative") return `${entry.frame.speaker}: ${entry.frame.text}`
+      if (entry.kind === "pending")
+        return `${entry.pending.failed ? "undelivered" : "pending"}: ${entry.pending.text}`
+      return entry.kind
+    })
+
+  const TRANSCRIPT: Line[] = [
+    ["kp", "The pier creaks under a grey dawn."],
+    ["player", "I step onto the pier."],
+    "roll",
+    ["npc", "Don't linger, stranger."],
+    ["kp", "A lantern gutters at the far end."],
+  ]
+  const EXPECTED = [
+    "kp: The pier creaks under a grey dawn.",
+    "player: I step onto the pier.",
+    "dice",
+    "npc: Don't linger, stranger.",
+    "kp: A lantern gutters at the far end.",
+  ]
+
+  it("does not repeat the chronicle when the server is restarted — twice", () => {
+    join(TRANSCRIPT)
+    expect(shown()).toEqual(EXPECTED)
+
+    // First restart: the transport redials by itself, the replay arrives again.
+    join(TRANSCRIPT)
+    expect(shown()).toEqual(EXPECTED)
+
+    // Second restart.
+    join(TRANSCRIPT)
+    expect(shown()).toEqual(EXPECTED)
+  })
+
+  it("shows the new lines of the story the dead connection missed, once", () => {
+    join(TRANSCRIPT)
+    join([...TRANSCRIPT, ["player", "I raise the lantern."], ["kp", "The light finds a door."]])
+    expect(shown()).toEqual([...EXPECTED, "player: I raise the lantern.", "kp: The light finds a door."])
+  })
+
+  it("does not keep a stream that was open on the dead connection", () => {
+    ingest(narrative("s1", "The fog ", { speaker: "kp" }))
+    ingest(delta("s2", "The tide turn"))
+    join(TRANSCRIPT)
+    const drafts = useSessionStore.getState().entries.filter((e) => e.kind === "narrative" && e.draft)
+    expect(drafts).toEqual([])
+    expect(shown()).toEqual(EXPECTED)
+  })
+
+  it("drops what the replay never carries instead of stranding it above the rebuilt log", () => {
+    ingest({ type: "system", level: "info", text: "Your input is queued behind the running turn." })
+    ingest({ type: "error", code: "rate_limited", message: "Slow down." })
+    ingest({ type: "ui", panel: "inline", blocks: [{ kind: "badge", label: "omen" }] } as ServerFrame)
+    ingest(narrative("r0", "Only the keeper can do that.", { speaker: "system" }))
+    join(TRANSCRIPT)
+    expect(shown()).toEqual(EXPECTED)
+  })
+
+  it("keeps the panels, sidebar and roster until the new snapshot replaces them", () => {
+    ingest({ type: "ui", panel: "sidebar", id: "hud", blocks: [{ kind: "badge", label: "omen" }] })
+    ingest({ type: "presence", players: [{ id: "u1", name: "Nyx", online: true }], online: 1 })
+    join(TRANSCRIPT)
+    ingest({ type: "state", party: [], initiative: [], online: 3 })
+
+    // Mid-replay the old readouts are still on screen — nothing flickers empty.
+    ingest(WELCOME)
+    expect(useSessionStore.getState().game?.online).toBe(3)
+    expect(useSessionStore.getState().uiPanels).toHaveLength(1)
+    expect(useSessionStore.getState().presence?.online).toBe(1)
+  })
+
+  it("leaves a first join alone", () => {
+    ingest(WELCOME)
+    expect(useSessionStore.getState().entries).toEqual([])
+    expect(useSessionStore.getState().replay).toBeNull()
+    join(TRANSCRIPT)
+    expect(shown()).toEqual(EXPECTED)
+  })
+
+  it("keeps arrival order for the frames between the welcome and the end of the replay", () => {
+    join(TRANSCRIPT)
+    ingest(WELCOME)
+    replayLines(TRANSCRIPT)
+    // Held live frames are flushed behind the replay and ahead of the snapshot…
+    ingest(narrative("live-1", "Ash arrives at the pier.", { speaker: "kp" }))
+    ingest(STATE)
+    // …and everything after the snapshot is simply live.
+    ingest(narrative("live-2", "The bell tolls.", { speaker: "kp" }))
+    expect(shown()).toEqual([...EXPECTED, "kp: Ash arrives at the pier.", "kp: The bell tolls."])
+  })
+
+  describe("the player's own lines", () => {
+    const echo = (text: string) => useSessionStore.getState().echoLocalInput(text, "Nyx", 1_000)
+
+    it("keeps a line typed on the dead connection, undelivered, below the rebuilt log", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      echo(".st STR=50")
+
+      join(TRANSCRIPT)
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door.", "undelivered: .st STR=50"])
+    })
+
+    it("never loses the lines across any number of redials", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      join(TRANSCRIPT)
+      join(TRANSCRIPT)
+      join(TRANSCRIPT)
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
+    })
+
+    it("keeps a line through a link that dies again in the middle of the replay", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME)
+      replayLines(TRANSCRIPT.slice(0, 2))
+      ingest(WELCOME)
+      replayLines(TRANSCRIPT)
+      ingest(STATE)
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
+    })
+
+    it("retires a line the replay proves the table received before the link died", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      // The turn ran to the end on the server; only its echo and reply were lost.
+      join([...TRANSCRIPT, ["player", "I open the door."], ["kp", "The door gives way."]])
+      expect(shown()).toEqual([...EXPECTED, "player: I open the door.", "kp: The door gives way."])
+    })
+
+    it("does not retire a line because the replay holds an older one with the same words", () => {
+      const history: Line[] = [
+        ["kp", "The corridor splits in two."],
+        ["player", "continue"],
+        ["kp", "You reach a crossroads."],
+      ]
+      join(history)
+      echo("continue")
+      // The line was lost with the connection: the replay is exactly what we had.
+      join(history)
+      expect(shown()).toEqual([
+        "kp: The corridor splits in two.",
+        "player: continue",
+        "kp: You reach a crossroads.",
+        "undelivered: continue",
+      ])
+    })
+
+    it("does not retire a line when the replay shares nothing with what was seen", () => {
+      join([
+        ["kp", "An old scene."],
+        ["player", "go"],
+      ])
+      echo("go")
+      // Only the newest stretch is replayed, so nothing can anchor the comparison.
+      join([
+        ["kp", "A scene far later."],
+        ["player", "go"],
+      ])
+      expect(shown().at(-1)).toBe("undelivered: go")
+    })
+
+    it("puts a line typed during the replay below the carried ones", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME)
+      replayLines(TRANSCRIPT)
+      echo("I knock instead.")
+      expect(useSessionStore.getState().replay).toBeNull()
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door.", "pending: I knock instead."])
+    })
+
+    it("drops the carried lines with the log on a campaign wipe", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME)
+      ingest({ type: "state", party: [], initiative: [], online: 1, reset: true })
+      expect(useSessionStore.getState().entries).toEqual([])
+      expect(useSessionStore.getState().replay).toBeNull()
+    })
+  })
+})
