@@ -25,8 +25,10 @@ function MenuRow({ panel, onDone }: { panel: UiManifestPanel; onDone: () => void
         className="ghost-button"
         onClick={() => {
           if (panel.slot === "modal") {
-            openModal(panel.id)
+            // Close the menu first: that hands focus back to the "Panels" button,
+            // which is what the overlay will return it to when it closes.
             onDone()
+            openModal(panel.id)
           } else {
             setClosed(panel.id, !closed)
           }
@@ -45,6 +47,7 @@ export default function PanelMenu() {
   const setBlocksOnly = usePanelsStore((s) => s.setBlocksOnly)
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -59,6 +62,7 @@ export default function PanelMenu() {
   return (
     <div className="panel-menu" ref={rootRef}>
       <button
+        ref={triggerRef}
         type="button"
         className="ghost-button"
         aria-haspopup="true"
@@ -71,7 +75,14 @@ export default function PanelMenu() {
         <div className="panel-menu-pop" role="menu" aria-label={t("panels.menuAria")}>
           <ul className="panel-menu-list">
             {manifest.map((panel) => (
-              <MenuRow key={panel.id} panel={panel} onDone={() => setOpen(false)} />
+              <MenuRow
+                key={panel.id}
+                panel={panel}
+                onDone={() => {
+                  triggerRef.current?.focus()
+                  setOpen(false)
+                }}
+              />
             ))}
           </ul>
           <label className="panel-menu-setting">
