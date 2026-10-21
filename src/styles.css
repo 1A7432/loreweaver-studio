@@ -2593,6 +2593,12 @@ button.npc-line-toggle {
   padding: 12px;
 }
 
+/* Focused by script and by a click on its chrome; a ring around the whole
+   overlay would only say "something is selected" about the thing in view. */
+.panel-modal:focus {
+  outline: none;
+}
+
 .panel-modal-body {
   overflow-y: auto;
   min-height: 0;
