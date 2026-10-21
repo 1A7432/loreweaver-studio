@@ -298,10 +298,17 @@ function PartyCard({ game }: { game: StateFrame }) {
  * is the whole point of a pregen roster. */
 export function PregenCard({ game }: { game: StateFrame }) {
   const { t } = useTranslation()
-  const you = useConnectionStore((s) => s.welcome?.you.name ?? "")
+  // `claimed_by` is the claiming MEMBER ID on the wire (protocol `PregenEntry`),
+  // so "mine" is the welcome id, never the display name.
+  const youId = useConnectionStore((s) => s.welcome?.you.id ?? "")
   const online = useConnectionStore((s) => s.status === "online")
+  const presence = useSessionStore((s) => s.presence)
   const pregens = game.pregens ?? []
   if (pregens.length === 0) return null
+  // Another member's claim reads as their name when the presence roster knows
+  // them; a claimer who is not connected right now is only known by id, which
+  // is shown as-is rather than hidden.
+  const nameOf = (id: string): string => presence?.players.find((p) => p.id === id)?.name || id
 
   return (
     <section className="desk-card">
@@ -309,7 +316,7 @@ export function PregenCard({ game }: { game: StateFrame }) {
       <ul className="party-list">
         {pregens.map((pregen) => {
           const claimedBy = pregen.claimed_by.trim()
-          const mine = claimedBy !== "" && claimedBy === you
+          const mine = claimedBy !== "" && claimedBy === youId
           return (
             <li key={pregen.name} className={`party-row${claimedBy ? " is-offline" : ""}`}>
               <span className="party-name">{stripControlChars(pregen.name)}</span>
@@ -317,7 +324,7 @@ export function PregenCard({ game }: { game: StateFrame }) {
                 <span className="chip">
                   {mine
                     ? t("session.pregenYours")
-                    : t("session.pregenClaimed", { name: stripControlChars(claimedBy) })}
+                    : t("session.pregenClaimed", { name: stripControlChars(nameOf(claimedBy)) })}
                 </span>
               ) : (
                 <button

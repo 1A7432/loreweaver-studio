@@ -162,27 +162,77 @@ describe("PregenCard", () => {
     })
   })
 
+  // `claimed_by` is the claiming member's ID on the wire; the welcome frame above
+  // seats this player as id "u1" / name "Nyx".
+  const present = (players: { id: string; name: string; online: boolean }[]) =>
+    useSessionStore.setState({ presence: { type: "presence", players, online: players.length } })
+
   it("renders the module's cast and offers an unclaimed one", async () => {
     useSessionStore.setState({
-      game: {
-        ...BASE,
-        pregens: [
-          { name: "林晚", claimed_by: "" },
-          { name: "陈九鲤", claimed_by: "Ash" },
-          { name: "白榆生", claimed_by: "Nyx" },
-        ],
-      },
+      game: { ...BASE, pregens: [{ name: "林晚", claimed_by: "" }] },
     })
     render(<StatePanel />)
 
     expect(screen.getByText("林晚")).toBeInTheDocument()
-    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
-    // Your own claim reads as yours, not as somebody else's name.
-    expect(screen.getByText("yours")).toBeInTheDocument()
 
     // Claiming is a PLAYER action and goes down the ordinary command path.
     await userEvent.click(screen.getByRole("button", { name: "Claim" }))
     expect(sent).toContainEqual({ type: "input", text: ".pc claim 林晚" })
+  })
+
+  it("reads your own claim as yours, matched by member id rather than display name", () => {
+    useSessionStore.setState({
+      game: { ...BASE, pregens: [{ name: "白榆生", claimed_by: "u1" }] },
+    })
+    present([{ id: "u1", name: "Nyx", online: true }])
+    render(<StatePanel />)
+
+    expect(screen.getByText("yours")).toBeInTheDocument()
+    expect(screen.queryByText(/claimed by/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/u1/)).not.toBeInTheDocument()
+  })
+
+  it("names another member's claim from the presence roster, not their raw id", () => {
+    useSessionStore.setState({
+      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1" }] },
+    })
+    present([
+      { id: "u1", name: "Nyx", online: true },
+      { id: "tui:2600a9b1", name: "Ash", online: true },
+    ])
+    render(<StatePanel />)
+
+    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
+    expect(screen.queryByText(/tui:2600a9b1/)).not.toBeInTheDocument()
+    expect(screen.queryByText("yours")).not.toBeInTheDocument()
+  })
+
+  it("strips control characters from the resolved member name", () => {
+    useSessionStore.setState({
+      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "u2" }] },
+    })
+    present([{ id: "u2", name: "As\u001bh\u0007", online: true }])
+    render(<StatePanel />)
+
+    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
+  })
+
+  it("falls back to the id for a claimer the presence roster does not know", () => {
+    useSessionStore.setState({
+      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1" }] },
+    })
+    // Presence only lists connected members: nobody, or somebody else, is there.
+    present([{ id: "u1", name: "Nyx", online: true }])
+    render(<StatePanel />)
+    expect(screen.getByText("claimed by tui:2600a9b1")).toBeInTheDocument()
+  })
+
+  it("falls back to the id before any presence frame has arrived", () => {
+    useSessionStore.setState({
+      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1" }] },
+    })
+    render(<StatePanel />)
+    expect(screen.getByText("claimed by tui:2600a9b1")).toBeInTheDocument()
   })
 
   it("shows nothing when the module ships no cast", () => {
