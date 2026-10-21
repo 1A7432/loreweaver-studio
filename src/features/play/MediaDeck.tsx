@@ -142,7 +142,7 @@ export default function MediaDeck() {
       {images.length > 0 ? (
         <ul className="media-list">
           {images.map((item) => (
-            <Thumb key={item.id} item={item} />
+            <Thumb key={item.hash} item={item} />
           ))}
         </ul>
       ) : (
