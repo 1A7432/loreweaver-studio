@@ -404,8 +404,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return
       case "welcome":
         // Lives here rather than in the connection store because the log is
-        // this store's: `beginReplay` says what a reconnect does to it.
-        set(beginReplay)
+        // this store's: `beginReplay` says what a reconnect does to it. A turn
+        // that was running on the dead connection is no longer this table's to
+        // wait for (the server restarted, or its idle edge went down with the
+        // link), so the busy line goes too. The hub re-sends `busy` to a new
+        // subscriber when a turn really is running, and that frame follows the
+        // welcome — so nothing live is lost by clearing it here.
+        set((s) => ({ ...beginReplay(s), turn: IDLE_TURN }))
         return
       case "narrative":
         set((s) => ({
