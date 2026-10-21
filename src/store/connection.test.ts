@@ -498,6 +498,46 @@ describe("remembering a hand-dialed table", () => {
     })
   })
 
+  it("does both on one welcome: saves the table and rebuilds the log from the replay", async () => {
+    // The welcome has two jobs that must not shadow each other: the store
+    // remembers the hand-dialed table AND the session store hears it, so an
+    // earlier transcript is replaced by the join replay instead of extended.
+    await dial("gen-both", true)
+    // dial() wipes the log; a line that lands before the welcome stands for what an
+    // earlier session of this client had already shown.
+    useSessionStore.getState().ingest({
+      type: "narrative",
+      id: "old-1",
+      speaker: "kp",
+      text: "The pier creaks.",
+      format: "markdown",
+    })
+    handle({ kind: "frame", connectionId: "gen-both", frame: WELCOME })
+    handle({
+      kind: "frame",
+      connectionId: "gen-both",
+      frame: {
+        type: "narrative",
+        id: "replay-1",
+        speaker: "kp",
+        text: "The pier creaks.",
+        format: "markdown",
+      },
+    })
+    handle({
+      kind: "frame",
+      connectionId: "gen-both",
+      frame: { type: "state", party: [], initiative: [], online: 1 },
+    })
+
+    expect(useLastTableStore.getState()).toMatchObject({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
+    expect(
+      useSessionStore
+        .getState()
+        .entries.map((entry) => (entry.kind === "narrative" ? entry.frame.id : entry.kind)),
+    ).toEqual(["replay-1"])
+  })
+
   it("does not remember a dial nobody asked to remember (the local-host path)", async () => {
     useLastTableStore.getState().remember({ ticket: "endpointold", key: "k-old", name: "" })
     await dial("gen-b", false)
