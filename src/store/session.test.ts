@@ -3,8 +3,10 @@ import type { NarrativeFrame, ServerFrame } from "@loreweaver/protocol"
 import { dataUrlCacheHas, loadDataUrl } from "../lib/dataUrlCache"
 
 const sent: unknown[] = []
+let socketDead = false
 vi.mock("../lib/transport", () => ({
   transportSend: async (frame: unknown) => {
+    if (socketDead) throw new Error("the socket is closed")
     sent.push(frame)
   },
 }))
@@ -459,6 +461,80 @@ describe("pending echoes", () => {
     expect(last).toMatchObject({ kind: "error", frame: { code: "rate_limited" } })
   })
 
+  describe("resend", () => {
+    beforeEach(() => {
+      sent.length = 0
+      socketDead = false
+    })
+    const entry = (seq: number) => useSessionStore.getState().entries.find((e) => e.seq === seq)
+    const undelivered = (text: string, now = 1_000) => {
+      const seq = echo(text, "Nyx", now)
+      useSessionStore.getState().failEcho(seq)
+      return seq
+    }
+
+    it("sends an undelivered line again, in the same place, as a waiting line", () => {
+      const first = undelivered("I check the ledger.")
+      echo("I run.")
+      useSessionStore.getState().resendEcho(first, 50_000)
+
+      expect(sent).toEqual([{ type: "input", text: "I check the ledger." }])
+      expect(entry(first)).toMatchObject({
+        kind: "pending",
+        pending: { speaker: "Nyx", text: "I check the ledger.", at: 50_000, failed: false },
+      })
+      // Same slot: still the first of the two held lines.
+      expect(pendings().map((e) => e.seq)[0]).toBe(first)
+    })
+
+    it("sends once however many times it is asked before the first send settles", () => {
+      const seq = undelivered("I check the ledger.")
+      useSessionStore.getState().resendEcho(seq)
+      useSessionStore.getState().resendEcho(seq)
+      useSessionStore.getState().resendEcho(seq)
+      expect(sent).toHaveLength(1)
+    })
+
+    it("restarts the delivery timeout from the resend", () => {
+      const seq = undelivered("I check the ledger.", 1_000)
+      useSessionStore.getState().resendEcho(seq, 400_000)
+      useSessionStore.getState().expirePendingEchoes(400_000 + PENDING_ECHO_TIMEOUT_MS - 1)
+      expect(entry(seq)).toMatchObject({ pending: { failed: false } })
+      useSessionStore.getState().expirePendingEchoes(400_000 + PENDING_ECHO_TIMEOUT_MS)
+      expect(entry(seq)).toMatchObject({ pending: { failed: true } })
+    })
+
+    it("does nothing for a line that is still waiting, or one that is gone", () => {
+      const waiting = echo("I check the ledger.")
+      useSessionStore.getState().resendEcho(waiting)
+      useSessionStore.getState().resendEcho(9_999_999)
+      expect(sent).toEqual([])
+      // Untouched: not restarted (`at` is still the original send time).
+      expect(entry(waiting)).toMatchObject({ pending: { at: 1_000 } })
+    })
+
+    it("is retired by the table's echo like any sent line", () => {
+      const seq = undelivered("I check the ledger.")
+      useSessionStore.getState().resendEcho(seq)
+      ingest(narrative("p1", "I check the ledger.", { speaker: "player", name: "Nyx" }))
+      expect(pendings()).toHaveLength(0)
+      expect(useSessionStore.getState().entries).toHaveLength(1)
+    })
+
+    it("fails the line again when the send itself fails", async () => {
+      const seq = undelivered("I check the ledger.")
+      socketDead = true
+      useSessionStore.getState().resendEcho(seq)
+      await vi.waitFor(() => expect(entry(seq)).toMatchObject({ pending: { failed: true } }))
+      expect(sent).toEqual([])
+
+      // …and it can be tried once more when the link is back.
+      socketDead = false
+      useSessionStore.getState().resendEcho(seq)
+      expect(sent).toEqual([{ type: "input", text: "I check the ledger." }])
+    })
+  })
+
   // Nothing survives a wipe or a redial: `.reset` publishes `state{reset:true}`
   // and a fresh dial calls `clear()` (`store/connection.ts`), so a line held
   // from before cannot outlive the log it belonged to.
@@ -691,6 +767,16 @@ describe("reconnect — the join replay rebuilds the log", () => {
         ["player", "go"],
       ])
       expect(shown().at(-1)).toBe("undelivered: go")
+    })
+
+    it("resends a line the reconnect carried over", () => {
+      sent.length = 0
+      join(TRANSCRIPT)
+      const seq = echo("I open the door.")
+      join(TRANSCRIPT)
+      useSessionStore.getState().resendEcho(seq)
+      expect(sent).toEqual([{ type: "input", text: "I open the door." }])
+      expect(shown()).toEqual([...EXPECTED, "pending: I open the door."])
     })
 
     it("puts a line typed during the replay below the carried ones", () => {

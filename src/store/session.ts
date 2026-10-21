@@ -141,6 +141,11 @@ interface SessionState {
   echoLocalInput: (text: string, speaker: string, now?: number) => number
   /** Mark one pending echo undelivered (the send itself failed). */
   failEcho: (seq: number) => void
+  /** Send an undelivered line again. The same entry goes back to waiting (it
+   * keeps its place), and only an undelivered one can be resent — so a second
+   * call before the first settles does nothing. Whether a connection is up is
+   * the caller's to check; a send that fails simply fails the line again. */
+  resendEcho: (seq: number, now?: number) => void
   /** Mark every echo older than the delivery timeout undelivered. */
   expirePendingEchoes: (now: number) => void
   /** Ask the server for the card files installed packs ship (v2.2). */
@@ -379,7 +384,7 @@ function upsertUiPanel(panels: UiPanelRegion[], frame: UiFrame): UiPanelRegion[]
   return next
 }
 
-export const useSessionStore = create<SessionState>((set) => ({
+export const useSessionStore = create<SessionState>((set, get) => ({
   entries: [],
   replay: null,
   game: null,
@@ -502,6 +507,23 @@ export const useSessionStore = create<SessionState>((set) => ({
           : entry,
       ),
     }))
+  },
+
+  resendEcho: (seq, now = Date.now()) => {
+    const entry = get().entries.find((e) => e.kind === "pending" && e.seq === seq)
+    // Checked and flipped in one synchronous step: the first call takes the
+    // line out of the undelivered state, so a double click finds nothing to send.
+    if (entry?.kind !== "pending" || !entry.pending.failed) return
+    set((s) => ({
+      entries: s.entries.map((e) =>
+        e === entry ? { ...entry, pending: { ...entry.pending, failed: false, at: now } } : e,
+      ),
+    }))
+    void transportSend({ type: "input", text: entry.pending.text }).catch(() => {
+      // The transport surfaces failures through status events; the line says
+      // so where the player is actually looking.
+      get().failEcho(seq)
+    })
   },
 
   expirePendingEchoes: (now) => {

@@ -63,6 +63,8 @@
     "send": "发送",
     "echoPending": "发送中…",
     "echoFailed": "未送达",
+    "resend": "重发",
+    "resendOffline": "已离线——重新连上后才能重发。",
     "serverRefused": "服务器拒绝了这一条：{{message}}",
     "npcLine": {
       "show": "展开台词",

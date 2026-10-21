@@ -63,6 +63,8 @@
     "send": "Send",
     "echoPending": "sending…",
     "echoFailed": "not delivered",
+    "resend": "Resend",
+    "resendOffline": "Offline — you can resend once you are reconnected.",
     "serverRefused": "The server refused it: {{message}}",
     "npcLine": {
       "show": "Show full line",
