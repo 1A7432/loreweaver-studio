@@ -10,6 +10,11 @@ export const TRANSPORT_EVENT = "loreweaver://transport"
 /** Mirrors `ConnectionStatus` in @loreweaver/protocol and `ConnStatus` in Rust. */
 export type TransportStatus = "connecting" | "online" | "reconnecting" | "offline"
 
+/** Why a connection that never came online gave up — mirrors `ErrorCode` in
+ * the Rust transport. Only these three are worded by the UI; any other failure
+ * arrives as `error` text alone and is shown as it came. */
+export type TransportErrorCode = "connect_timeout" | "join_timeout" | "connect_failed"
+
 /**
  * One event from the Tauri bridge. `connectionId` is a **bridge** generation
  * — it is not a protocol field and must never be written onto a wire frame.
@@ -22,6 +27,8 @@ export type TransportEvent =
       status: TransportStatus
       attempt: number
       error?: string | null
+      /** The machine-readable twin of `error` for the failures above. */
+      errorCode?: TransportErrorCode | null
     }
   | { kind: "frame"; connectionId: string; frame: unknown }
 

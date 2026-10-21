@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PROTOCOL_VERSION } from "@loreweaver/protocol"
+import i18n from "../i18n"
 import type { TransportEvent } from "../lib/transport"
 import { sanitizeTicket, useConnectionStore } from "./connection"
 import { useLastTableStore } from "./lastTable"
@@ -248,6 +249,77 @@ describe("connection store", () => {
     })
     handle({ kind: "frame", frame: { ...WELCOME, protocol: "4.0" } })
     expect(useSessionStore.getState().entries).toHaveLength(1)
+  })
+
+  it("words a connect timeout for the operator, with the transport's detail kept out of it", async () => {
+    await i18n.changeLanguage("en")
+    handle({ kind: "status", status: "connecting", attempt: 0 })
+    handle({
+      kind: "status",
+      status: "offline",
+      attempt: 0,
+      error: "connect timeout: no connection to the host within 15s",
+      errorCode: "connect_timeout",
+    })
+
+    const state = useConnectionStore.getState()
+    expect(state.status).toBe("offline")
+    expect(state.lastError).toBe(i18n.t("connect.error.connectTimeout"))
+    expect(state.lastError).toContain("ticket")
+    expect(state.lastError).not.toContain("15s")
+
+    // Same event, other language: the sentence follows the operator's locale.
+    await i18n.changeLanguage("zh")
+    try {
+      handle({
+        kind: "status",
+        status: "offline",
+        attempt: 0,
+        error: "connect timeout: no connection to the host within 15s",
+        errorCode: "connect_timeout",
+      })
+      expect(useConnectionStore.getState().lastError).toBe(i18n.t("connect.error.connectTimeout"))
+      expect(useConnectionStore.getState().lastError).toMatch(/[\u4e00-\u9fff]/)
+    } finally {
+      await i18n.changeLanguage("en")
+    }
+  })
+
+  it("words the join timeout and an outright connect failure too", async () => {
+    await i18n.changeLanguage("en")
+    handle({
+      kind: "status",
+      status: "offline",
+      attempt: 0,
+      error: "join timeout",
+      errorCode: "join_timeout",
+    })
+    expect(useConnectionStore.getState().lastError).toBe(i18n.t("connect.error.joinTimeout"))
+
+    handle({
+      kind: "status",
+      status: "offline",
+      attempt: 0,
+      error: "connect failed: connect: no route",
+      errorCode: "connect_failed",
+    })
+    // The failed-connect sentence carries the transport's reason, since that
+    // is the only thing that tells the operator what went wrong.
+    expect(useConnectionStore.getState().lastError).toContain("connect failed: connect: no route")
+  })
+
+  it("shows a failure it has no sentence for exactly as the transport said it", () => {
+    handle({ kind: "status", status: "offline", attempt: 0, error: "invalid ticket: nope" })
+    expect(useConnectionStore.getState().lastError).toBe("invalid ticket: nope")
+    // An unknown future code falls back the same way rather than showing a key.
+    handle({
+      kind: "status",
+      status: "offline",
+      attempt: 0,
+      error: "something new",
+      errorCode: "from_the_future",
+    })
+    expect(useConnectionStore.getState().lastError).toBe("something new")
   })
 
   it("refuses to connect outside the tauri shell", async () => {
@@ -593,5 +665,127 @@ describe("remembering a hand-dialed table", () => {
     })
     handle({ kind: "status", connectionId: "gen-h", status: "offline", attempt: 0, error: "invalid ticket" })
     expect(useLastTableStore.getState().key).toBe("k-1")
+  })
+
+  it("keeps the saved table when the dial times out: a stale address is not a bad table", async () => {
+    useLastTableStore.getState().remember({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
+    await dial("gen-i", true)
+    handle({
+      kind: "status",
+      connectionId: "gen-i",
+      status: "offline",
+      attempt: 0,
+      error: "connect timeout: no connection to the host within 15s",
+      errorCode: "connect_timeout",
+    })
+    expect(useConnectionStore.getState().lastError).toBe(i18n.t("connect.error.connectTimeout"))
+    expect(useLastTableStore.getState()).toMatchObject({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
+  })
+})
+
+describe("cancelling a dial", () => {
+  beforeEach(reset)
+
+  it("drops the attempt at once, names it to the bridge, and lets the next connect through", async () => {
+    bridge.tauri = true
+    bridge.nextIds = ["gen-A", "gen-B"]
+    await useConnectionStore.getState().connect({ ticket: "endpoint-a", key: "ka" })
+    expect(useConnectionStore.getState().status).toBe("connecting")
+
+    await useConnectionStore.getState().disconnect()
+
+    // Cancel is the ordinary disconnect: offline now, the dying actor's own
+    // events can no longer write back, and the bridge is asked to close it.
+    expect(useConnectionStore.getState().status).toBe("offline")
+    expect(useConnectionStore.getState().connectionId).toBeNull()
+    expect(useConnectionStore.getState().lastError).toBeNull()
+    expect(bridge.disconnect).toHaveBeenCalledWith("gen-A")
+    handle({ kind: "status", status: "online", attempt: 0, connectionId: "gen-A" })
+    expect(useConnectionStore.getState().status).toBe("offline")
+
+    // The button works again immediately: a fresh generation, a fresh dial.
+    await useConnectionStore.getState().connect({ ticket: "endpoint-b", key: "kb" })
+    expect(useConnectionStore.getState().status).toBe("connecting")
+    expect(useConnectionStore.getState().connectionId).toBe("gen-B")
+    expect(bridge.connect).toHaveBeenCalledTimes(2)
+  })
+
+  it("closes the actor a cancelled dial seated after the cancel had already passed", async () => {
+    // The cancel can reach the bridge before the dial it cancels has been
+    // seated: the slot then holds nothing of that generation to close, and the
+    // actor seated a moment later would dial on with no one listening.
+    bridge.tauri = true
+    bridge.nextIds = ["gen-A"]
+    let seat: (value?: unknown) => void = () => {
+      throw new Error("seat not armed")
+    }
+    bridge.connect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          seat = resolve
+        }),
+    )
+
+    const pending = useConnectionStore.getState().connect({ ticket: "endpoint-a", key: "ka" })
+    await useConnectionStore.getState().disconnect()
+    expect(bridge.disconnect).toHaveBeenCalledTimes(1)
+
+    seat()
+    await pending
+
+    expect(bridge.disconnect).toHaveBeenCalledTimes(2)
+    expect(bridge.disconnect).toHaveBeenLastCalledWith("gen-A")
+    expect(useConnectionStore.getState().status).toBe("offline")
+    expect(useConnectionStore.getState().connectionId).toBeNull()
+  })
+
+  it("leaves a newer dial alone when an older one is seated late", async () => {
+    bridge.tauri = true
+    bridge.nextIds = ["gen-A", "gen-B"]
+    let seatA: (value?: unknown) => void = () => {
+      throw new Error("seatA not armed")
+    }
+    bridge.connect
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            seatA = resolve
+          }),
+      )
+      .mockResolvedValueOnce(undefined)
+
+    const pendingA = useConnectionStore.getState().connect({ ticket: "endpoint-a", key: "ka" })
+    await useConnectionStore.getState().connect({ ticket: "endpoint-b", key: "kb" })
+    seatA()
+    await pendingA
+
+    // B owns the store; A's late seat must not ask the bridge to drop anything
+    // (the slot replaced A when B was seated).
+    expect(bridge.disconnect).not.toHaveBeenCalled()
+    expect(useConnectionStore.getState().connectionId).toBe("gen-B")
+    expect(useConnectionStore.getState().status).toBe("connecting")
+  })
+
+  it("a dial that timed out leaves the store offline with the reason and ready for the next dial", async () => {
+    bridge.tauri = true
+    bridge.nextIds = ["gen-A", "gen-B"]
+    await i18n.changeLanguage("en")
+    await useConnectionStore.getState().connect({ ticket: "endpoint-a", key: "ka" })
+
+    handle({
+      kind: "status",
+      status: "offline",
+      attempt: 0,
+      error: "connect timeout: no connection to the host within 15s",
+      errorCode: "connect_timeout",
+      connectionId: "gen-A",
+    })
+    expect(useConnectionStore.getState().status).toBe("offline")
+    expect(useConnectionStore.getState().lastError).toBe(i18n.t("connect.error.connectTimeout"))
+
+    await useConnectionStore.getState().connect({ ticket: "endpoint-b", key: "kb" })
+    expect(useConnectionStore.getState().status).toBe("connecting")
+    expect(useConnectionStore.getState().lastError).toBeNull()
+    expect(bridge.connect).toHaveBeenCalledTimes(2)
   })
 })

@@ -250,7 +250,29 @@ body {
   border-color: var(--accent);
 }
 
-.connect-form button {
+.connect-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.connect-secret-row {
+  display: flex;
+  gap: 8px;
+}
+
+.connect-secret-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.connect-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connect-form button:not(.ghost-button) {
   align-self: flex-start;
   background: var(--accent);
   color: var(--accent-ink);
@@ -261,7 +283,7 @@ body {
   cursor: pointer;
 }
 
-.connect-form button:disabled {
+.connect-form button:not(.ghost-button):disabled {
   opacity: 0.4;
   cursor: default;
 }
