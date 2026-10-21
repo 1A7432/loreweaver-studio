@@ -677,6 +677,35 @@ describe("reconnect — the join replay rebuilds the log", () => {
     expect(useSessionStore.getState().presence?.online).toBe(1)
   })
 
+  describe("the busy indicator", () => {
+    it("does not stay lit for a turn that died with the connection", () => {
+      join(TRANSCRIPT)
+      ingest({ type: "turn_status", status: "busy", actor: "Nyx", activity: "dice", round: 2 }, 1_000)
+      expect(useSessionStore.getState().turn.busy).toBe(true)
+
+      // The server restarts mid-turn; no idle edge will ever come for it.
+      ingest(WELCOME)
+      expect(useSessionStore.getState().turn).toMatchObject({
+        busy: false,
+        actor: null,
+        activity: null,
+        round: null,
+      })
+    })
+
+    it("lights up again for a turn the server says is still running", () => {
+      join(TRANSCRIPT)
+      ingest({ type: "turn_status", status: "busy", actor: "Nyx" }, 1_000)
+      // `RoomHub.subscribe` re-sends the busy edge to the new connection, right
+      // behind the welcome and ahead of the replay.
+      ingest(WELCOME)
+      ingest({ type: "turn_status", status: "busy", actor: "Ash" }, 2_000)
+      replayLines(TRANSCRIPT)
+      ingest(STATE)
+      expect(useSessionStore.getState().turn).toMatchObject({ busy: true, actor: "Ash" })
+    })
+  })
+
   it("leaves a first join alone", () => {
     ingest(WELCOME)
     expect(useSessionStore.getState().entries).toEqual([])
