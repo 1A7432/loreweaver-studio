@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { StateFrame, UiManifestPanel, WelcomeFrame } from "@loreweaver/protocol"
@@ -150,6 +150,71 @@ describe("PanelMenu + PanelModalHost", () => {
     expect(dialog).toBeInTheDocument()
     await user.keyboard("{Escape}")
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+  })
+
+  describe("keyboard focus", () => {
+    // Esc is heard on `window`, so it only works while focus is somewhere in the
+    // page. A tier-2 overlay used to leave focus on whatever was behind it, and the
+    // moment the player clicked into the panel it was inside a sandboxed iframe whose
+    // key events never reach us — an overlay a keyboard could not close.
+    async function openFromMenu(user: ReturnType<typeof userEvent.setup>) {
+      render(
+        <>
+          <PanelMenu />
+          <PanelModalHost />
+        </>,
+      )
+      await user.click(screen.getByRole("button", { name: "Panels (3)" }))
+      await user.click(screen.getByRole("button", { name: "Open" }))
+      return screen.findByRole("dialog", { name: "Manor Map" })
+    }
+
+    it("moves focus onto the overlay when it opens, and back to the menu button when it closes", async () => {
+      const user = userEvent.setup()
+      const dialog = await openFromMenu(user)
+      expect(dialog).toHaveFocus()
+
+      await user.keyboard("{Escape}")
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Panels (3)" })).toHaveFocus()
+    })
+
+    it("returns focus to the menu button when the × closes it too", async () => {
+      const user = userEvent.setup()
+      const dialog = await openFromMenu(user)
+      await user.click(within(dialog).getByRole("button", { name: "Close" }))
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Panels (3)" })).toHaveFocus()
+    })
+
+    it("lets a click on the overlay's own chrome take focus back out of the panel frame", async () => {
+      const user = userEvent.setup()
+      const dialog = await openFromMenu(user)
+      const iframe = await waitFor(() => {
+        const el = dialog.querySelector("iframe")
+        if (!el) throw new Error("iframe not mounted yet")
+        return el
+      })
+      // The player clicked into the panel: the frame owns the keyboard now.
+      act(() => iframe.focus())
+      expect(iframe).toHaveFocus()
+
+      await user.click(within(dialog).getByText("Manor Map"))
+      expect(dialog).toHaveFocus()
+      await user.keyboard("{Escape}")
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    })
+
+    it("keeps the player's focus through a manifest refresh that re-creates the panel", async () => {
+      const user = userEvent.setup()
+      const dialog = await openFromMenu(user)
+      expect(dialog).toHaveFocus()
+      const close = within(dialog).getByRole("button", { name: "Close" })
+      act(() => close.focus())
+
+      act(() => usePanelsStore.getState().applyManifest([CASE_BOARD, TICKER, { ...MANOR_MAP }]))
+      expect(close).toHaveFocus()
+    })
   })
 
   it("reopens a closed panel from the menu", async () => {
