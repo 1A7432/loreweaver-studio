@@ -8,6 +8,7 @@ import {
   type NarrativeFrame,
   type SystemFrame,
 } from "@loreweaver/protocol"
+import { useConnectionStore } from "../../store/connection"
 import { useSessionStore, type LogEntry, type PendingEcho } from "../../store/session"
 import DiceLine from "./DiceLine"
 import UiBlocks from "./UiBlocks"
@@ -132,18 +133,36 @@ function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boole
   )
 }
 
-/** A line this client sent, dimmed until the table reflects it back. */
-function PendingEntry({ pending }: { pending: PendingEcho }) {
+/**
+ * A line this client sent, dimmed until the table reflects it back. One that
+ * never made it says so and offers to go again: the words are still here, and
+ * retyping them is the player's work for nothing.
+ */
+function PendingEntry({ seq, pending }: { seq: number; pending: PendingEcho }) {
   const { t } = useTranslation()
+  const online = useConnectionStore((s) => s.status === "online")
+  const resend = useSessionStore((s) => s.resendEcho)
   return (
     <article className={`log-entry speaker-player pending${pending.failed ? " failed" : ""}`}>
       <header className="entry-speaker">{stripControlChars(pending.speaker)}</header>
       <div className="entry-body">
         <p className="entry-plain">{stripControlChars(pending.text)}</p>
-        <span className="pending-mark">
-          {pending.failed ? t("session.echoFailed") : t("session.echoPending")}
-        </span>
+        {pending.failed ? null : <span className="pending-mark">{t("session.echoPending")}</span>}
       </div>
+      {pending.failed ? (
+        <div className="pending-actions">
+          <span className="pending-mark">{t("session.echoFailed")}</span>
+          <button
+            type="button"
+            className="ghost-button pending-resend"
+            disabled={!online}
+            title={online ? undefined : t("session.resendOffline")}
+            onClick={() => resend(seq)}
+          >
+            {t("session.resend")}
+          </button>
+        </div>
+      ) : null}
     </article>
   )
 }
@@ -185,7 +204,7 @@ function Entry({ entry }: { entry: LogEntry }) {
         </div>
       )
     case "pending":
-      return <PendingEntry pending={entry.pending} />
+      return <PendingEntry seq={entry.seq} pending={entry.pending} />
   }
 }
 
