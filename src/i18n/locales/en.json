@@ -36,7 +36,7 @@
     "hostLocal": {
       "button": "Host locally & play",
       "starting": "Bringing the server up…",
-      "hint": "One press: use your engine checkout or download the prebuilt server (SHA-256 verified), start it, and log you in as Keeper.",
+      "hint": "One press: use your engine checkout or download the prebuilt server (SHA-256 verified), start it, and log you in as the room admin.",
       "desktopOnly": "Local hosting needs the desktop app.",
       "cancel": "Cancel",
       "home": "Server folder (data, keys, cache)",
