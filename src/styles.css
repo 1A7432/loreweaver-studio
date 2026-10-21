@@ -266,6 +266,41 @@ body {
   cursor: default;
 }
 
+/* The table this player last joined by hand: reconnect with one press, or forget it. */
+.last-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 14px;
+}
+
+.last-table .studio-hint {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.last-table-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.last-table-button {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font: 600 13px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.last-table-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .connect-error {
   margin: 0;
   color: var(--danger);

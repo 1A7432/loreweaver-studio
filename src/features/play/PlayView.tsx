@@ -8,6 +8,7 @@ import { pickDirectory } from "../../lib/native"
 import { isTauri } from "../../lib/transport"
 import { useConnectionStore } from "../../store/connection"
 import { useHostLocalStore } from "../../store/hostLocal"
+import { useLastTableStore } from "../../store/lastTable"
 import CharacterScreen from "./screens/CharacterScreen"
 import KeysScreen from "./screens/KeysScreen"
 import MainMenuScreen from "./screens/MainMenuScreen"
@@ -157,10 +158,16 @@ export default function PlayView() {
   const status = useConnectionStore((s) => s.status)
   const lastError = useConnectionStore((s) => s.lastError)
   const connect = useConnectionStore((s) => s.connect)
+  const savedTicket = useLastTableStore((s) => s.ticket)
+  const savedKey = useLastTableStore((s) => s.key)
+  const savedName = useLastTableStore((s) => s.name)
+  const forgetSaved = useLastTableStore((s) => s.forget)
 
-  const [ticket, setTicket] = useState("")
-  const [key, setKey] = useState("")
-  const [name, setName] = useState("")
+  // The form starts from the last table joined by hand, so a reload lands on
+  // something the player only has to confirm. Nothing dials until they do.
+  const [ticket, setTicket] = useState(() => useLastTableStore.getState().ticket)
+  const [key, setKey] = useState(() => useLastTableStore.getState().key)
+  const [name, setName] = useState(() => useLastTableStore.getState().name)
 
   // The session stays visible through reconnects; the form only returns once
   // the transport has given up (offline) or is dialing the very first time.
@@ -174,11 +181,29 @@ export default function PlayView() {
   const onSubmit = (event: FormEvent) => {
     event.preventDefault()
     if (!canSubmit) return
-    void connect({
-      ticket: ticket.trim(),
-      key: key.trim(),
-      name: name.trim() ? name.trim() : undefined,
-    })
+    void connect(
+      {
+        ticket: ticket.trim(),
+        key: key.trim(),
+        name: name.trim() ? name.trim() : undefined,
+      },
+      { remember: true },
+    )
+  }
+
+  const hasSaved = savedTicket !== "" && savedKey !== ""
+  // Dials the SAVED table, whatever the form has been edited to since.
+  const reconnectLast = () => {
+    void connect(
+      { ticket: savedTicket, key: savedKey, name: savedName ? savedName : undefined },
+      { remember: true },
+    )
+  }
+  const forgetLast = () => {
+    forgetSaved()
+    setTicket("")
+    setKey("")
+    setName("")
   }
 
   return (
@@ -190,6 +215,29 @@ export default function PlayView() {
         </header>
 
         <HostLocalBlock />
+
+        {hasSaved ? (
+          <div className="last-table">
+            <p className="studio-hint">
+              {t("connect.lastTable.label", {
+                table: savedName ? `${savedName} · …${savedTicket.slice(-8)}` : `…${savedTicket.slice(-8)}`,
+              })}
+            </p>
+            <div className="last-table-actions">
+              <button type="button" className="last-table-button" disabled={!offline} onClick={reconnectLast}>
+                {t("connect.lastTable.reconnect")}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                title={t("connect.lastTable.forgetHint")}
+                onClick={forgetLast}
+              >
+                {t("connect.lastTable.forget")}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <form className="connect-form" onSubmit={onSubmit}>
           <label>

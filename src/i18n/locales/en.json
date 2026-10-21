@@ -35,6 +35,12 @@
       "exitedUnexpectedly": "The local server stopped unexpectedly.",
       "exitedUnexpectedlyCode": "The local server stopped unexpectedly (code {{code}})."
     },
+    "lastTable": {
+      "label": "Last table: {{table}}",
+      "reconnect": "Reconnect to last table",
+      "forget": "Forget",
+      "forgetHint": "Remove the ticket and key saved on this device"
+    },
     "attempt": "attempt {{n}}",
     "status": {
       "offline": "Offline",
