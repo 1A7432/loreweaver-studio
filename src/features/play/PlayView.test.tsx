@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { UiManifestPanel, WelcomeFrame } from "@loreweaver/protocol"
 import "../../i18n"
+import { useAudioStore } from "../../store/audio"
 import { useConnectionStore } from "../../store/connection"
 import { usePanelsStore } from "../../store/panels"
 import { useSessionStore } from "../../store/session"
@@ -70,6 +71,31 @@ describe("PlayView", () => {
     // Esc backs out to the menu.
     await user.keyboard("{Escape}")
     expect(screen.getByText(/Table “r1”/)).toBeInTheDocument()
+  })
+
+  it("tells a player whose sound was refused where they can see it, not only in the sidebar card", async () => {
+    const user = userEvent.setup()
+    useConnectionStore.setState({ status: "online", welcome: WELCOME })
+    useAudioStore.getState().reset()
+    useAudioStore.getState().ingest({
+      type: "audio_control",
+      id: "c1",
+      action: "play",
+      layer: "bgm",
+      hash: "a".repeat(64),
+      title: "Tide",
+    })
+    useAudioStore.getState().markBlocked("bgm")
+    try {
+      render(<PlayView />)
+      await user.click(screen.getByRole("menuitem", { name: /Enter game/ }))
+      const notice = screen.getByText(/A sound cue is waiting/).closest(".panel-notice") as HTMLElement
+      expect(notice.closest(".desk-pane")).toBeNull()
+      await user.click(within(notice).getByRole("button", { name: "Turn sound on" }))
+      expect(screen.queryByText(/A sound cue is waiting/)).toBeNull()
+    } finally {
+      useAudioStore.getState().reset()
+    }
   })
 
   it("keeps the menu visible while reconnecting, with the attempt count", () => {

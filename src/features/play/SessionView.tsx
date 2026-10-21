@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { useConnectionStore } from "../../store/connection"
 import { quitTable } from "../../store/hostLocal"
+import { AudioUnlockNotice } from "./AudioDeck"
 import InputBox from "./InputBox"
 import NarrativeLog from "./NarrativeLog"
 import { PanelSidebar, PanelTray } from "./panels/PanelDeck"
@@ -35,6 +36,7 @@ export default function SessionView({ onMenu }: { onMenu?: () => void }) {
           </button>
         </header>
         <PanelNotice />
+        <AudioUnlockNotice />
         <ReportNotice />
         <TurnStatus />
         <NarrativeLog />

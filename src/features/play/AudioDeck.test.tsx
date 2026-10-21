@@ -19,9 +19,9 @@ vi.mock("./panels/assets", () => ({
 
 import "../../i18n"
 import { assetFetch, assetReadBase64 } from "./panels/assets"
-import { useAudioStore } from "../../store/audio"
+import { armGestureUnlock, useAudioStore } from "../../store/audio"
 import { useConnectionStore } from "../../store/connection"
-import AudioDeck from "./AudioDeck"
+import AudioDeck, { AudioUnlockNotice } from "./AudioDeck"
 
 const HASH_BGM = "a".repeat(64)
 const HASH_AMB = "b".repeat(64)
@@ -216,5 +216,146 @@ describe("AudioDeck load errors", () => {
       "title",
       "The bytes arrived, but this window could not decode them as playable audio.",
     )
+  })
+})
+
+describe("AudioDeck autoplay", () => {
+  let playSpy: ReturnType<typeof vi.spyOn>
+  let disarm: () => void = () => undefined
+
+  const refused = () => new DOMException("play() failed: no user gesture", "NotAllowedError")
+  const unlockButton = () => screen.queryAllByRole("button", { name: "Turn sound on" })
+
+  beforeEach(() => {
+    useAudioStore.getState().reset()
+    // The state of a window nobody has clicked yet.
+    useAudioStore.setState({ unlocked: false })
+    useConnectionStore.setState({
+      status: "online",
+      attempt: 0,
+      lastError: null,
+      welcome: {
+        type: "welcome",
+        protocol: "2.4",
+        room: "r1",
+        you: { id: "u1", name: "Nyx", role: "player" },
+        locale: "en",
+        server: "loreweaver/1",
+      },
+    })
+    vi.mocked(assetFetch).mockReset().mockResolvedValue(5)
+    vi.mocked(assetReadBase64).mockReset().mockResolvedValue("aGVsbG8=")
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/audio")
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+    playSpy = vi.spyOn(HTMLMediaElement.prototype, "play")
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined)
+    vi.spyOn(console, "warn").mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    disarm()
+    vi.restoreAllMocks()
+  })
+
+  it("plays a cue with no gesture at all when the webview allows it, and never shows the hint", async () => {
+    playSpy.mockResolvedValue(undefined)
+    act(() => play("bgm", HASH_BGM, "Tide"))
+    render(
+      <>
+        <AudioUnlockNotice />
+        <AudioDeck />
+      </>,
+    )
+
+    await vi.waitFor(() => expect(playSpy).toHaveBeenCalled())
+    // Let the (resolved) attempt settle before looking for a hint that must not be there.
+    await act(async () => undefined)
+    expect(unlockButton()).toHaveLength(0)
+    expect(screen.queryByRole("status")).toBeNull()
+    expect(useAudioStore.getState().unlocked).toBe(false)
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+  })
+
+  it("shows the hint, in the deck and above the chronicle, when the webview refuses", async () => {
+    playSpy.mockRejectedValue(refused())
+    act(() => play("bgm", HASH_BGM, "Tide"))
+    render(
+      <>
+        <AudioUnlockNotice />
+        <AudioDeck />
+      </>,
+    )
+
+    await vi.waitFor(() => expect(unlockButton()).toHaveLength(2))
+    // The cue is remembered, not dropped, and the row still names it.
+    expect(useAudioStore.getState().layers.bgm).toMatchObject({ playing: true, waitingForUnlock: true })
+    const bgm = screen.getByText("Music").closest(".audio-row") as HTMLElement
+    expect(within(bgm).getByText("Tide")).toBeInTheDocument()
+  })
+
+  it("starts a refused layer on the first gesture anywhere in the window", async () => {
+    playSpy.mockRejectedValueOnce(refused()).mockResolvedValue(undefined)
+    disarm = armGestureUnlock()
+    act(() => play("bgm", HASH_BGM, "Tide"))
+    render(<AudioDeck />)
+    await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
+    expect(playSpy).toHaveBeenCalledTimes(1)
+
+    // Not the deck's button — a click on the page body.
+    act(() => {
+      fireEvent.pointerDown(document.body)
+    })
+
+    await vi.waitFor(() => expect(playSpy).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(unlockButton()).toHaveLength(0))
+    expect(useAudioStore.getState().unlocked).toBe(true)
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+  })
+
+  it("starts it from the notice's own button too", async () => {
+    const user = userEvent.setup()
+    playSpy.mockRejectedValue(refused())
+    act(() => play("bgm", HASH_BGM, "Tide"))
+    // The player lives in the deck, so it is mounted beside the notice.
+    render(
+      <>
+        <AudioUnlockNotice />
+        <AudioDeck />
+      </>,
+    )
+    await vi.waitFor(() => expect(screen.getAllByRole("button", { name: "Turn sound on" })).toHaveLength(2))
+
+    playSpy.mockResolvedValue(undefined)
+    await user.click(screen.getAllByRole("button", { name: "Turn sound on" })[0])
+    await vi.waitFor(() => expect(unlockButton()).toHaveLength(0))
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+  })
+
+  it("does not call an interrupted play a refusal", async () => {
+    // An AbortError is a pause or a newer source cutting the attempt short,
+    // not the webview's policy — no hint for it.
+    playSpy.mockRejectedValue(new DOMException("interrupted by pause()", "AbortError"))
+    act(() => play("bgm", HASH_BGM, "Tide"))
+    render(<AudioDeck />)
+
+    await vi.waitFor(() => expect(playSpy).toHaveBeenCalled())
+    await act(async () => undefined)
+    expect(unlockButton()).toHaveLength(0)
+    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+  })
+
+  it("treats a synchronous throw from play() as a refusal", async () => {
+    playSpy.mockImplementation(() => {
+      throw refused()
+    })
+    act(() => play("bgm", HASH_BGM, "Tide"))
+    render(<AudioDeck />)
+
+    await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
+  })
+
+  it("shows no notice when nothing is waiting", () => {
+    const { container } = render(<AudioUnlockNotice />)
+    expect(container).toBeEmptyDOMElement()
   })
 })

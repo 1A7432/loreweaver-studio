@@ -10,10 +10,14 @@
 //
 // This store owns the STATE. The element that actually makes sound lives in the
 // player component: browsers tie playback to a user gesture, so an autoplay
-// attempt before the first interaction fails — silently, in most engines. That
-// is handled rather than ignored: `unlocked` starts false, the UI offers the
-// one click that flips it, and everything queued until then starts on that
-// click instead of being lost.
+// attempt before the first interaction can fail — silently, in most engines.
+// That is handled rather than ignored, and without guessing: the player ALWAYS
+// tries to play, and only when the webview refuses does the layer wait
+// (`waitingForUnlock`) and the UI say so. The first gesture anywhere in the
+// window (`armGestureUnlock`), or the one click on the notice, retries
+// everything that was waiting — nothing queued is lost. Gating on our own
+// "has the player clicked our button" flag instead left the sound off for
+// players whose webview would have allowed it all along.
 
 import { create } from "zustand"
 import type { AudioControlFrame, AudioLayer, AudioLayerState, ServerFrame } from "@loreweaver/protocol"
@@ -35,7 +39,7 @@ export interface LayerState extends AudioLayerState {
   muted: boolean
   /** Local volume 0..1, applied on top of the server's. */
   gain: number
-  /** Set when a play arrived before the webview would allow sound. */
+  /** Set when the webview refused to start this layer's sound. */
   waitingForUnlock: boolean
   /** Fetch/read/decode failure for THIS layer only. Null when the layer is
    * silent or the last load succeeded. A failure on one layer never writes
@@ -60,14 +64,17 @@ function emptyLayer(layer: AudioLayer): LayerState {
 
 interface AudioState {
   layers: Record<AudioLayer, LayerState>
-  /** False until a user gesture has let this webview make sound. */
+  /** False until a user gesture has been seen in this window. It does not gate
+   * playback — the player tries regardless; it only re-runs that attempt. */
   unlocked: boolean
   /** Master mute, over every layer. */
   muted: boolean
 
   ingest: (frame: ServerFrame) => boolean
-  /** Record the first user gesture: everything that was waiting starts. */
+  /** Record a user gesture: everything that was waiting is retried. */
   unlock: () => void
+  /** The webview refused to start this layer: remember the cue and say so. */
+  markBlocked: (layer: AudioLayer) => void
   setMuted: (muted: boolean) => void
   setLayerMuted: (layer: AudioLayer, muted: boolean) => void
   setLayerGain: (layer: AudioLayer, gain: number) => void
@@ -87,7 +94,7 @@ function initialLayers(): Record<AudioLayer, LayerState> {
  * `volume` is an adjustment, not a transport action: it must not start or stop
  * anything. Everything else moves `playing`, and `play` additionally replaces
  * which blob the layer is on. */
-export function applyControl(current: LayerState, frame: AudioControlFrame, unlocked: boolean): LayerState {
+export function applyControl(current: LayerState, frame: AudioControlFrame): LayerState {
   const next: LayerState = { ...current, layer: frame.layer }
   if (frame.volume !== undefined) next.volume = frame.volume
   if (frame.loop !== undefined) next.loop = frame.loop
@@ -101,10 +108,10 @@ export function applyControl(current: LayerState, frame: AudioControlFrame, unlo
         title: frame.title ?? next.title,
         playing: true,
         started_at: frame.server_ts ?? next.started_at,
-        // Remember the intent rather than dropping it: the browser will let us
-        // start after the first gesture, and a lost BGM cue is a scene the
-        // author staged that nobody heard.
-        waitingForUnlock: !unlocked,
+        // Optimistic: the player tries, and marks the layer waiting only if
+        // the webview refuses. A refused cue is remembered rather than dropped
+        // (a lost BGM cue is a scene the author staged that nobody heard).
+        waitingForUnlock: false,
         // A new play is a natural retry: drop a stale error on THIS layer
         // (only) and bump the epoch so the player refetches even when the
         // hash did not change.
@@ -116,7 +123,7 @@ export function applyControl(current: LayerState, frame: AudioControlFrame, unlo
     case "pause":
       return { ...next, playing: false, waitingForUnlock: false }
     case "resume":
-      return { ...next, playing: true, waitingForUnlock: !unlocked }
+      return { ...next, playing: true, waitingForUnlock: false }
     case "volume":
       return next
   }
@@ -133,7 +140,7 @@ export const useAudioStore = create<AudioState>()((set) => ({
         set((state) => ({
           layers: {
             ...state.layers,
-            [frame.layer]: applyControl(state.layers[frame.layer], frame, state.unlocked),
+            [frame.layer]: applyControl(state.layers[frame.layer], frame),
           },
         }))
         return true
@@ -156,7 +163,7 @@ export const useAudioStore = create<AudioState>()((set) => ({
             layers[wire.layer] = {
               ...local,
               ...wire,
-              waitingForUnlock: wire.playing && !state.unlocked,
+              waitingForUnlock: false,
               // A new blob is a fresh load; the same blob keeps a transient
               // error so a reconnect does not hide a failure the listener
               // has not retried. Other layers stay on emptyLayer (no error).
@@ -179,6 +186,16 @@ export const useAudioStore = create<AudioState>()((set) => ({
         layers[layer] = { ...layers[layer], waitingForUnlock: false }
       }
       return { unlocked: true, layers }
+    }),
+
+  markBlocked: (layer) =>
+    set((state) => {
+      const current = state.layers[layer]
+      // Already waiting (or stopped since): nothing to say, and no new object —
+      // the player's effect re-runs on every layer change, so a write here that
+      // changed nothing would feed straight back into another refused attempt.
+      if (!current.playing || current.waitingForUnlock) return state
+      return { layers: { ...state.layers, [layer]: { ...current, waitingForUnlock: true } } }
     }),
 
   setMuted: (muted) => set({ muted }),
@@ -213,6 +230,33 @@ export const useAudioStore = create<AudioState>()((set) => ({
 
   reset: () => set({ layers: initialLayers(), muted: false }),
 }))
+
+const GESTURE_EVENTS = ["pointerdown", "keydown"] as const
+
+let disarmGesture: (() => void) | null = null
+
+/** Unlock on the first real user gesture anywhere in the window.
+ *
+ * Capture phase, so nothing in the app can swallow it; once, so it removes
+ * itself after firing. A webview treats ANY gesture as user activation, which
+ * is why the audio card's own button is not the only way in. Idempotent while
+ * armed, and a no-op once a gesture has already been seen. Returns the
+ * disposer. */
+export function armGestureUnlock(): () => void {
+  if (disarmGesture !== null) return disarmGesture
+  if (useAudioStore.getState().unlocked) return () => undefined
+  const fire = () => {
+    disarm()
+    useAudioStore.getState().unlock()
+  }
+  const disarm = () => {
+    for (const type of GESTURE_EVENTS) window.removeEventListener(type, fire, true)
+    disarmGesture = null
+  }
+  for (const type of GESTURE_EVENTS) window.addEventListener(type, fire, true)
+  disarmGesture = disarm
+  return disarm
+}
 
 /** The effective volume for a layer: the server's level, the listener's own,
  * and both mutes. Kept out of the component so it is testable. */
