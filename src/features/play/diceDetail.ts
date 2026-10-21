@@ -13,6 +13,10 @@
 // the key and the key itself where it does not. A rule system that invents a
 // field tomorrow shows up tomorrow, unlabelled but present — which is the whole
 // point of a contract that says "may surface verbatim".
+//
+// One cluster is read as a whole, because four chips for one mechanic is noise:
+// the percentile bonus/penalty-die keys (`TensReroll`). It is claimed only when
+// every key is there and well formed — never half — so no key is ever dropped.
 
 import type { DiceFrame, DiceOutcome } from "@loreweaver/protocol"
 
@@ -29,6 +33,23 @@ export interface OpposedDetail {
   /** "" when the server did not say (never inferred from the totals: the rule
    * system decides ties and margins, and guessing would be a lie). */
   winner: "left" | "right" | "tie" | ""
+}
+
+/** The percentile bonus/penalty-die cluster, read as one thing.
+ *
+ * The engine's generic dice engine rolls a d100 as tens + ones, rolls |net|
+ * EXTRA tens dice, and keeps the best (bonus) or worst (penalty) tens. It
+ * reports that as `base_roll` (the d100 before the extra dice), `extra_tens`
+ * (the extra tens digits) and `final_tens` (the digit kept), beside the
+ * `bonus`/`penalty` counts the caller asked for. Four raw chips for one
+ * mechanic read as noise; together they are one sentence. */
+export interface TensReroll {
+  /** Dice asked for, 0 when the server did not say (a pack may name them otherwise). */
+  bonus: number
+  penalty: number
+  base: number
+  extra: number[]
+  final: number
 }
 
 export interface DetailChip {
@@ -58,6 +79,9 @@ const KNOWN_KEYS = new Set([
   "critical_failure",
   "mark",
   "stat_delta",
+  "base_roll",
+  "extra_tens",
+  "final_tens",
 ])
 
 /** Structural keys the layout renders itself — never repeated as a chip. */
@@ -110,8 +134,9 @@ function formatValue(value: unknown): string {
  * and the engine says so in the roll it publishes. Dropping those two zeroes
  * left the player watching a failed check roll 1d4 and lose nothing, with no
  * reason on screen — which is precisely what the engine's own comment says the
- * reason exists to prevent. */
-const MEANINGFUL_ZERO_KEYS = new Set(["remaining", "total", "loss", "loss_ceiling"])
+ * reason exists to prevent. `final_tens` is the same kind of reading: a kept
+ * tens digit of 0 is a roll of 01-09 (or 100), not a missing value. */
+const MEANINGFUL_ZERO_KEYS = new Set(["remaining", "total", "loss", "loss_ceiling", "final_tens"])
 
 /** Should this entry appear at all?
  *
@@ -130,12 +155,43 @@ function worthShowing(key: string, value: unknown): boolean {
 
 export interface DiceDetailReading {
   opposed: OpposedDetail | null
+  /** The bonus/penalty-die cluster, when ALL of its keys came and were well formed. */
+  tens: TensReroll | null
   chips: DetailChip[]
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
+/** The cluster is claimed only whole: `base_roll`, `extra_tens` and `final_tens`
+ * all present and numeric. A partial or malformed one is left alone, so its keys
+ * fall through to ordinary labelled chips — claiming it half-way would hide the
+ * keys that did arrive. The `bonus`/`penalty` counts join it when they are
+ * usable; otherwise they stay chips of their own. */
+function readTens(detail: Record<string, unknown>): { tens: TensReroll; claimed: Set<string> } | null {
+  const { base_roll: base, extra_tens: extra, final_tens: final } = detail
+  if (typeof base !== "number" || !Number.isFinite(base)) return null
+  if (typeof final !== "number" || !Number.isFinite(final)) return null
+  if (!Array.isArray(extra) || !extra.every((digit) => typeof digit === "number" && Number.isFinite(digit))) {
+    return null
+  }
+  const claimed = new Set(["base_roll", "extra_tens", "final_tens"])
+  const tens: TensReroll = { bonus: 0, penalty: 0, base, extra: extra as number[], final }
+  if (isCount(detail.bonus)) {
+    tens.bonus = detail.bonus
+    claimed.add("bonus")
+  }
+  if (isCount(detail.penalty)) {
+    tens.penalty = detail.penalty
+    claimed.add("penalty")
+  }
+  return { tens, claimed }
 }
 
 export function readDiceDetail(frame: DiceFrame): DiceDetailReading {
   const detail = isRecord(frame.detail) ? frame.detail : null
-  if (detail === null) return { opposed: null, chips: [] }
+  if (detail === null) return { opposed: null, tens: null, chips: [] }
 
   // The protocol names this shape for `kind:"opposed"`, and only there.
   const opposed: OpposedDetail | null =
@@ -147,9 +203,12 @@ export function readDiceDetail(frame: DiceFrame): DiceDetailReading {
         }
       : null
 
+  const cluster = readTens(detail)
+
   const chips: DetailChip[] = []
   for (const [key, value] of Object.entries(detail)) {
     if (opposed !== null && STRUCTURAL_KEYS.has(key)) continue
+    if (cluster?.claimed.has(key)) continue
     if (!worthShowing(key, value)) continue
     chips.push({
       key,
@@ -157,5 +216,5 @@ export function readDiceDetail(frame: DiceFrame): DiceDetailReading {
       value: formatValue(value),
     })
   }
-  return { opposed, chips }
+  return { opposed, tens: cluster?.tens ?? null, chips }
 }
