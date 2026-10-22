@@ -82,6 +82,9 @@ interface ConnectionState {
   refused: boolean
   connect: (params: DialParams, options?: ConnectOptions) => Promise<void>
   disconnect: () => Promise<void>
+  /** The player's Forget: drop the saved table, and the remember a dial still
+   * in flight would write on its welcome. */
+  forgetLastTable: () => void
   /** Single entry point for everything the Rust bridge emits. */
   handleEvent: (event: TransportEvent) => void
 }
@@ -198,6 +201,15 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     } catch {
       // A failed disconnect only means there was nothing to disconnect.
     }
+  },
+
+  forgetLastTable: () => {
+    // Forget is the later, explicit word. The connect screen keeps it live while
+    // a dial is in flight, and that dial's `{ remember: true }` would otherwise
+    // write the table straight back when its welcome lands — and the saved-table
+    // row would be back on the form after the next disconnect.
+    pendingRemember = null
+    useLastTableStore.getState().forget()
   },
 
   handleEvent: (event) => {

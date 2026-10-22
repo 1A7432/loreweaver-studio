@@ -14,6 +14,8 @@ vi.mock("../lib/transport", () => ({
 import { useAdminStore } from "./admin"
 import { usePanelsStore } from "./panels"
 import {
+  JOIN_REPLAY_STREAM_MAX_MS,
+  JOIN_REPLAY_TIMEOUT_MS,
   MAX_LOG_ENTRIES,
   MAX_STREAM_TEXT,
   PENDING_ECHO_TIMEOUT_MS,
@@ -584,9 +586,9 @@ describe("reconnect — the join replay rebuilds the log", () => {
   let ids = 0
 
   /** What the server sends a joining member: a fresh id on every line, every time. */
-  const replayLines = (lines: Line[]) => {
+  const replayLines = (lines: Line[], now?: number) => {
     for (const line of lines) {
-      if (line === "roll") ingest(ROLL)
+      if (line === "roll") ingest(ROLL, now)
       else {
         const [speaker, text] = line
         ingest(
@@ -595,6 +597,7 @@ describe("reconnect — the join replay rebuilds the log", () => {
             format: speaker === "kp" ? "markdown" : "plain",
             ...(speaker === "npc" ? { name: "Maren" } : {}),
           }),
+          now,
         )
       }
     }
@@ -709,9 +712,100 @@ describe("reconnect — the join replay rebuilds the log", () => {
   it("leaves a first join alone", () => {
     ingest(WELCOME)
     expect(useSessionStore.getState().entries).toEqual([])
-    expect(useSessionStore.getState().replay).toBeNull()
     join(TRANSCRIPT)
     expect(shown()).toEqual(EXPECTED)
+  })
+
+  // The window is what holds the input box (see InputBox), so a first join —
+  // nothing carried, nothing to rebuild — opens one too: its history is still
+  // arriving behind the welcome exactly as a reconnect's is.
+  it("opens the replay window on a first join, and the state frame closes it", () => {
+    ingest(WELCOME, 5_000)
+    expect(useSessionStore.getState().replay).toMatchObject({ carried: [], since: 5_000 })
+    replayLines(TRANSCRIPT)
+    expect(useSessionStore.getState().replay).not.toBeNull()
+    ingest(STATE)
+    expect(useSessionStore.getState().replay).toBeNull()
+    expect(shown()).toEqual(EXPECTED)
+  })
+
+  describe("a replay whose state frame never comes", () => {
+    const echo = (text: string) => useSessionStore.getState().echoLocalInput(text, "Nyx", 1_000)
+
+    it("waits out the timeout, then puts the carried lines back and closes the window", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME, 10_000)
+      replayLines(TRANSCRIPT)
+
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS - 1)
+      expect(useSessionStore.getState().replay).not.toBeNull()
+      expect(shown()).toEqual(EXPECTED)
+
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      expect(useSessionStore.getState().replay).toBeNull()
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
+    })
+
+    it("still lets no replayed line retire a carried one after the input stopped waiting", () => {
+      // Cursor Bugbot on #14: the timeout puts the carried lines back while the
+      // replay is still arriving; an OLD line with the same words must not
+      // retire the undelivered one.
+      join(TRANSCRIPT)
+      echo("I step onto the pier.")
+      ingest(WELCOME, 10_000)
+      replayLines(TRANSCRIPT.slice(0, 1), 10_500)
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      replayLines(TRANSCRIPT.slice(1), 10_000 + JOIN_REPLAY_TIMEOUT_MS + 1)
+      expect(shown()).toContain("undelivered: I step onto the pier.")
+      ingest(STATE, 10_000 + JOIN_REPLAY_TIMEOUT_MS + 2)
+      expect(useSessionStore.getState().replayStreamSince).toBeNull()
+      expect(shown()).toContain("undelivered: I step onto the pier.")
+    })
+
+    it("lets live lines retire held ones again once the replay has ended", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      expect(shown()).toContain("pending: I open the door.")
+      ingest(narrative("live-9", "I open the door.", { speaker: "player", name: "Nyx" }))
+      expect(shown()).not.toContain("pending: I open the door.")
+    })
+
+    it("still lets a line typed after the input was released be retired by its receipt", () => {
+      // Cursor Bugbot on #14 (second pass): the guard is for CARRIED lines only.
+      // The server reads this connection's input after the replay, so the
+      // receipt of a line typed here is live and must retire it as usual.
+      join(TRANSCRIPT)
+      ingest(WELCOME, 10_000)
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      echo("I open the door.")
+      expect(shown()).toContain("pending: I open the door.")
+      ingest(
+        narrative("live-11", "I open the door.", { speaker: "player", name: "Nyx" }),
+        10_000 + JOIN_REPLAY_TIMEOUT_MS + 1,
+      )
+      expect(shown()).not.toContain("pending: I open the door.")
+    })
+
+    it("stops sparing carried lines if the state frame never comes at all", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME, 10_000)
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      expect(shown()).toContain("undelivered: I open the door.")
+      ingest(
+        narrative("live-10", "I open the door.", { speaker: "player", name: "Nyx" }),
+        10_000 + JOIN_REPLAY_STREAM_MAX_MS,
+      )
+      expect(shown()).not.toContain("undelivered: I open the door.")
+    })
+
+    it("does nothing once the replay has ended normally", () => {
+      join(TRANSCRIPT)
+      const before = useSessionStore.getState().entries
+      useSessionStore.getState().expireReplay(Number.MAX_SAFE_INTEGER)
+      expect(useSessionStore.getState().entries).toBe(before)
+    })
   })
 
   it("keeps arrival order for the frames between the welcome and the end of the replay", () => {
@@ -755,6 +849,38 @@ describe("reconnect — the join replay rebuilds the log", () => {
       ingest(WELCOME)
       replayLines(TRANSCRIPT)
       ingest(STATE)
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
+    })
+
+    it("does not let an old-history partial replay pull the anchor back", () => {
+      join(TRANSCRIPT)
+      echo("I step onto the pier.")
+      ingest(WELCOME)
+      replayLines(TRANSCRIPT.slice(0, 1))
+      join(TRANSCRIPT)
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I step onto the pier."])
+    })
+
+    it("keeps the proof a partial replay gave when the link dies again before it ends", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      const delivered: Line[] = [...TRANSCRIPT, ["player", "I open the door."], ["kp", "The door gives way."]]
+      // The first redial's replay gets as far as the line itself, then dies.
+      ingest(WELCOME)
+      replayLines(delivered.slice(0, 6))
+      // The second redial replays the whole stretch; its newest anchor is now
+      // the very line that proved delivery.
+      join(delivered)
+      expect(shown()).toEqual([...EXPECTED, "player: I open the door.", "kp: The door gives way."])
+    })
+
+    it("still keeps a line a partial replay did not prove when the link dies again", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME)
+      // Only old history arrived — nothing after what was already seen.
+      replayLines(TRANSCRIPT.slice(0, 3))
+      join(TRANSCRIPT)
       expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
     })
 

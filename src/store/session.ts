@@ -26,6 +26,18 @@ export const MAX_STREAM_TEXT = 20_000
 export const TURN_BUSY_TIMEOUT_MS = 120_000
 /** How long an un-echoed local line waits before it is shown as undelivered. */
 export const PENDING_ECHO_TIMEOUT_MS = 120_000
+/** How long a join replay may hold the input box before the client stops waiting
+ * for the `state` frame that should have ended it (see `expireReplay`). Both
+ * carriers send that frame right after the replay with no lock in between, so
+ * this only fires on a lost frame or a replay slower than ten seconds; in the
+ * second case the replay's remaining lines land below the carried ones. That
+ * misorder is the accepted price of never leaving the player unable to type. */
+export const JOIN_REPLAY_TIMEOUT_MS = 10_000
+/** How long after a `welcome` a narrative frame is still taken to be part of
+ * the join replay when the `state` frame that ends it never arrives. Until then
+ * no line retires a carried line (see `replayStreamSince`); the bound only keeps a
+ * server that never sends the frame from switching echo retirement off for good. */
+export const JOIN_REPLAY_STREAM_MAX_MS = 120_000
 
 /**
  * A line this client sent and has not seen come back yet.
@@ -51,10 +63,14 @@ export interface PendingEcho {
   at: number
   /** The send itself failed, or nothing came back in time. */
   failed?: boolean
+  /** It rode a connection that died: set aside by `beginReplay`, it may only be
+   * retired by `settleReplay`'s proof while that connection's join replay is
+   * still streaming (see `retireEcho`). */
+  carried?: boolean
 }
 
 /**
- * What a reconnect is waiting on while the server's join replay runs.
+ * What a join is waiting on while the server's join replay runs.
  *
  * Every successful join — the first dial and every automatic redial after a
  * restart or a dropped link — is answered with a `welcome` and then a replay of
@@ -63,6 +79,10 @@ export interface PendingEcho {
  * not appended to. The one thing the replay cannot contain is a line this
  * client typed on the connection that has just died: those are set aside here,
  * out of the log the replay is rebuilding, and put back once it has ended.
+ *
+ * The window is open for EVERY join, carried lines or not, because it is also
+ * what holds the input box: a line typed while the history is still arriving
+ * would land in the middle of it (see `InputBox`).
  */
 interface ReplayWindow {
   /** Pending lines from the dead connection, oldest first, all marked undelivered. */
@@ -71,6 +91,8 @@ interface ReplayWindow {
   seen: ReplayedLine[]
   /** The narrative the replay (and anything flushed behind it) has delivered so far. */
   lines: ReplayedLine[]
+  /** Epoch ms of the welcome that opened the window, for the fallback. */
+  since: number
 }
 
 interface ReplayedLine {
@@ -124,9 +146,16 @@ function readRound(round: number | undefined): number | null {
 
 interface SessionState {
   entries: LogEntry[]
-  /** Open from a reconnect's `welcome` until the `state` frame that closes the
-   * server's join replay; `null` the rest of the time. */
+  /** Open from every `welcome` until the `state` frame that closes the server's
+   * join replay (or until `expireReplay` gives up on it); `null` the rest of the
+   * time. While it is open the input box holds the player's draft. */
   replay: ReplayWindow | null
+  /** Epoch ms of the `welcome` whose join replay is still streaming, `null` once
+   * its `state` frame has arrived. It outlives `replay`: when `expireReplay`
+   * gives up waiting and puts the carried lines back, the replay's remaining
+   * lines are still OLD, and an old line with the same words must not retire an
+   * undelivered one — only `settleReplay`'s narrow proof may. */
+  replayStreamSince: number | null
   game: StateFrame | null
   presence: PresenceFrame | null
   turn: TurnState
@@ -137,7 +166,8 @@ interface SessionState {
   /** Feed one validated server frame into the session. */
   ingest: (frame: ServerFrame, now?: number) => void
   /** Show a line this client just sent, until the table reflects it back.
-   * Returns the entry's seq, so the caller can fail it if the send throws. */
+   * Returns the entry's seq, so the caller can fail it if the send throws.
+   * Callers hold input while `replay` is open — see `InputBox`. */
   echoLocalInput: (text: string, speaker: string, now?: number) => number
   /** Mark one pending echo undelivered (the send itself failed). */
   failEcho: (seq: number) => void
@@ -152,6 +182,9 @@ interface SessionState {
   requestPackCards: () => void
   /** Clear a stale busy indicator once the safety timeout has elapsed. */
   expireTurnSafety: (now: number) => void
+  /** End a join replay whose closing `state` frame has not come within
+   * `JOIN_REPLAY_TIMEOUT_MS`, so the input box can never stay held. */
+  expireReplay: (now: number) => void
   clear: () => void
 }
 
@@ -252,12 +285,15 @@ function ingestInlineUi(entries: LogEntry[], frame: UiFrame): LogEntry[] {
  * match is that two players typing the identical sentence retire each other's
  * echo a beat early, which costs nobody anything: the real lines still arrive.
  */
-function retireEcho(entries: LogEntry[], frame: NarrativeFrame): LogEntry[] {
+function retireEcho(entries: LogEntry[], frame: NarrativeFrame, spareCarried = false): LogEntry[] {
   if (frame.speaker !== "player") return entries
   const text = frame.text.trim()
   const name = frame.name ?? ""
   const matches = (entry: LogEntry, seat: boolean): boolean =>
-    entry.kind === "pending" && entry.pending.text === text && (!seat || entry.pending.speaker === name)
+    entry.kind === "pending" &&
+    !(spareCarried && entry.pending.carried) &&
+    entry.pending.text === text &&
+    (!seat || entry.pending.speaker === name)
   let index = entries.findIndex((entry) => matches(entry, true))
   if (index === -1) index = entries.findIndex((entry) => matches(entry, false))
   return index === -1 ? entries : entries.filter((_, i) => i !== index)
@@ -306,31 +342,36 @@ function seenLines(entries: LogEntry[]): ReplayedLine[] {
 }
 
 /**
- * A `welcome` on a session that already has a log is a reconnect. The server is
- * about to replay its recent history from scratch, so everything the replay
- * will say again goes now (narrative, the dice and NPC lines, an open stream
- * draft) and the replay rebuilds it, exactly as a first join would. Whatever it
- * does NOT replay — the backstage lines, command replies, `ui` blocks, errors —
- * belongs to a transcript that no longer exists; kept, it would sit above the
- * replay out of order.
+ * Every `welcome` opens a join replay. On a session that already has a log it
+ * is a reconnect: the server is about to replay its recent history from
+ * scratch, so everything the replay will say again goes now (narrative, the
+ * dice and NPC lines, an open stream draft) and the replay rebuilds it, exactly
+ * as a first join would. Whatever it does NOT replay — the backstage lines,
+ * command replies, `ui` blocks, errors — belongs to a transcript that no longer
+ * exists; kept, it would sit above the replay out of order.
  *
  * What survives is the player's own un-echoed lines. They rode the connection
  * that died, so nothing here can say they arrived: they are marked undelivered
  * and set aside until the replay has finished (see `settleReplay`).
  */
-function beginReplay(state: SessionState): Partial<SessionState> {
-  if (state.entries.length === 0 && state.replay === null) return {}
+function beginReplay(state: SessionState, now: number): Partial<SessionState> {
   const carried = [
-    ...(state.replay?.carried ?? []),
+    // What a partial replay already proved delivered stays retired: the next
+    // window does not keep the lines that proof rested on.
+    ...(state.replay ? unproven(state.replay) : []),
     ...state.entries.flatMap((entry) =>
-      entry.kind === "pending" ? [{ ...entry, pending: { ...entry.pending, failed: true } }] : [],
+      entry.kind === "pending"
+        ? [{ ...entry, pending: { ...entry.pending, failed: true, carried: true } }]
+        : [],
     ),
   ]
-  if (carried.length === 0) return { entries: [], replay: null }
-  // A second welcome inside an open window means the link died mid-replay: what
-  // the first replay managed to deliver was seen too, and sits in `entries`.
-  const seen = [...seenLines(state.entries), ...(state.replay?.seen ?? [])]
-  return { entries: [], replay: { carried, seen, lines: [] } }
+  // A second welcome inside an open window means the link died mid-replay. What
+  // the client saw before the FIRST drop is still the newest transcript it knows;
+  // a replay re-sends old history first, so the partial replay's lines (in
+  // `entries`) rank after it. Put them first and an early cut pulls the anchor
+  // back to an old line, whose later twins would retire an unproven line.
+  const seen = [...(state.replay?.seen ?? []), ...seenLines(state.entries)]
+  return { entries: [], replay: { carried, seen, lines: [], since: now } }
 }
 
 /**
@@ -348,6 +389,11 @@ function beginReplay(state: SessionState): Partial<SessionState> {
  * `/roll …`) is never replayed, so it always stays: its fate is unknowable.
  */
 function settleReplay(entries: LogEntry[], window: ReplayWindow): LogEntry[] {
+  return [...entries, ...unproven(window)].slice(-MAX_LOG_ENTRIES)
+}
+
+/** The carried lines this window's replay has NOT proved delivered (see `settleReplay`). */
+function unproven(window: ReplayWindow): ReplayWindow["carried"] {
   const key = (line: ReplayedLine): string => JSON.stringify([line.speaker, line.text])
   const replayed = window.lines.map(key)
   const anchor = window.seen.map(key).find((candidate) => replayed.includes(candidate))
@@ -358,13 +404,12 @@ function settleReplay(entries: LogEntry[], window: ReplayWindow): LogEntry[] {
           .slice(replayed.lastIndexOf(anchor) + 1)
           .filter((line) => line.speaker === "player")
           .map((line) => line.text)
-  const survivors = window.carried.filter((entry) => {
+  return window.carried.filter((entry) => {
     const index = unseen.indexOf(entry.pending.text)
     if (index === -1) return true
     unseen.splice(index, 1)
     return false
   })
-  return [...entries, ...survivors].slice(-MAX_LOG_ENTRIES)
 }
 
 /** While a replay window is open, remember what the replay says. */
@@ -387,6 +432,7 @@ function upsertUiPanel(panels: UiPanelRegion[], frame: UiFrame): UiPanelRegion[]
 export const useSessionStore = create<SessionState>((set, get) => ({
   entries: [],
   replay: null,
+  replayStreamSince: null,
   game: null,
   presence: null,
   turn: IDLE_TURN,
@@ -410,11 +456,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // link), so the busy line goes too. The hub re-sends `busy` to a new
         // subscriber when a turn really is running, and that frame follows the
         // welcome — so nothing live is lost by clearing it here.
-        set((s) => ({ ...beginReplay(s), turn: IDLE_TURN }))
+        set((s) => ({ ...beginReplay(s, now), replayStreamSince: now, turn: IDLE_TURN }))
         return
       case "narrative":
         set((s) => ({
-          entries: ingestNarrative(retireEcho(s.entries, frame), frame),
+          // A replayed line is history: it never retires a CARRIED line, not even
+          // after `expireReplay` put the carried ones back into the log. A line
+          // typed on THIS connection is a different matter: the server reads it
+          // only after the replay, so its receipt is live and retires it as usual.
+          entries: ingestNarrative(
+            retireEcho(
+              s.entries,
+              frame,
+              s.replayStreamSince !== null && now - s.replayStreamSince < JOIN_REPLAY_STREAM_MAX_MS,
+            ),
+            frame,
+          ),
           replay: recordReplayed(s.replay, frame),
         }))
         return
@@ -446,11 +503,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // A `state` frame also ends a join replay: both carriers send the
         // snapshot right after it, behind the live frames the replay held.
         set((s) => {
-          if (frame.reset) return { game: frame, entries: [], replay: null }
+          if (frame.reset) return { game: frame, entries: [], replay: null, replayStreamSince: null }
           return {
             game: frame,
             entries: s.replay ? settleReplay(s.entries, s.replay) : s.entries,
             replay: null,
+            replayStreamSince: null,
           }
         })
         return
@@ -493,8 +551,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   echoLocalInput: (text, speaker, now = Date.now()) => {
     const seq = nextSeq
     set((s) => ({
-      // Typing ends the wait for a replay: the carried lines go back first, so
-      // the new line lands below them rather than above.
+      // The input box holds a draft while a replay runs, so this is only the
+      // backstop for a caller that sends anyway: the carried lines go back
+      // first, so at least the new line lands below them rather than above.
       entries: pushEntry(s.replay ? settleReplay(s.entries, s.replay) : s.entries, {
         kind: "pending",
         pending: { speaker, text, at: now },
@@ -556,6 +615,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((s) => (s.turn.busy && now - s.turn.since >= TURN_BUSY_TIMEOUT_MS ? { turn: IDLE_TURN } : s))
   },
 
+  expireReplay: (now) => {
+    // Every carrier sends the `state` snapshot right behind the replay, so this
+    // only fires against a server that never does: the log is as rebuilt as it
+    // will get, and the carried lines go back where the player can resend them.
+    set((s) =>
+      s.replay && now - s.replay.since >= JOIN_REPLAY_TIMEOUT_MS
+        ? { entries: settleReplay(s.entries, s.replay), replay: null }
+        : s,
+    )
+  },
+
   clear: () => {
     // Explicit new play session (connect calls this). Campaign wipe is
     // `state{reset:true}` and must not go through here — a keeper's last
@@ -566,6 +636,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       entries: [],
       replay: null,
+      replayStreamSince: null,
       game: null,
       presence: null,
       turn: IDLE_TURN,

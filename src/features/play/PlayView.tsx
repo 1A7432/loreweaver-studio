@@ -208,7 +208,7 @@ export default function PlayView() {
   const savedTicket = useLastTableStore((s) => s.ticket)
   const savedKey = useLastTableStore((s) => s.key)
   const savedName = useLastTableStore((s) => s.name)
-  const forgetSaved = useLastTableStore((s) => s.forget)
+  const forgetSaved = useConnectionStore((s) => s.forgetLastTable)
   const disconnect = useConnectionStore((s) => s.disconnect)
 
   // The form starts from the last table joined by hand, so a reload lands on

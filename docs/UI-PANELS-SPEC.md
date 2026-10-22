@@ -17,7 +17,7 @@ write JS).
 **Non-goals (permanent):** module code touching app chrome (connect screen, settings,
 keys — phishing surface); panel↔panel communication (coordination belongs in server-side
 hooks); network access from panels (anti-exfiltration); player-uploaded panels (panels
-arrive only via packs the keeper enables — the 拆卡 rule extended to UI).
+arrive only via packs the room admin enables — the 拆卡 rule extended to UI).
 
 ## The three tiers
 
@@ -48,7 +48,7 @@ input line, or any chrome.
 
 **A panel acts as the player viewing it.** Inbound it receives only that viewer's
 filtered data; outbound it can send only what that player could type. No new privilege
-surface exists; keeper-only actions stay on the command surface.
+surface exists; admin-only actions stay on the command surface.
 
 ## Pack format
 
@@ -124,8 +124,8 @@ Localized strings in templates: `{en,zh}` maps; client picks its locale (fallbac
 
 ## Room enablement
 
-Install ≠ enable holds. New keeper command **`.panels enable|disable|list <packId>`**
-(dual-dialect; keeper-gated like `.skill`), stored at `room_panels.{chat_key}`. The room
+Install ≠ enable holds. New admin command **`.panels enable|disable|list <packId>`**
+(dual-dialect; admin-gated like `.skill`), stored at `room_panels.{chat_key}`. The room
 manifest = enabled packs' installed `panels.yaml` files, resolved per viewer.
 
 ## Protocol v1.8 (all additive)
@@ -218,7 +218,7 @@ label/alt line.
 - Keeper-only panels never appear in a player's manifest (structural, not hidden-by-CSS).
 - Dice-first: `roll` intents go through the real dice engine as the viewing player.
 - Determinism: panels render and collect intent; every judgment stays server-side.
-- 拆卡: panels enter a room only via keeper-enabled installed packs.
+- 拆卡: panels enter a room only via admin-enabled installed packs.
 
 ## Phasing
 

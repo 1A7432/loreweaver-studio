@@ -844,6 +844,13 @@ button.npc-line-toggle {
   cursor: default;
 }
 
+/* The held-send state while a join replay rebuilds the log. */
+.input-syncing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* ---- Keeper's desk (state panel) ---- */
 
 .desk-stack {
