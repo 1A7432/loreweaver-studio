@@ -27,8 +27,16 @@ const MODAL: UiManifestPanel = {
   blocks: [{ kind: "text", text: { en: "the tide line" } }],
 }
 
+const { forgetLastTable } = useConnectionStore.getState()
+
 function reset() {
-  useConnectionStore.setState({ status: "offline", attempt: 0, lastError: null, welcome: null })
+  useConnectionStore.setState({
+    status: "offline",
+    attempt: 0,
+    lastError: null,
+    welcome: null,
+    forgetLastTable,
+  })
   useSessionStore.getState().clear()
   useLastTableStore.getState().forget()
 }
@@ -114,6 +122,17 @@ describe("PlayView", () => {
       expect(screen.getByLabelText(/server ticket/i)).toHaveValue("")
       expect(screen.getByLabelText(/access key/i)).toHaveValue("")
       expect(screen.queryByRole("button", { name: /reconnect to last table/i })).not.toBeInTheDocument()
+    })
+
+    it("forgets through the connection store, so a dial in flight cannot save the table back", async () => {
+      const forget = vi.fn()
+      useConnectionStore.setState({ status: "connecting", forgetLastTable: forget })
+      useLastTableStore.getState().remember(SAVED)
+      const user = userEvent.setup()
+      render(<PlayView />)
+      await user.click(screen.getByRole("button", { name: "Forget" }))
+      expect(forget).toHaveBeenCalledOnce()
+      expect(screen.getByLabelText(/server ticket/i)).toHaveValue("")
     })
 
     it("does not forget just because the player disconnected", () => {
