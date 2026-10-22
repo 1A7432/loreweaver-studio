@@ -117,6 +117,24 @@ describe("StatePanel — module variables (v1.6)", () => {
     expect(screen.getByText("休环月倒计时")).toHaveAttribute("title", "休环月倒计时")
   })
 
+  it("shows an enum's option name (v2.5 value_label), keeping the raw id as the tooltip", () => {
+    useSessionStore.getState().ingest({
+      type: "state",
+      party: [],
+      initiative: [],
+      online: 1,
+      variables: [
+        { id: "column_state", label: "队列", kind: "enum", value: "marching", value_label: "在道\u0007上" },
+        { id: "weather", label: "Weather", kind: "enum", value: "fog" },
+      ],
+    })
+    render(<StatePanel />)
+    expect(screen.getByText("在道上")).toHaveAttribute("title", "marching")
+    expect(screen.queryByText("marching")).not.toBeInTheDocument()
+    // No label on the wire (a pack that names nothing, a 2.4 server): the raw id, as before.
+    expect(screen.getByText("fog")).not.toHaveAttribute("title")
+  })
+
   it("dims and locks keeper-view hidden variables (v1.7 additive hidden:true)", () => {
     useSessionStore.getState().ingest({
       type: "state",
@@ -245,6 +263,61 @@ describe("PregenCard", () => {
     })
     render(<StatePanel />)
     expect(screen.getByText("claimed by tui:2600a9b1")).toBeInTheDocument()
+  })
+
+  it("names the claimer from the server's stored name (v2.5) before presence or id", () => {
+    useSessionStore.setState({
+      game: {
+        ...BASE,
+        pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1", claimed_by_name: "As\u001bh" }],
+      },
+    })
+    // The claimer is offline — presence does not know them — yet they are still named.
+    present([{ id: "u1", name: "Nyx", online: true }])
+    render(<StatePanel />)
+    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
+    expect(screen.queryByText(/tui:2600a9b1/)).not.toBeInTheDocument()
+  })
+
+  it("falls back past a stored claimer name made only of control characters", () => {
+    useSessionStore.setState({
+      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "u2", claimed_by_name: "\u001b" }] },
+    })
+    present([{ id: "u2", name: "Nyx", online: true }])
+    render(<StatePanel />)
+    expect(screen.getByText("claimed by Nyx")).toBeInTheDocument()
+  })
+
+  it("still decides 'yours' by member id, whatever name the claim carries", () => {
+    useSessionStore.setState({
+      game: {
+        ...BASE,
+        pregens: [
+          { name: "白榆生", claimed_by: "u1", claimed_by_name: "an old name" },
+          { name: "陈九鲤", claimed_by: "u2", claimed_by_name: "Nyx" },
+        ],
+      },
+    })
+    render(<StatePanel />)
+    expect(screen.getAllByText("yours")).toHaveLength(1)
+    expect(screen.getByText("claimed by Nyx")).toBeInTheDocument()
+  })
+
+  it("shows each pregen's player-facing blurb (v2.5), stripped of control characters", () => {
+    useSessionStore.setState({
+      game: {
+        ...BASE,
+        pregens: [
+          { name: "林晚", claimed_by: "", blurb: "A courier who\u0007 knows the old roads" },
+          { name: "白榆生", claimed_by: "", blurb: "  " },
+          { name: "陈九鲤", claimed_by: "" },
+          { name: "关五", claimed_by: "", blurb: "\u0007\u001b" },
+        ],
+      },
+    })
+    const { container } = render(<StatePanel />)
+    expect(screen.getByText("A courier who knows the old roads")).toHaveClass("pregen-blurb")
+    expect(container.querySelectorAll(".pregen-blurb")).toHaveLength(1)
   })
 
   it("shows nothing when the module ships no cast", () => {
@@ -513,5 +586,30 @@ describe("keeper variable writes", () => {
     await userEvent.click(screen.getAllByRole("button", { name: "Set" })[0])
     expect(sent).toContainEqual({ type: "input", text: ".var set fear 8" })
     expect(field).toHaveValue("")
+  })
+
+  it("shows the keeper the raw option id where they type, not its display name (v2.5)", async () => {
+    connect("keeper")
+    useSessionStore.setState({
+      game: {
+        ...GAME,
+        variables: [
+          {
+            id: "column_state",
+            label: "Column",
+            kind: "enum" as const,
+            value: "marching",
+            value_label: "On the road",
+          },
+        ],
+      },
+    })
+    render(<StatePanel />)
+    await userEvent.click(screen.getByRole("button", { name: "Write" }))
+    const field = screen.getByLabelText("Set Column")
+    expect(field).toHaveAttribute("placeholder", "marching")
+    expect(field).toHaveAttribute("title", "marching")
+    await userEvent.type(field, "camped{Enter}")
+    expect(sent).toContainEqual({ type: "input", text: ".var set column_state camped" })
   })
 })

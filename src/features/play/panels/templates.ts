@@ -67,9 +67,7 @@ function isLeafBinding(value: unknown): value is { $leaf: string } {
  * §5.1 rule 7) an entry carrying a non-empty `value_label` shows that label;
  * everywhere else — numbers, tones, `visible_when` — it is the raw `value`. */
 function shownValue(entry: ModuleVariable, display: boolean): unknown {
-  // Read structurally: the pinned protocol package is still 2.4, whose
-  // ModuleVariable has no `value_label` yet (the 2.5 pin bump types it).
-  const label = (entry as ModuleVariable & { value_label?: unknown }).value_label
+  const label = entry.value_label
   return display && typeof label === "string" && label ? label : entry.value
 }
 

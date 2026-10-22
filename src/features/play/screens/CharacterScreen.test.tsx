@@ -142,6 +142,33 @@ describe("CharacterScreen — editing", () => {
     expect(sent).toEqual([{ type: "input", text: ".st 力量=70" }])
   })
 
+  it("shows each attribute by its display name (v2.5) but writes the raw key", async () => {
+    useSessionStore.getState().ingest(
+      stateFrame({
+        character: {
+          ...SHEET,
+          attributes: { APP: 50, constructor: 7, STR: 40 },
+          attribute_labels: { APP: "外\u0007貌", STR: "" },
+        },
+      }),
+    )
+    render(<CharacterScreen onBack={() => {}} />)
+
+    const name = screen.getByText("外貌")
+    expect(name).toHaveAttribute("title", "APP")
+    expect(screen.queryByText("APP")).not.toBeInTheDocument()
+    // No usable label — an empty one, or a key the map does not own (a plain-object
+    // lookup of `constructor` would find an inherited function): the key, as before.
+    expect(screen.getByText("STR")).not.toHaveAttribute("title")
+    expect(screen.getByText("constructor")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "50" }))
+    const box = screen.getByLabelText("外貌")
+    await userEvent.clear(box)
+    await userEvent.type(box, "65{Enter}")
+    expect(sent).toEqual([{ type: "input", text: ".st APP=65" }])
+  })
+
   it("edits through a text box, because pasting into a number box took the app down", async () => {
     // Three times out of three, ⌘V into this field reloaded the whole WebView and dropped
     // the table (2026-08-20 play-test) — a crash below our floor, in WebKit's native paste

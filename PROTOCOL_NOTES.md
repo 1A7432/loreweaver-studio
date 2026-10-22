@@ -39,6 +39,27 @@ pc`, `world` → the keeper-only `.import <ref> world`. Before it existed the st
 > side re-checks it, refusing rather than repairing. The reveal edition wears a spoiler
 > badge and warning.
 
+> **Update — protocol 2.5 (display labels), 2026-10-22.** The wire now carries a display
+> name BESIDE each raw id the studio used to print: `value_label` on an `enum` entry of
+> `state.variables`, `state.character.attribute_labels`, `subsystem_label` on `dice`, and
+> `blurb` / `claimed_by_name` on `state.pregens` entries. The studio pins
+> `npm:loreweaver-protocol@2.5.0`. Every label is display-only; whatever WRITES keeps the
+> raw id: the tracker row shows the option name with the id as its tooltip, while the
+> keeper's write field keeps the id as placeholder and `.var set` sends what was typed;
+> the character screen names `APP` as "外貌" (the key stays the tooltip, the React key and
+> the `.st APP=<n>` write); the dice chip shows the subsystem's name, drops the forced
+> uppercase that only suited ids, and is left out when it would repeat the roll's own
+> `expr` (the engine already writes a SAN check's `expr` as "理智"); the pregen roster
+> shows each card's player-facing blurb and names a claimer from `claimed_by_name`, then
+> presence, then the id, while "yours" is still decided by member id. Panel templates
+> follow LWF panels §5.1 rule 7 (a `$var` / repeat `$leaf: value` binding that is
+> DISPLAYED shows `value_label`; `visible_when`, tones and numbers read the raw value),
+> with `fixtures/panel_template_vectors.json` refreshed from the engine byte for byte;
+> tier-2 panels get the new fields through the bridge unchanged. The forge has no editor
+> for a card's `option_labels`, but now carries an imported enum's value verbatim, so a
+> lorecard round trip no longer drops it. Item 4 below is half answered: an enum shows
+> its current option's name, and still has no options list.
+
 > **Update — the major-version check.** The shared package grew the compatibility
 > predicate (`protocolMajor` / `protocolMismatch`) on 2026-08-08, hours after 2.1.0 was
 > published; **2.1.1** carries it, and the studio pins that. The studio REFUSES a
@@ -103,6 +124,8 @@ pc`, `world` → the keeper-only `.import <ref> world`. Before it existed the st
    the full options set. A client can therefore display an enum tracker but never offer
    a picker. If enum trackers are ever meant to be interactive (or even just show the
    space of values), v1.8 could add an optional `options?: string[]` to the entry.
+   (2.5 added `value_label`, the current option's display name; the options list is
+   still absent.)
 
 5. **`ui` sidebar frames without an `id`.** The spec defines replacement per id but not
    the key of an id-less sidebar frame. We treat all id-less sidebar frames as one

@@ -149,6 +149,34 @@ describe("projectStateForPanel", () => {
     expect(snapshot && "reset" in snapshot).toBe(false)
     expect(projectStateForPanel(null)).toBeNull()
   })
+
+  it("passes the 2.5 display labels through untouched", () => {
+    const character = {
+      name: "Lin",
+      system: "coc7",
+      resources: [],
+      attributes: { APP: 50 },
+      attribute_labels: { APP: "外貌" },
+      status_effects: [],
+    }
+    const frame = {
+      type: "state",
+      party: [],
+      initiative: [],
+      online: 1,
+      character,
+      variables: [
+        { id: "column_state", label: "队列", kind: "enum", value: "marching", value_label: "在道上" },
+      ],
+      pregens: [{ name: "林晚", claimed_by: "u2", claimed_by_name: "Ash", blurb: "A courier" }],
+    } as unknown as StateFrame
+    const snapshot = projectStateForPanel(frame)
+    expect(snapshot?.variables[0].value_label).toBe("在道上")
+    expect(snapshot?.character).toEqual(character)
+    expect(snapshot?.pregens).toEqual([
+      { name: "林晚", claimed_by: "u2", claimed_by_name: "Ash", blurb: "A courier" },
+    ])
+  })
 })
 
 describe("host-injected assets", () => {

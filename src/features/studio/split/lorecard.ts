@@ -313,6 +313,9 @@ function specToForgeVariable(raw: unknown, index: number, warnings: string[]): F
     variable.defaultValue = String(fallback)
   } else variable.defaultValue = asText(fallback)
   variable.options = textList(raw.options).join("\n")
+  // Option display names (protocol 2.5) have no forge editor: keep the card's own
+  // value untouched so exporting the project again writes it back unchanged.
+  if (isRecord(raw.option_labels)) variable.optionLabels = raw.option_labels
   return variable
 }
 

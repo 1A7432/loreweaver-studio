@@ -18,7 +18,7 @@
 // the percentile bonus/penalty-die keys (`TensReroll`). It is claimed only when
 // every key is there and well formed — never half — so no key is ever dropped.
 
-import type { DiceFrame, DiceOutcome } from "@loreweaver/protocol"
+import { stripControlChars, type DiceFrame, type DiceOutcome } from "@loreweaver/protocol"
 
 export interface OpposedSide {
   name: string
@@ -217,4 +217,16 @@ export function readDiceDetail(frame: DiceFrame): DiceDetailReading {
     })
   }
   return { opposed, tens: cluster?.tens ?? null, chips }
+}
+
+/** The subsystem chip's text: the rulepack's display name (`subsystem_label`,
+ * protocol 2.5), else the raw id — or nothing when it would only repeat the roll's
+ * own expression. The engine already writes a subsystem roll's `expr` as the
+ * localized stat ("理智"), so a chip saying the same word reads as a stutter. */
+export function subsystemChipText(frame: DiceFrame): string {
+  const pick = (value: unknown): string => (typeof value === "string" ? stripControlChars(value).trim() : "")
+  const text = pick(frame.subsystem_label) || pick(frame.subsystem)
+  if (!text) return ""
+  const expr = pick(frame.expr)
+  return text.toLocaleLowerCase() === expr.toLocaleLowerCase() ? "" : text
 }
