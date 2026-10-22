@@ -334,7 +334,9 @@ function seenLines(entries: LogEntry[]): ReplayedLine[] {
  */
 function beginReplay(state: SessionState, now: number): Partial<SessionState> {
   const carried = [
-    ...(state.replay?.carried ?? []),
+    // What a partial replay already proved delivered stays retired: the next
+    // replay anchors on the newer lines it showed, so the proof would be lost.
+    ...(state.replay ? unproven(state.replay) : []),
     ...state.entries.flatMap((entry) =>
       entry.kind === "pending" ? [{ ...entry, pending: { ...entry.pending, failed: true } }] : [],
     ),
@@ -360,6 +362,11 @@ function beginReplay(state: SessionState, now: number): Partial<SessionState> {
  * `/roll …`) is never replayed, so it always stays: its fate is unknowable.
  */
 function settleReplay(entries: LogEntry[], window: ReplayWindow): LogEntry[] {
+  return [...entries, ...unproven(window)].slice(-MAX_LOG_ENTRIES)
+}
+
+/** The carried lines this window's replay has NOT proved delivered (see `settleReplay`). */
+function unproven(window: ReplayWindow): ReplayWindow["carried"] {
   const key = (line: ReplayedLine): string => JSON.stringify([line.speaker, line.text])
   const replayed = window.lines.map(key)
   const anchor = window.seen.map(key).find((candidate) => replayed.includes(candidate))
@@ -370,13 +377,12 @@ function settleReplay(entries: LogEntry[], window: ReplayWindow): LogEntry[] {
           .slice(replayed.lastIndexOf(anchor) + 1)
           .filter((line) => line.speaker === "player")
           .map((line) => line.text)
-  const survivors = window.carried.filter((entry) => {
+  return window.carried.filter((entry) => {
     const index = unseen.indexOf(entry.pending.text)
     if (index === -1) return true
     unseen.splice(index, 1)
     return false
   })
-  return [...entries, ...survivors].slice(-MAX_LOG_ENTRIES)
 }
 
 /** While a replay window is open, remember what the replay says. */
