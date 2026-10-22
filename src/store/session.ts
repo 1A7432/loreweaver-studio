@@ -27,7 +27,11 @@ export const TURN_BUSY_TIMEOUT_MS = 120_000
 /** How long an un-echoed local line waits before it is shown as undelivered. */
 export const PENDING_ECHO_TIMEOUT_MS = 120_000
 /** How long a join replay may hold the input box before the client stops waiting
- * for the `state` frame that should have ended it (see `expireReplay`). */
+ * for the `state` frame that should have ended it (see `expireReplay`). Both
+ * carriers send that frame right after the replay with no lock in between, so
+ * this only fires on a lost frame or a replay slower than ten seconds; in the
+ * second case the replay's remaining lines land below the carried ones. That
+ * misorder is the accepted price of never leaving the player unable to type. */
 export const JOIN_REPLAY_TIMEOUT_MS = 10_000
 
 /**
@@ -335,15 +339,18 @@ function seenLines(entries: LogEntry[]): ReplayedLine[] {
 function beginReplay(state: SessionState, now: number): Partial<SessionState> {
   const carried = [
     // What a partial replay already proved delivered stays retired: the next
-    // replay anchors on the newer lines it showed, so the proof would be lost.
+    // window does not keep the lines that proof rested on.
     ...(state.replay ? unproven(state.replay) : []),
     ...state.entries.flatMap((entry) =>
       entry.kind === "pending" ? [{ ...entry, pending: { ...entry.pending, failed: true } }] : [],
     ),
   ]
-  // A second welcome inside an open window means the link died mid-replay: what
-  // the first replay managed to deliver was seen too, and sits in `entries`.
-  const seen = [...seenLines(state.entries), ...(state.replay?.seen ?? [])]
+  // A second welcome inside an open window means the link died mid-replay. What
+  // the client saw before the FIRST drop is still the newest transcript it knows;
+  // a replay re-sends old history first, so the partial replay's lines (in
+  // `entries`) rank after it. Put them first and an early cut pulls the anchor
+  // back to an old line, whose later twins would retire an unproven line.
+  const seen = [...(state.replay?.seen ?? []), ...seenLines(state.entries)]
   return { entries: [], replay: { carried, seen, lines: [], since: now } }
 }
 
