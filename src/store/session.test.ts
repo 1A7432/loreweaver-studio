@@ -797,6 +797,15 @@ describe("reconnect — the join replay rebuilds the log", () => {
       expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
     })
 
+    it("does not let an old-history partial replay pull the anchor back", () => {
+      join(TRANSCRIPT)
+      echo("I step onto the pier.")
+      ingest(WELCOME)
+      replayLines(TRANSCRIPT.slice(0, 1))
+      join(TRANSCRIPT)
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I step onto the pier."])
+    })
+
     it("keeps the proof a partial replay gave when the link dies again before it ends", () => {
       join(TRANSCRIPT)
       echo("I open the door.")
