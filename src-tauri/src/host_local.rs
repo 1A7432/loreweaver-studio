@@ -583,13 +583,24 @@ where
 
 /// Poll the keeper sidecar without touching the stderr reader.
 async fn await_sidecar_key(path: &Path, attempts: u32, delay: Duration) -> Option<String> {
+    poll_sidecar_key(path, attempts, || tokio::time::sleep(delay)).await
+}
+
+/// [`await_sidecar_key`] with the wait between misses injected: production
+/// sleeps `delay`, a test uses the pause to act at an exact point (after the
+/// first miss) instead of racing a wall-clock budget.
+async fn poll_sidecar_key<P, F>(path: &Path, attempts: u32, mut pause: P) -> Option<String>
+where
+    P: FnMut() -> F,
+    F: std::future::Future<Output = ()>,
+{
     for _ in 0..attempts {
         if let Ok(text) = tokio::fs::read_to_string(path).await {
             if let Some(key) = parse_sidecar_key(&text) {
                 return Some(key);
             }
         }
-        tokio::time::sleep(delay).await;
+        pause().await;
     }
     None
 }
@@ -1032,10 +1043,10 @@ pub async fn host_local_status(
 #[cfg(test)]
 mod tests {
     use super::{
-        await_sidecar_key, drain_lines, extract_ticket, host_id_is_current, is_live,
-        monitor_child_exit, parse_sha256_sidecar, parse_sidecar_key, resolve_host_id,
-        resolve_paths, take_for_stop, try_observe_exit, wait_readiness_timeout, Hosted, Inner,
-        ObserveExit, TicketScan, TICKET_SCAN_CAP,
+        drain_lines, extract_ticket, host_id_is_current, is_live, monitor_child_exit,
+        parse_sha256_sidecar, parse_sidecar_key, poll_sidecar_key, resolve_host_id, resolve_paths,
+        take_for_stop, try_observe_exit, wait_readiness_timeout, Hosted, Inner, ObserveExit,
+        TicketScan, TICKET_SCAN_CAP,
     };
     use std::process::Stdio;
     use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -1148,15 +1159,19 @@ mod tests {
         ));
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let path = dir.join("keeper-key.txt");
-        let writer = path.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(30)).await;
-            tokio::fs::write(writer, "room=table\nkey=UHEYQm7dvCvNujUglSaj8Px-\n")
-                .await
-                .unwrap();
-        });
-        let key = await_sidecar_key(&path, 20, Duration::from_millis(10)).await;
+        // The key lands in the pause after the first read, which found no
+        // file: the waiter must see it on a later poll.
+        let misses = std::cell::Cell::new(0u32);
+        let key = poll_sidecar_key(&path, 20, || {
+            misses.set(misses.get() + 1);
+            if misses.get() == 1 {
+                std::fs::write(&path, "room=table\nkey=UHEYQm7dvCvNujUglSaj8Px-\n").unwrap();
+            }
+            std::future::ready(())
+        })
+        .await;
         let _ = tokio::fs::remove_dir_all(&dir).await;
+        assert_eq!(misses.get(), 1, "exactly one miss before the key was read");
         assert_eq!(key.as_deref(), Some("UHEYQm7dvCvNujUglSaj8Px-"));
     }
 
