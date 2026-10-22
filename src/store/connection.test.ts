@@ -667,6 +667,31 @@ describe("remembering a hand-dialed table", () => {
     expect(useLastTableStore.getState().key).toBe("k-1")
   })
 
+  it("lets Forget win over a remembered dial that is still in flight", async () => {
+    useLastTableStore.getState().remember({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
+    // Reconnect to the saved table, then Forget it before the handshake lands.
+    await dial("gen-forget", true)
+    useConnectionStore.getState().forgetLastTable()
+    expect(useLastTableStore.getState()).toMatchObject({ ticket: "", key: "", name: "" })
+
+    handle({ kind: "frame", connectionId: "gen-forget", frame: WELCOME })
+    expect(useConnectionStore.getState().welcome).not.toBeNull()
+    expect(useLastTableStore.getState()).toMatchObject({ ticket: "", key: "", name: "" })
+
+    // The link drops: the connect screen comes back with no saved table on it.
+    handle({ kind: "status", connectionId: "gen-forget", status: "offline", attempt: 0 })
+    expect(useLastTableStore.getState()).toMatchObject({ ticket: "", key: "", name: "" })
+    expect(JSON.parse(localStorage.getItem("loreweaver-studio-last-table")!).state.key).toBe("")
+  })
+
+  it("still remembers a table dialed AFTER a Forget", async () => {
+    await dial("gen-before", true)
+    useConnectionStore.getState().forgetLastTable()
+    await dial("gen-after", true)
+    handle({ kind: "frame", connectionId: "gen-after", frame: WELCOME })
+    expect(useLastTableStore.getState()).toMatchObject({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
+  })
+
   it("keeps the saved table when the dial times out: a stale address is not a bad table", async () => {
     useLastTableStore.getState().remember({ ticket: "endpointabc123", key: "k-1", name: "Nyx" })
     await dial("gen-i", true)
