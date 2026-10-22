@@ -23,6 +23,9 @@
 //! (a failed write also trips a redial). Pending waiters are settled if the
 //! actor exits or the handle is dropped.
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -62,6 +65,53 @@ impl Default for Timeouts {
         Self {
             dial: DIAL_TIMEOUT,
             join: JOIN_TIMEOUT,
+        }
+    }
+}
+
+/// Which per-attempt bound a [`DeadlineFn`] is asked to arm.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    Dial,
+    Join,
+}
+
+/// A deadline future: the bound fires when it resolves.
+#[doc(hidden)]
+pub type Deadline = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// Test-only: arms the bound for one attempt (`0` is the first dial, `n` the
+/// n-th redial). Production sleeps the [`Timeouts`] duration; an integration
+/// test passes its own so a deadline fires exactly when the test says — after
+/// the event it is sequenced on — rather than whenever a loaded runner's wall
+/// clock gets there.
+#[doc(hidden)]
+pub type DeadlineFn = Arc<dyn Fn(Bound, u32) -> Deadline + Send + Sync>;
+
+/// The per-attempt bounds an actor runs under: the durations (which also word
+/// the timeout detail) and, in tests only, who decides when they fire.
+#[derive(Clone)]
+struct Bounds {
+    timeouts: Timeouts,
+    arm: Option<DeadlineFn>,
+}
+
+impl Bounds {
+    fn wall_clock(timeouts: Timeouts) -> Self {
+        Self {
+            timeouts,
+            arm: None,
+        }
+    }
+
+    fn arm(&self, bound: Bound, attempt: u32) -> Deadline {
+        match &self.arm {
+            Some(arm) => arm(bound, attempt),
+            None => Box::pin(tokio::time::sleep(match bound {
+                Bound::Dial => self.timeouts.dial,
+                Bound::Join => self.timeouts.join,
+            })),
         }
     }
 }
@@ -229,7 +279,7 @@ impl ClientHandle {
 
 /// Spawn the connection actor on the current tokio runtime.
 pub fn connect(params: ConnectParams) -> (ClientHandle, mpsc::UnboundedReceiver<TransportEvent>) {
-    spawn_actor(params, Timeouts::default(), None)
+    spawn_actor(params, Bounds::wall_clock(Timeouts::default()), None)
 }
 
 /// Test-only: same as [`connect`] with the per-attempt bounds replaced, and
@@ -245,7 +295,29 @@ pub fn connect_with_timeouts(
     mpsc::UnboundedReceiver<()>,
 ) {
     let (pulse_tx, pulse_rx) = mpsc::unbounded_channel();
-    let (handle, events) = spawn_actor(params, timeouts, Some(pulse_tx));
+    let (handle, events) = spawn_actor(params, Bounds::wall_clock(timeouts), Some(pulse_tx));
+    (handle, events, pulse_rx)
+}
+
+/// Test-only: same as [`connect_with_timeouts`], but `arm` decides when each
+/// per-attempt bound fires instead of the wall clock. `timeouts` only words
+/// the timeout detail. Hidden from rustdoc for the same reason.
+#[doc(hidden)]
+pub fn connect_with_deadlines(
+    params: ConnectParams,
+    timeouts: Timeouts,
+    arm: DeadlineFn,
+) -> (
+    ClientHandle,
+    mpsc::UnboundedReceiver<TransportEvent>,
+    mpsc::UnboundedReceiver<()>,
+) {
+    let (pulse_tx, pulse_rx) = mpsc::unbounded_channel();
+    let bounds = Bounds {
+        timeouts,
+        arm: Some(arm),
+    };
+    let (handle, events) = spawn_actor(params, bounds, Some(pulse_tx));
     (handle, events, pulse_rx)
 }
 
@@ -263,18 +335,22 @@ pub fn connect_with_backoff_pulse(
     mpsc::UnboundedReceiver<()>,
 ) {
     let (pulse_tx, pulse_rx) = mpsc::unbounded_channel();
-    let (handle, events) = spawn_actor(params, Timeouts::default(), Some(pulse_tx));
+    let (handle, events) = spawn_actor(
+        params,
+        Bounds::wall_clock(Timeouts::default()),
+        Some(pulse_tx),
+    );
     (handle, events, pulse_rx)
 }
 
 fn spawn_actor(
     params: ConnectParams,
-    timeouts: Timeouts,
+    bounds: Bounds,
     backoff_pulse: Option<mpsc::UnboundedSender<()>>,
 ) -> (ClientHandle, mpsc::UnboundedReceiver<TransportEvent>) {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
-    tokio::spawn(run(params, timeouts, event_tx, cmd_rx, backoff_pulse));
+    tokio::spawn(run(params, bounds, event_tx, cmd_rx, backoff_pulse));
     (ClientHandle { cmd: cmd_tx }, event_rx)
 }
 
@@ -398,7 +474,7 @@ enum SessionOutcome {
 
 async fn run(
     params: ConnectParams,
-    timeouts: Timeouts,
+    bounds: Bounds,
     events: mpsc::UnboundedSender<TransportEvent>,
     mut cmds: mpsc::UnboundedReceiver<Command>,
     backoff_pulse: Option<mpsc::UnboundedSender<()>>,
@@ -448,7 +524,7 @@ async fn run(
             &events,
             &mut cmds,
             &mut backoff,
-            &timeouts,
+            &|bound| bounds.arm(bound, attempt),
         )
         .await
         {
@@ -464,7 +540,7 @@ async fn run(
                 ever_online |= settled;
                 if !ever_online {
                     tracing::debug!(?why, "first attempt failed; not redialing");
-                    let _ = events.send(why.into_offline(&timeouts));
+                    let _ = events.send(why.into_offline(&bounds.timeouts));
                     break;
                 }
                 if !settled {
@@ -562,7 +638,7 @@ async fn dial(
     addr: iroh::EndpointAddr,
     params: &ConnectParams,
     cmds: &mut mpsc::UnboundedReceiver<Command>,
-    limit: Duration,
+    deadline: Deadline,
 ) -> DialOutcome {
     let handshake = async {
         let conn = endpoint
@@ -585,7 +661,6 @@ async fn dial(
         Ok::<_, String>(Dialed { conn, send, recv })
     };
     tokio::pin!(handshake);
-    let deadline = tokio::time::sleep(limit);
     tokio::pin!(deadline);
 
     loop {
@@ -615,13 +690,14 @@ async fn session(
     events: &mpsc::UnboundedSender<TransportEvent>,
     cmds: &mut mpsc::UnboundedReceiver<Command>,
     backoff: &mut Backoff,
-    timeouts: &Timeouts,
+    arm: &(dyn Fn(Bound) -> Deadline + Sync),
 ) -> SessionOutcome {
+    let dial_deadline = arm(Bound::Dial);
     let Dialed {
         conn,
         mut send,
         mut recv,
-    } = match dial(endpoint, addr, params, cmds, timeouts.dial).await {
+    } = match dial(endpoint, addr, params, cmds, dial_deadline).await {
         DialOutcome::Ready(dialed) => dialed,
         DialOutcome::Failed(why) => {
             tracing::debug!(?why, "dial failed");
@@ -635,12 +711,12 @@ async fn session(
 
     let mut decoder = LineDecoder::new();
     let mut settled = false;
-    let join_deadline = Instant::now() + timeouts.join;
+    let mut join_deadline = arm(Bound::Join);
     let mut buf = vec![0u8; READ_CHUNK];
 
     loop {
         tokio::select! {
-            _ = tokio::time::sleep_until(join_deadline), if !settled => {
+            _ = &mut join_deadline, if !settled => {
                 conn.close(1u32.into(), b"join timeout");
                 return SessionOutcome::Lost {
                     settled: false,

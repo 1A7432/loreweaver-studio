@@ -3,18 +3,21 @@
 //! network, deterministic sequencing via explicit acks.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use loreweaver_transport::client::{
-    connect, connect_with_backoff_pulse, connect_with_timeouts, ConnStatus, ConnectParams,
-    ErrorCode, NetworkProfile, Timeouts, TransportEvent,
+    connect, connect_with_backoff_pulse, connect_with_deadlines, connect_with_timeouts, Bound,
+    ConnStatus, ConnectParams, Deadline, DeadlineFn, ErrorCode, NetworkProfile, Timeouts,
+    TransportEvent,
 };
 use loreweaver_transport::codec::{encode_line, LineDecoder};
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::{oneshot, Semaphore};
 
 const ALPN: &[u8] = b"loreweaver/tui/1";
 const STEP: Duration = Duration::from_secs(20);
@@ -498,12 +501,14 @@ async fn put_blob_roundtrip_and_error_reply() {
 #[tokio::test]
 async fn send_while_online_returns_ok_after_write() {
     let (endpoint, ticket) = bind_server().await;
+    let (read_tx, read_rx) = oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let mut conn = ServerConn::accept(&endpoint).await;
         let _join = conn.read_frame().await;
         conn.write_frame(&welcome_frame("1.6")).await;
         let input = conn.read_frame().await;
         assert_eq!(input, json!({"type": "input", "text": "delivered"}));
+        read_tx.send(()).expect("test waits for the read");
         conn.conn.closed().await;
     });
 
@@ -517,6 +522,12 @@ async fn send_while_online_returns_ok_after_write() {
         .await
         .expect("online write is Ok only after the stream accepts it");
 
+    // Accepted by the stream is not yet sent: a close now would discard the
+    // bytes before they leave. Close once the host has read them.
+    tokio::time::timeout(STEP, read_rx)
+        .await
+        .expect("the host reads the input")
+        .expect("server task alive");
     handle.close();
     expect_status(&mut rx, ConnStatus::Offline).await;
     server.await.expect("server task");
@@ -612,7 +623,10 @@ async fn close_settles_a_pending_send() {
     server.abort();
 }
 
-/// Per-attempt bounds short enough for a test to watch them fire.
+/// Per-attempt bounds short enough for a test to watch them fire. Only for an
+/// attempt that is MEANT to time out: one expected to connect or be welcomed
+/// would race these against a loaded runner — arm its bounds with
+/// [`connect_with_deadlines`] instead.
 const FAST: Timeouts = Timeouts {
     dial: Duration::from_millis(300),
     join: Duration::from_millis(300),
@@ -631,6 +645,34 @@ async fn expect_offline_with_code(
         } => (error, error_code),
         other => panic!("expected offline, got {other:?}"),
     }
+}
+
+/// A per-attempt bound the test fires by hand: each `fire` releases one
+/// armed deadline, so a timeout happens after the event the test sequences it
+/// on, never on wall-clock time.
+#[derive(Clone)]
+struct Trigger(Arc<Semaphore>);
+
+impl Trigger {
+    fn new() -> Self {
+        Self(Arc::new(Semaphore::new(0)))
+    }
+
+    fn fire(&self) {
+        self.0.add_permits(1);
+    }
+
+    fn deadline(&self) -> Deadline {
+        let permits = self.0.clone();
+        Box::pin(async move {
+            permits.acquire().await.expect("trigger open").forget();
+        })
+    }
+}
+
+/// A bound that never fires: the attempt waits for its real events.
+fn never() -> Deadline {
+    Box::pin(std::future::pending())
 }
 
 /// A host that is reachable on the wire but never answers the handshake: the
@@ -665,16 +707,35 @@ async fn a_dial_that_gets_no_answer_times_out_with_a_code_and_does_not_redial() 
 #[tokio::test]
 async fn a_host_that_never_welcomes_times_out_the_join_with_its_own_code() {
     let (endpoint, ticket) = bind_server().await;
+    let (joined_tx, joined_rx) = oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let mut conn = ServerConn::accept(&endpoint).await;
         let join = conn.read_frame().await;
         assert_eq!(join["type"], "join");
+        joined_tx.send(()).expect("test waits for the join");
         // Connected and joined, then silence.
         conn.conn.closed().await;
     });
 
-    let (_handle, mut rx, _pulse) = connect_with_timeouts(params(&ticket), FAST);
+    // The dial must succeed, so its bound never fires; the join bound fires
+    // only once the host has read the join (firing it earlier would close
+    // the connection before the join reached the host).
+    let join_bound = Trigger::new();
+    let arm: DeadlineFn = {
+        let join_bound = join_bound.clone();
+        Arc::new(move |bound, _attempt| match bound {
+            Bound::Dial => never(),
+            Bound::Join => join_bound.deadline(),
+        })
+    };
+    let (_handle, mut rx, _pulse) =
+        connect_with_deadlines(params(&ticket), Timeouts::default(), arm);
     expect_status(&mut rx, ConnStatus::Connecting).await;
+    tokio::time::timeout(STEP, joined_rx)
+        .await
+        .expect("the host reads the join")
+        .expect("server task alive");
+    join_bound.fire();
     let (error, code) = expect_offline_with_code(&mut rx).await;
     assert_eq!(code, Some(ErrorCode::JoinTimeout));
     assert!(error.unwrap_or_default().contains("join timeout"));
@@ -801,7 +862,18 @@ async fn redial_after_a_good_session_is_bounded_and_keeps_going() {
         drop(endpoint);
     });
 
-    let (handle, mut rx, mut pulse) = connect_with_timeouts(params(&ticket), FAST);
+    // The first attempt must connect and be welcomed, so its bounds never
+    // fire. Every redial's dial bound fires when the test says.
+    let redial_bound = Trigger::new();
+    let arm: DeadlineFn = {
+        let redial_bound = redial_bound.clone();
+        Arc::new(move |bound, attempt| match (bound, attempt) {
+            (Bound::Dial, 1..) => redial_bound.deadline(),
+            _ => never(),
+        })
+    };
+    let (handle, mut rx, mut pulse) =
+        connect_with_deadlines(params(&ticket), Timeouts::default(), arm);
     expect_status(&mut rx, ConnStatus::Connecting).await;
     assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
     expect_status(&mut rx, ConnStatus::Online).await;
@@ -814,8 +886,9 @@ async fn redial_after_a_good_session_is_bounded_and_keeps_going() {
 
     let (first_attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
     assert_eq!(first_attempt, 1);
-    // The first redial must give up on its own (dial bound), back off, and
-    // try again as attempt 2 — not hang on attempt 1 and not go offline.
+    // The first redial's dial bound fires: it must give up on it, back off,
+    // and try again as attempt 2 — not hang on attempt 1 and not go offline.
+    redial_bound.fire();
     let (second_attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
     assert_eq!(second_attempt, 2);
 
