@@ -771,16 +771,33 @@ describe("reconnect — the join replay rebuilds the log", () => {
       expect(shown()).not.toContain("pending: I open the door.")
     })
 
-    it("stops treating lines as replayed if the state frame never comes at all", () => {
+    it("still lets a line typed after the input was released be retired by its receipt", () => {
+      // Cursor Bugbot on #14 (second pass): the guard is for CARRIED lines only.
+      // The server reads this connection's input after the replay, so the
+      // receipt of a line typed here is live and must retire it as usual.
       join(TRANSCRIPT)
       ingest(WELCOME, 10_000)
       useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
       echo("I open the door.")
+      expect(shown()).toContain("pending: I open the door.")
+      ingest(
+        narrative("live-11", "I open the door.", { speaker: "player", name: "Nyx" }),
+        10_000 + JOIN_REPLAY_TIMEOUT_MS + 1,
+      )
+      expect(shown()).not.toContain("pending: I open the door.")
+    })
+
+    it("stops sparing carried lines if the state frame never comes at all", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME, 10_000)
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      expect(shown()).toContain("undelivered: I open the door.")
       ingest(
         narrative("live-10", "I open the door.", { speaker: "player", name: "Nyx" }),
         10_000 + JOIN_REPLAY_STREAM_MAX_MS,
       )
-      expect(shown()).not.toContain("pending: I open the door.")
+      expect(shown()).not.toContain("undelivered: I open the door.")
     })
 
     it("does nothing once the replay has ended normally", () => {
