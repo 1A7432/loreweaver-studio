@@ -14,6 +14,7 @@ vi.mock("../lib/transport", () => ({
 import { useAdminStore } from "./admin"
 import { usePanelsStore } from "./panels"
 import {
+  JOIN_REPLAY_STREAM_MAX_MS,
   JOIN_REPLAY_TIMEOUT_MS,
   MAX_LOG_ENTRIES,
   MAX_STREAM_TEXT,
@@ -585,9 +586,9 @@ describe("reconnect — the join replay rebuilds the log", () => {
   let ids = 0
 
   /** What the server sends a joining member: a fresh id on every line, every time. */
-  const replayLines = (lines: Line[]) => {
+  const replayLines = (lines: Line[], now?: number) => {
     for (const line of lines) {
-      if (line === "roll") ingest(ROLL)
+      if (line === "roll") ingest(ROLL, now)
       else {
         const [speaker, text] = line
         ingest(
@@ -596,6 +597,7 @@ describe("reconnect — the join replay rebuilds the log", () => {
             format: speaker === "kp" ? "markdown" : "plain",
             ...(speaker === "npc" ? { name: "Maren" } : {}),
           }),
+          now,
         )
       }
     }
@@ -743,6 +745,42 @@ describe("reconnect — the join replay rebuilds the log", () => {
       useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
       expect(useSessionStore.getState().replay).toBeNull()
       expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
+    })
+
+    it("still lets no replayed line retire a carried one after the input stopped waiting", () => {
+      // Cursor Bugbot on #14: the timeout puts the carried lines back while the
+      // replay is still arriving; an OLD line with the same words must not
+      // retire the undelivered one.
+      join(TRANSCRIPT)
+      echo("I step onto the pier.")
+      ingest(WELCOME, 10_000)
+      replayLines(TRANSCRIPT.slice(0, 1), 10_500)
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      replayLines(TRANSCRIPT.slice(1), 10_000 + JOIN_REPLAY_TIMEOUT_MS + 1)
+      expect(shown()).toContain("undelivered: I step onto the pier.")
+      ingest(STATE, 10_000 + JOIN_REPLAY_TIMEOUT_MS + 2)
+      expect(useSessionStore.getState().replayStreamSince).toBeNull()
+      expect(shown()).toContain("undelivered: I step onto the pier.")
+    })
+
+    it("lets live lines retire held ones again once the replay has ended", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      expect(shown()).toContain("pending: I open the door.")
+      ingest(narrative("live-9", "I open the door.", { speaker: "player", name: "Nyx" }))
+      expect(shown()).not.toContain("pending: I open the door.")
+    })
+
+    it("stops treating lines as replayed if the state frame never comes at all", () => {
+      join(TRANSCRIPT)
+      ingest(WELCOME, 10_000)
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      echo("I open the door.")
+      ingest(
+        narrative("live-10", "I open the door.", { speaker: "player", name: "Nyx" }),
+        10_000 + JOIN_REPLAY_STREAM_MAX_MS,
+      )
+      expect(shown()).not.toContain("pending: I open the door.")
     })
 
     it("does nothing once the replay has ended normally", () => {

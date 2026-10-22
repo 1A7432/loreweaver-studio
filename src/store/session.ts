@@ -33,6 +33,11 @@ export const PENDING_ECHO_TIMEOUT_MS = 120_000
  * second case the replay's remaining lines land below the carried ones. That
  * misorder is the accepted price of never leaving the player unable to type. */
 export const JOIN_REPLAY_TIMEOUT_MS = 10_000
+/** How long after a `welcome` a narrative frame is still taken to be part of
+ * the join replay when the `state` frame that ends it never arrives. Until then
+ * no line retires a held line (see `replayStreamSince`); the bound only keeps a
+ * server that never sends the frame from switching echo retirement off for good. */
+export const JOIN_REPLAY_STREAM_MAX_MS = 120_000
 
 /**
  * A line this client sent and has not seen come back yet.
@@ -141,6 +146,12 @@ interface SessionState {
    * join replay (or until `expireReplay` gives up on it); `null` the rest of the
    * time. While it is open the input box holds the player's draft. */
   replay: ReplayWindow | null
+  /** Epoch ms of the `welcome` whose join replay is still streaming, `null` once
+   * its `state` frame has arrived. It outlives `replay`: when `expireReplay`
+   * gives up waiting and puts the carried lines back, the replay's remaining
+   * lines are still OLD, and an old line with the same words must not retire an
+   * undelivered one — only `settleReplay`'s narrow proof may. */
+  replayStreamSince: number | null
   game: StateFrame | null
   presence: PresenceFrame | null
   turn: TurnState
@@ -412,6 +423,7 @@ function upsertUiPanel(panels: UiPanelRegion[], frame: UiFrame): UiPanelRegion[]
 export const useSessionStore = create<SessionState>((set, get) => ({
   entries: [],
   replay: null,
+  replayStreamSince: null,
   game: null,
   presence: null,
   turn: IDLE_TURN,
@@ -435,11 +447,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // link), so the busy line goes too. The hub re-sends `busy` to a new
         // subscriber when a turn really is running, and that frame follows the
         // welcome — so nothing live is lost by clearing it here.
-        set((s) => ({ ...beginReplay(s, now), turn: IDLE_TURN }))
+        set((s) => ({ ...beginReplay(s, now), replayStreamSince: now, turn: IDLE_TURN }))
         return
       case "narrative":
         set((s) => ({
-          entries: ingestNarrative(retireEcho(s.entries, frame), frame),
+          // A replayed line is history: it never retires a held line, not even
+          // after `expireReplay` put the carried ones back into the log.
+          entries: ingestNarrative(
+            s.replayStreamSince !== null && now - s.replayStreamSince < JOIN_REPLAY_STREAM_MAX_MS
+              ? s.entries
+              : retireEcho(s.entries, frame),
+            frame,
+          ),
           replay: recordReplayed(s.replay, frame),
         }))
         return
@@ -471,11 +490,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // A `state` frame also ends a join replay: both carriers send the
         // snapshot right after it, behind the live frames the replay held.
         set((s) => {
-          if (frame.reset) return { game: frame, entries: [], replay: null }
+          if (frame.reset) return { game: frame, entries: [], replay: null, replayStreamSince: null }
           return {
             game: frame,
             entries: s.replay ? settleReplay(s.entries, s.replay) : s.entries,
             replay: null,
+            replayStreamSince: null,
           }
         })
         return
@@ -603,6 +623,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       entries: [],
       replay: null,
+      replayStreamSince: null,
       game: null,
       presence: null,
       turn: IDLE_TURN,
