@@ -32,16 +32,16 @@ bun tauri dev            # or run it unbundled, with hot reload
 ```
 
 Then open the app, and on the connect screen either paste the **ticket** and **invite key** your
-Keeper sent you, or click **Host locally & play**: it fetches a prebuilt engine server for your OS
-(SHA-256 verified), starts it, and signs you in as the Keeper. No Python, no environment setup.
+room admin sent you, or click **Host locally & play**: it fetches a prebuilt engine server for your OS
+(SHA-256 verified), starts it, and signs you in as the room admin. No Python, no environment setup.
 
 Two modes, one app:
 
 - **Play** (default): the full table — markdown narrative log with colour-coded dice, live
-  character / party / variables panels (the keeper view shows unexposed variables dimmed and
+  character / party / variables panels (the admin view shows unexposed variables dimmed and
   locked), presence and AI-keeper turn status, a module's own panels — tier-1 template blocks
   _and_ tier-2 rich pages, each in a locked-down sandboxed frame with no network — and the
-  keeper screens: rooms & invites, model, module, rules, KP skills, character creation, room
+  admin screens: rooms & invites, model, module, rules, KP skills, character creation, room
   lifecycle (reset / save / undo), audio deck and media.
 - **Studio**: a local-first card forge with three benches:
   - **Forge** — typed module variables, worldbook entries, and hooks, exported as a
@@ -74,7 +74,7 @@ Two modes, one app:
 ## Status
 
 - **Play mode**: complete against protocol 2.4 — narrative / dice / state / presence / turn
-  status, tier-1 and tier-2 module panels, the keeper screens, one-click local host, audio and
+  status, tier-1 and tier-2 module panels, the admin screens, one-click local host, audio and
   media, and saving the session report (`.report html`). Tier-1 panel instantiation is the reference client's resolver, ported rule for
   rule and pinned by the shared vector table
   (`src/features/play/panels/fixtures/panel_template_vectors.json`) that
