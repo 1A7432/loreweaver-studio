@@ -45,6 +45,9 @@ export default function DiceLine({ frame }: { frame: DiceFrame }) {
   const { t } = useTranslation()
   const outcome = frame.outcome
   const subsystem = subsystemChipText(frame)
+  // The raw id is the tooltip only when the chip shows something else: a pack with
+  // no display name gets `subsystem_label` = the id back from the engine.
+  const subsystemId = typeof frame.subsystem === "string" ? stripControlChars(frame.subsystem).trim() : ""
   // `detail` is system-declared data a client "may surface verbatim but never
   // needs to understand" — so the two shapes the protocol names get layout, and
   // the rest is shown as-is rather than dropped.
@@ -59,7 +62,7 @@ export default function DiceLine({ frame }: { frame: DiceFrame }) {
         {subsystem ? (
           <span
             className="dice-subsystem"
-            title={frame.subsystem_label && frame.subsystem ? stripControlChars(frame.subsystem) : undefined}
+            title={subsystemId && subsystemId !== subsystem ? subsystemId : undefined}
           >
             {subsystem}
           </span>

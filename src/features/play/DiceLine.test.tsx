@@ -161,6 +161,19 @@ describe("dice detail", () => {
     expect(chip).not.toHaveAttribute("title")
   })
 
+  it("adds no tooltip when the label only repeats the id or is blank", () => {
+    // `SubsystemSpec.label()` returns the id for a pack with no display name.
+    for (const subsystem_label of ["sanity_check", " \u0007 "]) {
+      const { container, unmount } = render(
+        <DiceLine frame={{ ...base, kind: "subsystem", subsystem: "sanity_check", subsystem_label }} />,
+      )
+      const chip = container.querySelector(".dice-subsystem")
+      expect(chip?.textContent).toBe("sanity_check")
+      expect(chip).not.toHaveAttribute("title")
+      unmount()
+    }
+  })
+
   it("renders an opposed check's two sides and marks the winner", () => {
     const { container } = render(
       <DiceLine
