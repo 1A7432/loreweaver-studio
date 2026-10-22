@@ -35,7 +35,7 @@ export const PENDING_ECHO_TIMEOUT_MS = 120_000
 export const JOIN_REPLAY_TIMEOUT_MS = 10_000
 /** How long after a `welcome` a narrative frame is still taken to be part of
  * the join replay when the `state` frame that ends it never arrives. Until then
- * no line retires a held line (see `replayStreamSince`); the bound only keeps a
+ * no line retires a carried line (see `replayStreamSince`); the bound only keeps a
  * server that never sends the frame from switching echo retirement off for good. */
 export const JOIN_REPLAY_STREAM_MAX_MS = 120_000
 
@@ -63,6 +63,10 @@ export interface PendingEcho {
   at: number
   /** The send itself failed, or nothing came back in time. */
   failed?: boolean
+  /** It rode a connection that died: set aside by `beginReplay`, it may only be
+   * retired by `settleReplay`'s proof while that connection's join replay is
+   * still streaming (see `retireEcho`). */
+  carried?: boolean
 }
 
 /**
@@ -281,12 +285,15 @@ function ingestInlineUi(entries: LogEntry[], frame: UiFrame): LogEntry[] {
  * match is that two players typing the identical sentence retire each other's
  * echo a beat early, which costs nobody anything: the real lines still arrive.
  */
-function retireEcho(entries: LogEntry[], frame: NarrativeFrame): LogEntry[] {
+function retireEcho(entries: LogEntry[], frame: NarrativeFrame, spareCarried = false): LogEntry[] {
   if (frame.speaker !== "player") return entries
   const text = frame.text.trim()
   const name = frame.name ?? ""
   const matches = (entry: LogEntry, seat: boolean): boolean =>
-    entry.kind === "pending" && entry.pending.text === text && (!seat || entry.pending.speaker === name)
+    entry.kind === "pending" &&
+    !(spareCarried && entry.pending.carried) &&
+    entry.pending.text === text &&
+    (!seat || entry.pending.speaker === name)
   let index = entries.findIndex((entry) => matches(entry, true))
   if (index === -1) index = entries.findIndex((entry) => matches(entry, false))
   return index === -1 ? entries : entries.filter((_, i) => i !== index)
@@ -353,7 +360,9 @@ function beginReplay(state: SessionState, now: number): Partial<SessionState> {
     // window does not keep the lines that proof rested on.
     ...(state.replay ? unproven(state.replay) : []),
     ...state.entries.flatMap((entry) =>
-      entry.kind === "pending" ? [{ ...entry, pending: { ...entry.pending, failed: true } }] : [],
+      entry.kind === "pending"
+        ? [{ ...entry, pending: { ...entry.pending, failed: true, carried: true } }]
+        : [],
     ),
   ]
   // A second welcome inside an open window means the link died mid-replay. What
@@ -451,12 +460,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return
       case "narrative":
         set((s) => ({
-          // A replayed line is history: it never retires a held line, not even
-          // after `expireReplay` put the carried ones back into the log.
+          // A replayed line is history: it never retires a CARRIED line, not even
+          // after `expireReplay` put the carried ones back into the log. A line
+          // typed on THIS connection is a different matter: the server reads it
+          // only after the replay, so its receipt is live and retires it as usual.
           entries: ingestNarrative(
-            s.replayStreamSince !== null && now - s.replayStreamSince < JOIN_REPLAY_STREAM_MAX_MS
-              ? s.entries
-              : retireEcho(s.entries, frame),
+            retireEcho(
+              s.entries,
+              frame,
+              s.replayStreamSince !== null && now - s.replayStreamSince < JOIN_REPLAY_STREAM_MAX_MS,
+            ),
             frame,
           ),
           replay: recordReplayed(s.replay, frame),
