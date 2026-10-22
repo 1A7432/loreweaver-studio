@@ -797,6 +797,29 @@ describe("reconnect — the join replay rebuilds the log", () => {
       expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
     })
 
+    it("keeps the proof a partial replay gave when the link dies again before it ends", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      const delivered: Line[] = [...TRANSCRIPT, ["player", "I open the door."], ["kp", "The door gives way."]]
+      // The first redial's replay gets as far as the line itself, then dies.
+      ingest(WELCOME)
+      replayLines(delivered.slice(0, 6))
+      // The second redial replays the whole stretch; its newest anchor is now
+      // the very line that proved delivery.
+      join(delivered)
+      expect(shown()).toEqual([...EXPECTED, "player: I open the door.", "kp: The door gives way."])
+    })
+
+    it("still keeps a line a partial replay did not prove when the link dies again", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME)
+      // Only old history arrived — nothing after what was already seen.
+      replayLines(TRANSCRIPT.slice(0, 3))
+      join(TRANSCRIPT)
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
+    })
+
     it("retires a line the replay proves the table received before the link died", () => {
       join(TRANSCRIPT)
       echo("I open the door.")
