@@ -71,6 +71,8 @@
     "empty": "编年史还是空白。说点什么，让故事开始。",
     "inputPlaceholder": "发言、行动，或输入指令…",
     "send": "发送",
+    "syncing": "同步中",
+    "syncingHint": "牌桌最近的记录还在载入。你写的话留在输入框里，载入完就能发送。",
     "echoPending": "发送中…",
     "echoFailed": "未送达",
     "resend": "重发",
