@@ -141,7 +141,7 @@ detection exactly (same regexes, same entry test, same stripping):
   bundle / forge project.
 - **World half**: the ORIGINAL card, verbatim — the pack build DETECTS it as
   `kind: world` (authors never declare kinds; the stamp lands in the built
-  manifest) because the keeper's world import reads the full card. The
+  manifest) because the admin's world import reads the full card. The
   studio never rewrites world machinery; it only PROMOTES a copy of the
   InitVar tree into typed VarSpecs (author-confirmed, `buildSpec`-validated)
   and suggests `.var expose <prefix>` lines for the card's install notes.

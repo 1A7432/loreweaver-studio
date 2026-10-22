@@ -284,7 +284,7 @@ describe("PlayView", () => {
   it("shows keeper rows and the demo item only for a keeper whose server offers it", () => {
     useConnectionStore.setState({ status: "online", welcome: { ...WELCOME, features: ["demo"] } })
     render(<PlayView />)
-    expect(screen.getByText("── Keeper ──")).toBeInTheDocument()
+    expect(screen.getByText("── Admin ──")).toBeInTheDocument()
     expect(screen.getByRole("menuitem", { name: /Play sample adventure/ })).toBeInTheDocument()
     expect(screen.getByRole("menuitem", { name: /Rooms & invites/ })).toBeInTheDocument()
     expect(screen.getByRole("menuitem", { name: /Model \/ config/ })).toBeInTheDocument()
@@ -296,7 +296,7 @@ describe("PlayView", () => {
       welcome: { ...WELCOME, you: { ...WELCOME.you, role: "player" } },
     })
     render(<PlayView />)
-    expect(screen.queryByText("── Keeper ──")).not.toBeInTheDocument()
+    expect(screen.queryByText("── Admin ──")).not.toBeInTheDocument()
     expect(screen.queryByRole("menuitem", { name: /Rooms & invites/ })).not.toBeInTheDocument()
   })
 
