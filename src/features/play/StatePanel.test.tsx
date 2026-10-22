@@ -279,6 +279,15 @@ describe("PregenCard", () => {
     expect(screen.queryByText(/tui:2600a9b1/)).not.toBeInTheDocument()
   })
 
+  it("falls back past a stored claimer name made only of control characters", () => {
+    useSessionStore.setState({
+      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "u2", claimed_by_name: "\u001b" }] },
+    })
+    present([{ id: "u2", name: "Nyx", online: true }])
+    render(<StatePanel />)
+    expect(screen.getByText("claimed by Nyx")).toBeInTheDocument()
+  })
+
   it("still decides 'yours' by member id, whatever name the claim carries", () => {
     useSessionStore.setState({
       game: {
@@ -302,6 +311,7 @@ describe("PregenCard", () => {
           { name: "林晚", claimed_by: "", blurb: "A courier who\u0007 knows the old roads" },
           { name: "白榆生", claimed_by: "", blurb: "  " },
           { name: "陈九鲤", claimed_by: "" },
+          { name: "关五", claimed_by: "", blurb: "\u0007\u001b" },
         ],
       },
     })

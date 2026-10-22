@@ -320,7 +320,7 @@ export function PregenCard({ game }: { game: StateFrame }) {
   // claimer going offline), else the presence roster, else the bare id rather
   // than nothing.
   const nameOf = (pregen: PregenEntry, id: string): string =>
-    (typeof pregen.claimed_by_name === "string" ? pregen.claimed_by_name.trim() : "") ||
+    (typeof pregen.claimed_by_name === "string" ? stripControlChars(pregen.claimed_by_name).trim() : "") ||
     presence?.players.find((p) => p.id === id)?.name ||
     id
 
@@ -331,15 +331,16 @@ export function PregenCard({ game }: { game: StateFrame }) {
         {pregens.map((pregen) => {
           const claimedBy = pregen.claimed_by.trim()
           const mine = claimedBy !== "" && claimedBy === youId
+          // Stripped BEFORE the emptiness test: a blurb of control characters alone
+          // must render nothing, not an empty line.
+          const blurb = typeof pregen.blurb === "string" ? stripControlChars(pregen.blurb).trim() : ""
           return (
             <li key={pregen.name} className={`party-row pregen-row${claimedBy ? " is-offline" : ""}`}>
               {/* The blurb (protocol 2.5) is the card's player-facing one-liner — what a
                   player reads to choose; the author's keeper notes never ride the wire. */}
               <span className="pregen-text">
                 <span className="party-name">{stripControlChars(pregen.name)}</span>
-                {typeof pregen.blurb === "string" && pregen.blurb.trim() ? (
-                  <span className="pregen-blurb">{stripControlChars(pregen.blurb)}</span>
-                ) : null}
+                {blurb ? <span className="pregen-blurb">{blurb}</span> : null}
               </span>
               {claimedBy ? (
                 <span className="chip">
