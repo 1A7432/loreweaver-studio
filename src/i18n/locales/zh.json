@@ -172,7 +172,7 @@
       "keys": "房间与邀请",
       "module": "导入模组",
       "rules": "规则系统",
-      "skills": "KP 技能",
+      "skills": "守秘人技能",
       "model": "模型与配置",
       "quit": "断开连接"
     },
@@ -471,7 +471,7 @@
       "addAltGreeting": "添加备选开场白"
     },
     "vars": {
-      "hint": "类型化模组变量会成为引擎校验的状态量——kind、边界、可见性在写入时强制校验。keeper 专属变量不会到达玩家，也不会进入 SillyTavern 导出。",
+      "hint": "类型化模组变量会成为引擎校验的状态量——kind、边界、可见性在写入时强制校验。仅守秘人可见的变量不会到达玩家，也不会进入 SillyTavern 导出。",
       "add": "添加变量",
       "id": "Id",
       "kind": "类型",
@@ -932,7 +932,7 @@
         "slotChip": "槽位",
         "chars": "{{n}} 字符",
         "malformedKept": "{{n}} 条无法归一化的条目已原样保留在资产中（未在上方显示）。",
-        "packHint": "对局用（keeper 风格预设）：导出 JSON 并作为 pack 资产分发——如何映射进引擎单提示词的六个 section 由引擎侧决定，studio 不承诺注入行为。",
+        "packHint": "对局用（守秘人风格预设）：导出 JSON 并作为 pack 资产分发——如何映射进引擎单提示词的六个 section 由引擎侧决定，studio 不承诺注入行为。",
         "slots": {
           "personaDescription": "玩家人设描述（槽位）",
           "charDescription": "角色描述（槽位）",
@@ -1240,7 +1240,7 @@
         "imagegenAllowed": "允许",
         "imagegenPackOnly": "仅限包内素材（作者已否决生成）",
         "sha": "sha256 {{hash}}…",
-        "prepScripts": "准备阶段脚本：{{count}} 个——keeper 可在准备阶段按引用运行的代码；绝不会自行运行",
+        "prepScripts": "准备阶段脚本：{{count}} 个——守秘人可在准备阶段按引用运行的代码；绝不会自行运行",
         "presets": "提示词预设：{{count}} 个——会安装进服务器共享的预设库"
       },
       "testDrive": {
@@ -1293,7 +1293,7 @@
       },
       "prep": {
         "title": "准备阶段脚本",
-        "hint": "keeper 在准备阶段按引用运行一次的批量布置：从名单生成四十个 NPC、定义一族变量。脚本只负责「计划」，引擎在完整展示计划后才执行。这里的任何东西都不会在安装时运行。",
+        "hint": "守秘人在准备阶段按引用运行一次的批量布置：从名单生成四十个 NPC、定义一族变量。脚本只负责「计划」，引擎在完整展示计划后才执行。这里的任何东西都不会在安装时运行。",
         "add": "添加准备脚本",
         "showApi": "API 参考",
         "hideApi": "收起参考",
@@ -1301,13 +1301,13 @@
         "apiLimits": "限制：脚本 {{chars}} 字符、每份计划 {{ops}} 个操作、每个操作 8 KB 参数、1 秒 CPU。",
         "apiGating": "计划中的每次调用都会经过与模型发起的调用完全相同的参数校验、keeper_only 标记与受控技能检查——因为那本来就是同一段代码。",
         "apiUnreachable": "`.import … world` 与 `.var expose` 是管理员命令而非工具，因此计划永远无法指名它们。",
-        "apiPreview": "预览是免费的：keeper 先以不执行的方式运行，读完整份操作清单，然后才真正执行。",
+        "apiPreview": "预览是免费的：守秘人先以不执行的方式运行，读完整份操作清单，然后才真正执行。",
         "fileName": "文件名",
         "source": "脚本",
         "reading": "{{chars}}/{{max}} 字符 · 字面上的 plan() 调用 {{calls}} 次",
         "readingLoop": "循环会计划出未知数量——引擎将一份计划限制在 {{ops}} 个操作以内",
         "forbidden": "这个脚本用到了 {{names}}，而沙箱并不提供它们。预览时会失败。",
-        "invoke": "keeper 用这条命令运行它：run_prep_plan(script_ref=\"{{ref}}\")"
+        "invoke": "守秘人用这条命令运行它：run_prep_plan(script_ref=\"{{ref}}\")"
       },
       "episodes": {
         "title": "连载话数（连载模组）",
@@ -1357,8 +1357,8 @@
         "bilingualGapVariable": "变量“{{id}}”只有一种语言的标签（缺：{{missing}}）。",
         "bilingualGapPanel": "面板“{{panel}}”的 {{field}} 文本只有一种语言（缺：{{missing}}）。",
         "bilingualGapPack": "模组包的 {{field}} 只有一种语言（缺：{{missing}}）。",
-        "panelBindsHiddenVariable": "面板“{{panel}}”绑定了仅 keeper 可见的变量“{{id}}”：隐藏变量不会发到玩家客户端，该块对玩家就是空白的。",
-        "panelConditionHiddenVariable": "面板“{{panel}}”用仅 keeper 可见的变量“{{id}}”做可见性门控：对玩家永远不成立，而条件字符串随包分发，变量名因此泄露。",
+        "panelBindsHiddenVariable": "面板“{{panel}}”绑定了仅守秘人可见的变量“{{id}}”：隐藏变量不会发到玩家客户端，该块对玩家就是空白的。",
+        "panelConditionHiddenVariable": "面板“{{panel}}”用仅守秘人可见的变量“{{id}}”做可见性门控：对玩家永远不成立，而条件字符串随包分发，变量名因此泄露。",
         "panelBindsUnknownVariable": "面板“{{panel}}”绑定了“{{id}}”，但本包从未声明它。",
         "codeUnknownVariable": "{{origin}} 读写了“{{id}}”，但本包从未声明它。",
         "loreUnknownVariable": "世界书条目“{{title}}”提到了“{{id}}”，但本包从未声明它。",
@@ -1406,9 +1406,9 @@
       "label": "ST 卡风味",
       "safe": "可安全传播",
       "release": "含秘密的发布版",
-      "safeHint": "将剥离 {{n}} 条仅 keeper 可见的条目。SillyTavern 卡里的一切对玩家都是可见的，所以这一版才是可以直接发出去的。",
-      "releaseHint": "将保留 {{n}} 条仅 keeper 可见的条目。SillyTavern 卡没有隐藏的一半——任何打开这个文件的人都读得到。",
-      "noSecrets": "这张卡没有仅 keeper 可见的条目，两种风味产出的文件相同。"
+      "safeHint": "将剥离 {{n}} 条仅守秘人可见的条目。SillyTavern 卡里的一切对玩家都是可见的，所以这一版才是可以直接发出去的。",
+      "releaseHint": "将保留 {{n}} 条仅守秘人可见的条目。SillyTavern 卡没有隐藏的一半——任何打开这个文件的人都读得到。",
+      "noSecrets": "这张卡没有仅守秘人可见的条目，两种风味产出的文件相同。"
     },
     "importErr": {
       "notAnObject": "“{{file}}”不是一张卡：SillyTavern 卡是一个 JSON 对象（v2/v3 把字段包在 `data` 里），而这个文件的顶层不是。",
