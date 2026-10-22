@@ -71,6 +71,8 @@
     "empty": "The chronicle is empty. Say something to begin.",
     "inputPlaceholder": "Speak, act, or type a command…",
     "send": "Send",
+    "syncing": "Catching up",
+    "syncingHint": "The table's recent history is still arriving. Your line stays in the box and can be sent the moment it has.",
     "echoPending": "sending…",
     "echoFailed": "not delivered",
     "resend": "Resend",

@@ -14,6 +14,7 @@ vi.mock("../lib/transport", () => ({
 import { useAdminStore } from "./admin"
 import { usePanelsStore } from "./panels"
 import {
+  JOIN_REPLAY_TIMEOUT_MS,
   MAX_LOG_ENTRIES,
   MAX_STREAM_TEXT,
   PENDING_ECHO_TIMEOUT_MS,
@@ -709,9 +710,47 @@ describe("reconnect — the join replay rebuilds the log", () => {
   it("leaves a first join alone", () => {
     ingest(WELCOME)
     expect(useSessionStore.getState().entries).toEqual([])
-    expect(useSessionStore.getState().replay).toBeNull()
     join(TRANSCRIPT)
     expect(shown()).toEqual(EXPECTED)
+  })
+
+  // The window is what holds the input box (see InputBox), so a first join —
+  // nothing carried, nothing to rebuild — opens one too: its history is still
+  // arriving behind the welcome exactly as a reconnect's is.
+  it("opens the replay window on a first join, and the state frame closes it", () => {
+    ingest(WELCOME, 5_000)
+    expect(useSessionStore.getState().replay).toMatchObject({ carried: [], since: 5_000 })
+    replayLines(TRANSCRIPT)
+    expect(useSessionStore.getState().replay).not.toBeNull()
+    ingest(STATE)
+    expect(useSessionStore.getState().replay).toBeNull()
+    expect(shown()).toEqual(EXPECTED)
+  })
+
+  describe("a replay whose state frame never comes", () => {
+    const echo = (text: string) => useSessionStore.getState().echoLocalInput(text, "Nyx", 1_000)
+
+    it("waits out the timeout, then puts the carried lines back and closes the window", () => {
+      join(TRANSCRIPT)
+      echo("I open the door.")
+      ingest(WELCOME, 10_000)
+      replayLines(TRANSCRIPT)
+
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS - 1)
+      expect(useSessionStore.getState().replay).not.toBeNull()
+      expect(shown()).toEqual(EXPECTED)
+
+      useSessionStore.getState().expireReplay(10_000 + JOIN_REPLAY_TIMEOUT_MS)
+      expect(useSessionStore.getState().replay).toBeNull()
+      expect(shown()).toEqual([...EXPECTED, "undelivered: I open the door."])
+    })
+
+    it("does nothing once the replay has ended normally", () => {
+      join(TRANSCRIPT)
+      const before = useSessionStore.getState().entries
+      useSessionStore.getState().expireReplay(Number.MAX_SAFE_INTEGER)
+      expect(useSessionStore.getState().entries).toBe(before)
+    })
   })
 
   it("keeps arrival order for the frames between the welcome and the end of the replay", () => {
