@@ -5,7 +5,7 @@ gamemaster engine — and its card-authoring studio. **This is the recommended w
 engine's terminal client is the one-line-install alternative for anywhere with a terminal, and
 its bridge mode seats a QQ group (NapCat / Lagrange) as an ordinary protocol client. Built
 with Tauri 2 (Rust core + TypeScript/React UI), targeting desktop (macOS / Windows / Linux) and,
-later, mobile (iOS / Android). It speaks the engine's open wire protocol (2.3) and nothing else,
+later, mobile (iOS / Android). It speaks the engine's open wire protocol (2.5) and nothing else,
 so it runs against any Loreweaver server — the one it can start for you with one click, or a
 friend's, or a VPS.
 
@@ -73,7 +73,7 @@ Two modes, one app:
 
 ## Status
 
-- **Play mode**: complete against protocol 2.4 — narrative / dice / state / presence / turn
+- **Play mode**: complete against protocol 2.5 — narrative / dice / state / presence / turn
   status, tier-1 and tier-2 module panels, the keeper screens, one-click local host, audio and
   media, and saving the session report (`.report html`). Tier-1 panel instantiation is the reference client's resolver, ported rule for
   rule and pinned by the shared vector table

@@ -5,6 +5,7 @@ import {
   type CharacterState,
   type ModuleVariable,
   type PackCardEntry,
+  type PregenEntry,
   type ResourceState,
   type StateFrame,
 } from "@loreweaver/protocol"
@@ -110,11 +111,17 @@ function VariableRow({ variable }: { variable: ModuleVariable }) {
   }
   // "text" and "enum" both carry an opaque current value. The state frame has
   // no enum options list, so there is nothing selectable to render (see
-  // PROTOCOL_NOTES.md).
+  // PROTOCOL_NOTES.md). Since protocol 2.5 an enum whose pack names its options
+  // carries `value_label` — shown in place of the raw option id, which stays the
+  // tooltip because it is what `.var set`, hooks and conditions use.
+  const raw = stripControlChars(String(variable.value))
+  const shown = typeof variable.value_label === "string" ? stripControlChars(variable.value_label).trim() : ""
   return (
     <div className="var-row" data-kind={variable.kind}>
       <span className="var-label">{label}</span>
-      <span className="var-value">{stripControlChars(String(variable.value))}</span>
+      <span className="var-value" title={shown && shown !== raw ? raw : undefined}>
+        {shown || raw}
+      </span>
     </div>
   )
 }
@@ -179,7 +186,10 @@ function VariableWrite({ variable }: { variable: ModuleVariable }) {
             className="var-set-input"
             value={draft}
             aria-label={t("session.varSet", { label: variable.label })}
+            // The RAW value, never `value_label`: what the keeper types here is checked
+            // by `core.modvars` against the option ids, not their display names.
             placeholder={String(variable.value)}
+            title={stripControlChars(String(variable.value))}
             spellCheck={false}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -305,10 +315,14 @@ export function PregenCard({ game }: { game: StateFrame }) {
   const presence = useSessionStore((s) => s.presence)
   const pregens = game.pregens ?? []
   if (pregens.length === 0) return null
-  // Another member's claim reads as their name when the presence roster knows
-  // them; a claimer who is not connected right now is only known by id, which
-  // is shown as-is rather than hidden.
-  const nameOf = (id: string): string => presence?.players.find((p) => p.id === id)?.name || id
+  // Another member's claim reads as their name: the server's own record of it
+  // (`claimed_by_name`, protocol 2.5 — stored at claim time, so it survives the
+  // claimer going offline), else the presence roster, else the bare id rather
+  // than nothing.
+  const nameOf = (pregen: PregenEntry, id: string): string =>
+    (typeof pregen.claimed_by_name === "string" ? pregen.claimed_by_name.trim() : "") ||
+    presence?.players.find((p) => p.id === id)?.name ||
+    id
 
   return (
     <section className="desk-card">
@@ -318,13 +332,20 @@ export function PregenCard({ game }: { game: StateFrame }) {
           const claimedBy = pregen.claimed_by.trim()
           const mine = claimedBy !== "" && claimedBy === youId
           return (
-            <li key={pregen.name} className={`party-row${claimedBy ? " is-offline" : ""}`}>
-              <span className="party-name">{stripControlChars(pregen.name)}</span>
+            <li key={pregen.name} className={`party-row pregen-row${claimedBy ? " is-offline" : ""}`}>
+              {/* The blurb (protocol 2.5) is the card's player-facing one-liner — what a
+                  player reads to choose; the author's keeper notes never ride the wire. */}
+              <span className="pregen-text">
+                <span className="party-name">{stripControlChars(pregen.name)}</span>
+                {typeof pregen.blurb === "string" && pregen.blurb.trim() ? (
+                  <span className="pregen-blurb">{stripControlChars(pregen.blurb)}</span>
+                ) : null}
+              </span>
               {claimedBy ? (
                 <span className="chip">
                   {mine
                     ? t("session.pregenYours")
-                    : t("session.pregenClaimed", { name: stripControlChars(nameOf(claimedBy)) })}
+                    : t("session.pregenClaimed", { name: stripControlChars(nameOf(pregen, claimedBy)) })}
                 </span>
               ) : (
                 <button

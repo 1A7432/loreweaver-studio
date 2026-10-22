@@ -58,6 +58,12 @@ export interface ForgeVariable {
   defaultValue: string
   /** Enum options, one per line (or comma-separated). */
   options: string
+  /** Enum option display names (lorecard `option_labels`, protocol 2.5:
+   * `{locale: {option: text}}`). The forge has no editor for them; an imported
+   * card's value is carried VERBATIM so a lorecard round trip does not lose it.
+   * The engine validates it tolerantly (stale keys warn, never fail). Optional:
+   * projects persisted before the field, and new variables, lack it. */
+  optionLabels?: Record<string, unknown>
 }
 
 export interface ForgeLoreEntry {
@@ -144,6 +150,8 @@ export interface ModvarSpec {
   minimum?: number
   maximum?: number
   options?: string[]
+  /** Carried verbatim from an imported card; see {@link ForgeVariable.optionLabels}. */
+  option_labels?: Record<string, unknown>
 }
 
 export function uid(): string {
@@ -306,6 +314,9 @@ export function buildSpec(v: ForgeVariable): { spec: ModvarSpec | null; errors: 
     if (maximum !== undefined) spec.maximum = maximum
   }
   if (v.kind === "enum" && options) spec.options = options
+  // Only on an enum, where the engine reads it; a kind changed in the editor would
+  // otherwise ship a field the engine drops with a warning.
+  if (v.kind === "enum" && v.optionLabels) spec.option_labels = v.optionLabels
   return { spec, errors }
 }
 

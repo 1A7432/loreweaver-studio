@@ -179,16 +179,28 @@ function CreateCharacter() {
 
 /** One attribute row. Editing writes through `.st <name>=<value>`, which the server
  * validates against the pack's constraints and answers in the chat log — nothing is
- * assumed to have worked here; the next `state` frame is the truth. */
-function AttributeRow({ name, value }: { name: string; value: unknown }) {
+ * assumed to have worked here; the next `state` frame is the truth.
+ *
+ * `label` is the display name (`attribute_labels`, protocol 2.5: APP → "外貌"); the
+ * raw `name` stays the write key and the cell's tooltip, since it is what `.st` takes. */
+function AttributeRow({ name, label, value }: { name: string; label?: string; value: unknown }) {
   const { t } = useTranslation()
   const online = useConnectionStore((s) => s.status === "online")
   const [draft, setDraft] = useState<string | null>(null)
+  const key = stripControlChars(name)
+  // `typeof`, not truthiness: a plain-object lookup of a key like `constructor`
+  // would otherwise hand back an inherited function.
+  const shown = (typeof label === "string" ? stripControlChars(label).trim() : "") || key
+  const nameCell = (
+    <td className="play-attr-name" title={shown !== key ? key : undefined}>
+      {shown}
+    </td>
+  )
 
   if (!isEditable(value)) {
     return (
       <tr>
-        <td className="play-attr-name">{stripControlChars(name)}</td>
+        {nameCell}
         <td>{attrText(value)}</td>
       </tr>
     )
@@ -203,7 +215,7 @@ function AttributeRow({ name, value }: { name: string; value: unknown }) {
 
   return (
     <tr>
-      <td className="play-attr-name">{stripControlChars(name)}</td>
+      {nameCell}
       <td>
         {draft === null ? (
           <button
@@ -239,7 +251,7 @@ function AttributeRow({ name, value }: { name: string; value: unknown }) {
                 setDraft(null)
               }
             }}
-            aria-label={name}
+            aria-label={shown}
           />
         )}
       </td>
@@ -287,7 +299,7 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
           <table className="play-table">
             <tbody>
               {Object.entries(character.attributes).map(([key, value]) => (
-                <AttributeRow key={key} name={key} value={value} />
+                <AttributeRow key={key} name={key} label={character.attribute_labels?.[key]} value={value} />
               ))}
             </tbody>
           </table>

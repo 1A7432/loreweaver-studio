@@ -104,6 +104,63 @@ describe("dice detail", () => {
     expect(container.textContent).toContain("51")
   })
 
+  it("names the subsystem by its display name (v2.5 subsystem_label), the id as tooltip", () => {
+    const { container } = render(
+      <DiceLine
+        frame={{
+          ...base,
+          kind: "subsystem",
+          subsystem: "sanity_check",
+          subsystem_label: "Sani\u0007ty",
+          expr: "1d100",
+        }}
+      />,
+    )
+    const chip = container.querySelector(".dice-subsystem")
+    expect(chip?.textContent).toBe("Sanity")
+    expect(chip).toHaveAttribute("title", "sanity_check")
+    expect(container.textContent).not.toContain("sanity_check")
+  })
+
+  it("drops the chip when it would only repeat the roll's own expression", () => {
+    // The engine writes a SAN check's `expr` as the localized stat already — "理智 理智".
+    const { container } = render(
+      <DiceLine
+        frame={{
+          ...base,
+          kind: "subsystem",
+          subsystem: "sanity_check",
+          subsystem_label: "理智",
+          expr: "理智",
+        }}
+      />,
+    )
+    expect(container.querySelector(".dice-subsystem")).toBeNull()
+    expect(container.textContent?.match(/理智/g)).toHaveLength(1)
+    // Case-blind for a Latin label, so "Sanity" beside "sanity" does not stutter either.
+    const latin = render(
+      <DiceLine
+        frame={{
+          ...base,
+          kind: "subsystem",
+          subsystem: "sanity_check",
+          subsystem_label: "Sanity",
+          expr: "sanity",
+        }}
+      />,
+    )
+    expect(latin.container.querySelector(".dice-subsystem")).toBeNull()
+  })
+
+  it("falls back to the raw subsystem id when the server sends no label", () => {
+    const { container } = render(
+      <DiceLine frame={{ ...base, kind: "subsystem", subsystem: "sanity_check" }} />,
+    )
+    const chip = container.querySelector(".dice-subsystem")
+    expect(chip?.textContent).toBe("sanity_check")
+    expect(chip).not.toHaveAttribute("title")
+  })
+
   it("renders an opposed check's two sides and marks the winner", () => {
     const { container } = render(
       <DiceLine

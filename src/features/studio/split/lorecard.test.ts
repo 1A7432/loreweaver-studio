@@ -121,6 +121,41 @@ describe("lorecard round trip", () => {
     expect(validateProject(back).specs).toEqual(specs)
   })
 
+  it("carries an enum's option_labels (protocol 2.5) through the round trip unchanged", () => {
+    // The forge has no editor for option display names; a card that ships them must
+    // not lose them by passing through the studio.
+    const optionLabels = {
+      zh: { marching: "在道上", camped: "扎营" },
+      en: { marching: "On the road", stale: "kept as written" },
+    }
+    const card = {
+      format: "loreweaver.card",
+      format_version: 1,
+      name: "安土",
+      variables: [
+        {
+          id: "column_state",
+          kind: "enum",
+          options: ["marching", "camped"],
+          default: "marching",
+          option_labels: optionLabels,
+        },
+        { id: "mood", kind: "enum", options: ["calm"], default: "calm" },
+      ],
+    }
+    const { project } = lorecardToProject(card)
+    const specs = validateProject(project).specs
+    expect(specs[0].option_labels).toEqual(optionLabels)
+    expect("option_labels" in specs[1]).toBe(false)
+    const bundle = exportNativeBundle(project, specs) as { variables: Record<string, unknown>[] }
+    expect(bundle.variables[0].option_labels).toEqual(optionLabels)
+    expect("option_labels" in bundle.variables[1]).toBe(false)
+
+    // A variable whose kind the author changes away from enum stops shipping them.
+    project.variables[0].kind = "text"
+    expect("option_labels" in validateProject(project).specs[0]).toBe(false)
+  })
+
   it("refuses v0 outright — one format, the same one the engine reads", () => {
     const v0 = {
       format: "loreweaver.card",
