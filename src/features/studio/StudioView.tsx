@@ -113,7 +113,7 @@ export default function StudioView() {
       )
     } catch (cause) {
       const problem = describeImportFailure(cause, file.name)
-      setNotice(t(`studio.${problem.key}`, problem.params))
+      setNotice(t(`studio.${problem.key}`, problem.params ?? {}))
     }
   }
 

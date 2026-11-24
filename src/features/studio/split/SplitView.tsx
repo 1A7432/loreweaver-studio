@@ -60,7 +60,7 @@ export default function SplitView() {
         card = await parseCardBytes(file.bytes, file.name)
       } catch (cause) {
         const problem = describeImportFailure(cause, file.name)
-        setError(t(`studio.${problem.key}`, problem.params))
+        setError(t(`studio.${problem.key}`, problem.params ?? {}))
         return
       }
       const split = splitCard(card)
@@ -308,7 +308,7 @@ export default function SplitView() {
             <ul className="issue-list">
               {session.initvarProblems.map((problem, index) => (
                 <li key={index} className="split-error">
-                  {t(`studio.${problem.key}`, problem.params)}
+                  {t(`studio.${problem.key}`, problem.params ?? {})}
                 </li>
               ))}
             </ul>

@@ -9,7 +9,7 @@ const encoder = new TextEncoder()
 /** The sentence the UI actually shows, so a missing key or an unfilled param
  * fails the test rather than shipping "studio.importErr.x" to an author. */
 function rendered(problem: { key: string; params?: Record<string, unknown> }): string {
-  return i18n.t(`studio.${problem.key}`, problem.params)
+  return i18n.t(`studio.${problem.key}`, problem.params ?? {})
 }
 
 describe("describeImportFailure", () => {

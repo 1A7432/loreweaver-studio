@@ -136,7 +136,7 @@ function ItemRow({ item }: { item: PackItem }) {
         <ul className="issue-list">
           {item.initvarProblems.map((problem, index) => (
             <li key={index} className="split-error">
-              {t(`studio.${problem.key}`, problem.params)}
+              {t(`studio.${problem.key}`, problem.params ?? {})}
             </li>
           ))}
         </ul>
@@ -507,7 +507,7 @@ function RulepackSection() {
       {reading.issues.length > 0 || scriptIssues.length > 0 ? (
         <ul className="issue-list">
           {[...reading.issues, ...scriptIssues].map((issue, index) => (
-            <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params)}</li>
+            <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params ?? {})}</li>
           ))}
         </ul>
       ) : null}
@@ -1179,7 +1179,7 @@ export default function PackWizard() {
       ) : null}
       {store.loadError !== null ? (
         <p className="studio-notice split-error" role="alert">
-          {t(`studio.${store.loadError.key}`, store.loadError.params)}
+          {t(`studio.${store.loadError.key}`, store.loadError.params ?? {})}
         </p>
       ) : null}
 
@@ -1476,7 +1476,7 @@ export default function PackWizard() {
           {otherIssues.length > 0 ? (
             <ul className="issue-list">
               {otherIssues.map((issue, index) => (
-                <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params)}</li>
+                <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params ?? {})}</li>
               ))}
             </ul>
           ) : (

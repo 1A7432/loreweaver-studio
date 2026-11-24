@@ -732,7 +732,7 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
         <ul className="issue-list">
           {problems.map((problem, index) => (
             <li key={`${problem.key}-${index}`}>
-              {t(`studio.panels.problem.${problem.key}`, problem.params)}
+              {t(`studio.panels.problem.${problem.key}`, problem.params ?? {})}
             </li>
           ))}
         </ul>

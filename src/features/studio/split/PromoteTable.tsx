@@ -137,7 +137,7 @@ function PromoteRow({
       {validation !== null && validation.errors.length > 0 ? (
         <ul className="issue-list">
           {validation.errors.map((issue, index) => (
-            <li key={index}>{t(`studio.err.${issue.key}`, issue.params)}</li>
+            <li key={index}>{t(`studio.err.${issue.key}`, issue.params ?? {})}</li>
           ))}
         </ul>
       ) : null}

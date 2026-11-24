@@ -64,7 +64,7 @@ export default function LintPanel({
               <span className={finding.severity === "warn" ? "split-badge world" : "split-badge"}>
                 {t(`studio.lint.severity.${finding.severity}`)}
               </span>{" "}
-              {t(`studio.lint.msg.${finding.key}`, finding.params)}
+              {t(`studio.lint.msg.${finding.key}`, finding.params ?? {})}
             </li>
           ))}
         </ul>

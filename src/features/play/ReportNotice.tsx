@@ -7,10 +7,11 @@
 // The HTML is never shown here (protocol rule): Save writes the verified file,
 // Open hands it to the system browser.
 
+import type { TFunction } from "i18next"
 import { useTranslation } from "react-i18next"
 import { useReportStore, type ReportOffer } from "../../store/report"
 
-function errorText(t: (key: string, options?: Record<string, unknown>) => string, error: string): string {
+function errorText(t: TFunction, error: string): string {
   return error.startsWith("play.report.err.") ? t(error) : error
 }
 

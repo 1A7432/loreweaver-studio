@@ -44,7 +44,7 @@ function PregenRow({ pregen, issues }: { pregen: ForgePregen; issues: Issue[] })
       {issues.length > 0 ? (
         <ul className="issue-list">
           {issues.map((issue, i) => (
-            <li key={i}>{t(`studio.err.${issue.key}`, issue.params)}</li>
+            <li key={i}>{t(`studio.err.${issue.key}`, issue.params ?? {})}</li>
           ))}
         </ul>
       ) : null}

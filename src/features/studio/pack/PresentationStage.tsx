@@ -42,7 +42,7 @@ function IssueLine({ issue }: { issue: Issue }) {
   const { t } = useTranslation()
   return (
     <p className="studio-hint split-error" role="alert">
-      {t(`studio.pack.err.${issue.key}`, issue.params)}
+      {t(`studio.pack.err.${issue.key}`, issue.params ?? {})}
     </p>
   )
 }
@@ -472,7 +472,7 @@ export default function PresentationStage({ issues }: { issues: Issue[] }) {
       {kitWideIssues.length > 0 ? (
         <ul className="issue-list">
           {kitWideIssues.map((issue, index) => (
-            <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params)}</li>
+            <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params ?? {})}</li>
           ))}
         </ul>
       ) : null}
