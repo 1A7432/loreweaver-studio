@@ -23,7 +23,7 @@ jobs:
     name: One version, everywhere the bundle reads one
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: tauri.conf.json, package.json, Cargo workspace — and the tag — agree
         run: |
           CONF=$(jq -r .version src-tauri/tauri.conf.json)
@@ -63,7 +63,7 @@ jobs:
             args: --bundles nsis
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -78,7 +78,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.name }}
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
