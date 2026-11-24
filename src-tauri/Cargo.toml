@@ -23,17 +23,17 @@ tauri-plugin-dialog = "2"
 # Hands a saved session report to the system browser. Called from Rust only:
 # the WebView holds no opener permission. `~2.5`: 2.6+ requires tauri 2.12, and
 # the tauri crate moves together with @tauri-apps/api, not as a side effect.
-tauri-plugin-opener = "~2.5"
+tauri-plugin-opener = "~2.7"
 # Remembers the window's size and position between launches. Rust-side only:
 # no capability grants its commands to the WebView. `~2.4`: 2.5+ requires
 # tauri 2.12 (same pin reason as the opener above).
-tauri-plugin-window-state = "~2.4"
-base64 = "0.22"
+tauri-plugin-window-state = "~2.5"
+base64 = "0.23"
 # LLM keys live in the OS credential store; the WebView never sees them.
 # LLM requests go out from Rust (CSP stays strict, no CORS, key stays native-side).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Panel assets are content-addressed; bytes are verified against their sha256
 # before they may enter the cache or be served to a panel iframe.
-sha2 = "0.10"
+sha2 = "0.11"
 # Decode percent-encoded panel:// request paths (author asset names may be non-ASCII).
 percent-encoding = "2"
