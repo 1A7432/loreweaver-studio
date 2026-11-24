@@ -17,6 +17,12 @@ updates:
     groups:
       web-deps:
         patterns: ["*"]
+    # TypeScript 7 waits for typescript-eslint: its 8.x line refuses to run on
+    # TS 7.0 ("typescript-eslint does not support TS 7.0"), which fails lint for
+    # the whole grouped PR. Drop this once a typescript-eslint release supports it.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
