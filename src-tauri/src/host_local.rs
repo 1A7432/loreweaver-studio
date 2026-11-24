@@ -17,8 +17,8 @@
 //! keeper key and write the `keeper-key.txt` sidecar next to it; readiness is
 //! the base32 iroh ticket appearing on stderr.
 
+use crate::asset_cache::sha256_hex;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -240,12 +240,6 @@ fn parse_sidecar_key(text: &str) -> Option<String> {
                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
         valid.then(|| key.to_owned())
     })
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
 }
 
 #[derive(serde::Deserialize, Serialize)]
