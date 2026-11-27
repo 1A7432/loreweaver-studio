@@ -347,17 +347,22 @@ function PartyCard({ party, mine }: { party: PartyView; mine: string | null }) {
             {character.player ? (
               <span className="desk-tag">{stripControlChars(character.player.name)}</span>
             ) : null}
-            {character.resources.map((resource) => (
-              <span key={resource.id} className="party-stat">
-                {stripControlChars(resource.label)} {resource.value}
-                {resource.max > 0 ? `/${resource.max}` : ""}
+            {/* A line of their own: beside the name they squeezed it to nothing in a narrow desk. */}
+            {character.resources.length > 0 || character.status.length > 0 ? (
+              <span className="party-stats">
+                {character.resources.map((resource) => (
+                  <span key={resource.id} className="party-stat">
+                    {stripControlChars(resource.label)} {resource.value}
+                    {resource.max > 0 ? `/${resource.max}` : ""}
+                  </span>
+                ))}
+                {character.status.map((effect) => (
+                  <span key={effect} className="chip chip-effect">
+                    {stripControlChars(effect)}
+                  </span>
+                ))}
               </span>
-            ))}
-            {character.status.map((effect) => (
-              <span key={effect} className="chip chip-effect">
-                {stripControlChars(effect)}
-              </span>
-            ))}
+            ) : null}
           </li>
         ))}
       </ul>

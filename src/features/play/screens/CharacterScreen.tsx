@@ -278,7 +278,7 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
           ) : null}
           {[character.attributes, character.skills].map((stats, index) =>
             stats.length > 0 ? (
-              <table key={index} className="play-table">
+              <table key={index} className="play-table sheet-grid">
                 <tbody>
                   {stats.map((stat) => (
                     <StatRow key={stat.key} stat={stat} editable={canWrite} onWrite={write} />

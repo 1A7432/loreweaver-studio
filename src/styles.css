@@ -432,6 +432,14 @@ body {
   overflow-y: auto;
   padding: 16px;
   background: var(--bg-inset);
+  /* The desk's sections (panels, the state cards, pictures, sounds) keep the cards' own gap. */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.desk-pane > * {
+  flex-shrink: 0;
 }
 
 /* ---- Narrative log ---- */
@@ -1003,15 +1011,26 @@ button.npc-line-toggle {
 .party-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   font-size: 13px;
 }
 
 .party-name {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 4em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A character's numbers, on a line of their own under the name and its player. */
+.party-stats {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
 }
 
 .party-row.is-offline .party-name {
@@ -1044,6 +1063,7 @@ button.npc-line-toggle {
 .party-stat {
   font: 11px/1 var(--font-mono);
   color: var(--ink-dim);
+  white-space: nowrap;
 }
 
 .presence-dot {
@@ -3253,6 +3273,15 @@ button.npc-line-toggle {
   overflow-y: auto;
 }
 
+/* One column in the middle of the window: pinned to the left edge it left the right 40% of a
+   wide window empty. */
+.play-screen-head,
+.play-screen-body {
+  width: 100%;
+  max-width: 760px;
+  margin-inline: auto;
+}
+
 .play-screen-head {
   display: flex;
   align-items: center;
@@ -3272,7 +3301,6 @@ button.npc-line-toggle {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 720px;
 }
 
 .play-form {
@@ -3345,6 +3373,44 @@ button.npc-line-toggle {
 .play-attr-name {
   color: var(--ink-dim);
   white-space: nowrap;
+}
+
+/* A character sheet: one stat per cell, as many to a row as fit — one stat per row made a CoC
+   sheet a column eighty rows long. */
+.play-table.sheet-grid,
+.play-table.sheet-grid tbody {
+  display: block;
+}
+
+.play-table.sheet-grid tbody {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  /* Cells share their borders. */
+  padding: 0 1px 1px 0;
+}
+
+.play-table.sheet-grid tr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border-soft);
+  margin: 0 -1px -1px 0;
+  min-width: 0;
+}
+
+.play-table.sheet-grid td {
+  border: 0;
+}
+
+.play-table.sheet-grid .play-attr-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Attributes, then skills: two tables, told apart by the space between them. */
+.play-table.sheet-grid + .play-table.sheet-grid {
+  margin-top: 6px;
 }
 
 .play-list {
