@@ -3,8 +3,14 @@
 // outcome's label (already in the room's language) and, for a rule subsystem, its name.
 // The colour comes from the outcome's flags; `tier` rides along as a data attribute for
 // shading. Nothing here branches on `outcome.id` or on `detail` — the document forbids
-// both. Of `detail` only its readable `text` is shown, verbatim, when it has one (a plain
-// roll's `"2d6 (5, 5) = 10"`): it then stands in for the notation, total and dice it spells out.
+// both.
+//
+// The words follow the event the way the document says to read it: when the server sent the
+// whole roll as one line (`text` — an opposed roll, a subsystem roll with its consequence, a
+// plain roll), that line is shown after the actor and nothing is composed beside it; otherwise
+// the line is composed from what was rolled for (`label`: the skill or stat), the notation,
+// the total, the target and the outcome's label. `detail.text` is read only where an event
+// has no `text` of its own.
 
 import { stripControlChars, type DiceData } from "loreweaver-protocol/v3"
 import { diceOutcomeClass } from "./rank"
@@ -24,7 +30,10 @@ export default function DiceLine({ data }: { data: DiceData }) {
     typeof data.target === "number" &&
     typeof data.effectiveTarget === "number" &&
     data.effectiveTarget !== data.target
-  const extra = detailText(data)
+  const whole = typeof data.text === "string" ? stripControlChars(data.text).trim() : ""
+  const what = typeof data.label === "string" ? stripControlChars(data.label).trim() : ""
+  const extra = whole ? "" : detailText(data)
+  const actor = stripControlChars(data.actor)
   return (
     <div
       className={`dice-line ${diceOutcomeClass(outcome)}`}
@@ -40,14 +49,18 @@ export default function DiceLine({ data }: { data: DiceData }) {
             {subsystem}
           </span>
         ) : null}
-        {extra
-          ? `${stripControlChars(data.actor)} ${extra}`
-          : stripControlChars(`${data.actor} ${data.expr} = ${data.total}`)}
-        {typeof target === "number" ? ` vs ${target}` : ""}
-        {adjusted ? ` (${data.target})` : ""}
-        {outcome ? ` → ${stripControlChars(outcome.label)}` : ""}
+        {whole
+          ? `${actor}: ${whole}`
+          : extra
+            ? `${actor} ${extra}`
+            : `${actor} ${what ? `${what} ` : ""}${stripControlChars(`${data.expr} = ${data.total}`)}`}
+        {!whole && typeof target === "number" ? ` vs ${target}` : ""}
+        {!whole && adjusted ? ` (${data.target})` : ""}
+        {!whole && outcome ? ` → ${stripControlChars(outcome.label)}` : ""}
       </span>
-      {!extra && data.rolls.length > 0 ? <span className="dice-rolls">[{data.rolls.join(", ")}]</span> : null}
+      {!whole && !extra && data.rolls.length > 0 ? (
+        <span className="dice-rolls">[{data.rolls.join(", ")}]</span>
+      ) : null}
     </div>
   )
 }

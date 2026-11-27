@@ -79,6 +79,63 @@ describe("DiceLine", () => {
     expect(container.querySelector(".dice-line")).toHaveClass("rank-neutral")
   })
 
+  it("says what a check was rolled for: the skill, as the rule system names it", () => {
+    const { container } = render(
+      <DiceLine
+        data={{
+          ...CHECK,
+          actor: "沈青",
+          label: "知识",
+          rolls: [31],
+          total: 31,
+          target: 65,
+          effectiveTarget: 65,
+        }}
+      />,
+    )
+    expect(container.querySelector(".dice-text")).toHaveTextContent(/^沈青 知识 1d100 = 31 vs 65 → Success$/)
+    // A label from a server is content.
+    const dirty = render(<DiceLine data={{ ...CHECK, label: "Spot\u001b[2J Hidden" }} />)
+    expect(dirty.container.querySelector(".dice-text")?.textContent ?? "").not.toContain("\u001b")
+  })
+
+  it("shows the server's whole line when it sent one, and composes nothing beside it", () => {
+    // A sanity roll as the engine emits it today: the line carries the consequence.
+    const sanity: DiceData = {
+      actor: "林夏",
+      kind: "subsystem",
+      subsystem: "sanity_check",
+      subsystemLabel: "理智",
+      label: "理智",
+      expr: "1d100",
+      rolls: [54],
+      total: 54,
+      target: 70,
+      text: "理智 54/70（成功）：失去 1（1 = 1），理智 70 → 69",
+      outcome: outcome({ label: "成功" }),
+      detail: { stat: "SAN", loss: 1, before: 70, after: 69 },
+    }
+    const { container } = render(<DiceLine data={sanity} />)
+    expect(container.querySelector(".dice-text")).toHaveTextContent(
+      "林夏: 理智 54/70（成功）：失去 1（1 = 1），理智 70 → 69",
+    )
+    expect(container.querySelector(".dice-text")?.textContent ?? "").not.toContain("vs 70")
+    expect(container.querySelector(".dice-rolls")).toBeNull()
+    expect(container.querySelector(".dice-line")).toHaveClass("rank-success")
+    // A plain roll carries `text` too (and the same words in `detail.text`): shown once.
+    const roll: DiceData = {
+      actor: "沈青",
+      kind: "roll",
+      expr: "2d6+1",
+      rolls: [3, 1],
+      total: 5,
+      text: "2d6 (3, 1) + 1 = 5",
+      detail: { text: "2d6 (3, 1) + 1 = 5" },
+    }
+    const plain = render(<DiceLine data={roll} />)
+    expect(plain.container.querySelector(".dice-text")).toHaveTextContent(/^沈青: 2d6 \(3, 1\) \+ 1 = 5$/)
+  })
+
   it("names a subsystem by its label in the room's language, the id as the tooltip", () => {
     const sanity: DiceData = {
       actor: "Ada",
