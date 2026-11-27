@@ -1,0 +1,1734 @@
+{
+  "player": {
+    "me": {
+      "member": {
+        "id": "m-ada",
+        "name": "Ada",
+        "role": "player",
+        "roleLabel": "Player"
+      },
+      "character": {
+        "id": "pc-ada",
+        "name": "Ada Lovelace",
+        "pack": "coc7",
+        "status": [],
+        "resources": [
+          {
+            "id": "hp",
+            "label": "HP",
+            "value": 10,
+            "max": 10
+          },
+          {
+            "id": "san",
+            "label": "SAN",
+            "value": 50,
+            "max": 99
+          },
+          {
+            "id": "mp",
+            "label": "MP",
+            "value": 10,
+            "max": 10
+          }
+        ],
+        "attributes": [
+          {
+            "key": "STR",
+            "label": "STR",
+            "value": 50
+          },
+          {
+            "key": "CON",
+            "label": "CON",
+            "value": 50
+          },
+          {
+            "key": "SIZ",
+            "label": "SIZ",
+            "value": 50
+          },
+          {
+            "key": "DEX",
+            "label": "DEX",
+            "value": 50
+          },
+          {
+            "key": "APP",
+            "label": "APP",
+            "value": 50
+          },
+          {
+            "key": "INT",
+            "label": "INT",
+            "value": 50
+          },
+          {
+            "key": "POW",
+            "label": "POW",
+            "value": 50
+          },
+          {
+            "key": "EDU",
+            "label": "EDU",
+            "value": 50
+          },
+          {
+            "key": "LUC",
+            "label": "Luck",
+            "value": 50
+          },
+          {
+            "key": "HP",
+            "label": "HP",
+            "value": 10
+          },
+          {
+            "key": "MP",
+            "label": "MP",
+            "value": 10
+          },
+          {
+            "key": "SAN",
+            "label": "Sanity",
+            "value": 50
+          },
+          {
+            "key": "HPMAX",
+            "label": "Max HP",
+            "value": 10
+          },
+          {
+            "key": "MPMAX",
+            "label": "Max MP",
+            "value": 10
+          },
+          {
+            "key": "SANMAX",
+            "label": "Max Sanity",
+            "value": 99
+          },
+          {
+            "key": "IDEA",
+            "label": "灵感",
+            "value": 50
+          },
+          {
+            "key": "KNOW",
+            "label": "知识",
+            "value": 50
+          }
+        ],
+        "skills": [
+          {
+            "key": "会计",
+            "label": "Accounting",
+            "value": 5
+          },
+          {
+            "key": "人类学",
+            "label": "Anthropology",
+            "value": 1
+          },
+          {
+            "key": "估价",
+            "label": "Appraise",
+            "value": 5
+          },
+          {
+            "key": "考古学",
+            "label": "Archaeology",
+            "value": 1
+          },
+          {
+            "key": "取悦",
+            "label": "Charm",
+            "value": 15
+          },
+          {
+            "key": "攀爬",
+            "label": "Climb",
+            "value": 20
+          },
+          {
+            "key": "计算机使用",
+            "label": "Computer Use",
+            "value": 5
+          },
+          {
+            "key": "信用",
+            "label": "Credit Rating",
+            "value": 0
+          },
+          {
+            "key": "克苏鲁神话",
+            "label": "Cthulhu Mythos",
+            "value": 0
+          },
+          {
+            "key": "乔装",
+            "label": "Disguise",
+            "value": 5
+          },
+          {
+            "key": "汽车驾驶",
+            "label": "Drive Auto",
+            "value": 20
+          },
+          {
+            "key": "电气维修",
+            "label": "Electrical Repair",
+            "value": 10
+          },
+          {
+            "key": "电子学",
+            "label": "Electronics",
+            "value": 1
+          },
+          {
+            "key": "话术",
+            "label": "Fast Talk",
+            "value": 5
+          },
+          {
+            "key": "急救",
+            "label": "First Aid",
+            "value": 30
+          },
+          {
+            "key": "历史",
+            "label": "History",
+            "value": 5
+          },
+          {
+            "key": "恐吓",
+            "label": "Intimidate",
+            "value": 15
+          },
+          {
+            "key": "跳跃",
+            "label": "Jump",
+            "value": 20
+          },
+          {
+            "key": "法律",
+            "label": "Law",
+            "value": 5
+          },
+          {
+            "key": "图书馆",
+            "label": "Library Use",
+            "value": 20
+          },
+          {
+            "key": "聆听",
+            "label": "Listen",
+            "value": 20
+          },
+          {
+            "key": "锁匠",
+            "label": "Locksmith",
+            "value": 1
+          },
+          {
+            "key": "机械维修",
+            "label": "Mechanical Repair",
+            "value": 10
+          },
+          {
+            "key": "医学",
+            "label": "Medicine",
+            "value": 1
+          },
+          {
+            "key": "博物",
+            "label": "Natural World",
+            "value": 10
+          },
+          {
+            "key": "导航",
+            "label": "Navigate",
+            "value": 10
+          },
+          {
+            "key": "神秘学",
+            "label": "Occult",
+            "value": 5
+          },
+          {
+            "key": "操作重型机械",
+            "label": "Operate Heavy Machinery",
+            "value": 1
+          },
+          {
+            "key": "说服",
+            "label": "Persuade",
+            "value": 10
+          },
+          {
+            "key": "精神分析",
+            "label": "Psychoanalysis",
+            "value": 1
+          },
+          {
+            "key": "心理学",
+            "label": "Psychology",
+            "value": 10
+          },
+          {
+            "key": "骑乘",
+            "label": "Ride",
+            "value": 5
+          },
+          {
+            "key": "妙手",
+            "label": "Sleight of Hand",
+            "value": 10
+          },
+          {
+            "key": "侦查",
+            "label": "Spot Hidden",
+            "value": 25
+          },
+          {
+            "key": "潜行",
+            "label": "Stealth",
+            "value": 20
+          },
+          {
+            "key": "游泳",
+            "label": "Swim",
+            "value": 20
+          },
+          {
+            "key": "投掷",
+            "label": "Throw",
+            "value": 20
+          },
+          {
+            "key": "追踪",
+            "label": "Track",
+            "value": 10
+          },
+          {
+            "key": "驯兽",
+            "label": "Animal Handling",
+            "value": 5
+          },
+          {
+            "key": "潜水",
+            "label": "Diving",
+            "value": 1
+          },
+          {
+            "key": "爆破",
+            "label": "Demolitions",
+            "value": 1
+          },
+          {
+            "key": "读唇",
+            "label": "Read Lips",
+            "value": 1
+          },
+          {
+            "key": "催眠",
+            "label": "Hypnosis",
+            "value": 1
+          },
+          {
+            "key": "炮术",
+            "label": "Artillery",
+            "value": 1
+          },
+          {
+            "key": "手枪",
+            "label": "Firearms (Handgun)",
+            "value": 20
+          },
+          {
+            "key": "步霰",
+            "label": "Firearms (Rifle/Shotgun)",
+            "value": 25
+          },
+          {
+            "key": "斗殴",
+            "label": "Fighting (Brawl)",
+            "value": 20
+          },
+          {
+            "key": "闪避",
+            "label": "Dodge",
+            "value": 25
+          },
+          {
+            "key": "母语",
+            "label": "Language (Own)",
+            "value": 50
+          }
+        ]
+      }
+    },
+    "party": {
+      "members": [
+        {
+          "id": "m-ada",
+          "name": "Ada",
+          "role": "player",
+          "online": true,
+          "character": "pc-ada"
+        },
+        {
+          "id": "m-bao",
+          "name": "Bao",
+          "role": "player",
+          "online": true,
+          "character": "pc-bao"
+        },
+        {
+          "id": "m-root",
+          "name": "Root",
+          "role": "admin",
+          "online": true,
+          "character": null
+        },
+        {
+          "id": "m-eve",
+          "name": "Eve",
+          "role": "observer",
+          "online": true,
+          "character": null
+        }
+      ],
+      "characters": [
+        {
+          "id": "pc-ada",
+          "name": "Ada Lovelace",
+          "pack": "coc7",
+          "status": [],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": {
+            "id": "m-ada",
+            "name": "Ada"
+          }
+        },
+        {
+          "id": "pc-bao",
+          "name": "Bao Zheng",
+          "pack": "coc7",
+          "status": ["poisoned"],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": {
+            "id": "m-bao",
+            "name": "Bao"
+          }
+        },
+        {
+          "id": "companion",
+          "name": "Rex",
+          "pack": "coc7",
+          "status": [],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": null
+        }
+      ],
+      "initiative": {
+        "round": 1,
+        "acting": "Ada Lovelace",
+        "order": [
+          {
+            "name": "Ada Lovelace",
+            "value": 70
+          },
+          {
+            "name": "Cultist",
+            "value": 40
+          }
+        ]
+      }
+    },
+    "scene": {
+      "name": "The Farm",
+      "focus": "Searching the barn",
+      "established": [
+        {
+          "text": "The mill burned down",
+          "at": null
+        }
+      ],
+      "time": "Day 1 08:00",
+      "clockModule": null,
+      "round": 1
+    },
+    "variables": {
+      "module": [
+        {
+          "id": "morale",
+          "kind": "number",
+          "label": "Morale",
+          "value": 7,
+          "min": 0,
+          "max": 10
+        }
+      ],
+      "tree": [
+        {
+          "path": "stats.hp",
+          "value": 10
+        }
+      ]
+    },
+    "characters": {
+      "claimable": [
+        {
+          "id": "pregen-holmes",
+          "name": "Holmes",
+          "blurb": "A detective.",
+          "source": {
+            "kind": "pack",
+            "id": "demo"
+          },
+          "player": null
+        }
+      ],
+      "systems": [
+        {
+          "id": "coc7",
+          "label": "CoC",
+          "active": true
+        },
+        {
+          "id": "dnd5e",
+          "label": "DnD5e",
+          "active": false
+        }
+      ],
+      "mine": "pc-ada"
+    },
+    "commands": {
+      "commands": [
+        {
+          "id": "roll",
+          "source": "engine",
+          "title": "Roll dice",
+          "description": "Roll a dice expression for the table to see. A comparison straight after a dice group counts the dice that meet it (5d10>=7); compare a total in parentheses ((5d10)>6). d% is a d100. N# rolls N times; adv/dis keeps the better or worse of two.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "expr": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "repeat": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["adv", "dis"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["roll", "r"],
+            "usage": ".r [N#][expr] [adv|dis] — e.g. .r 3d6+2, .r 2#1d20 adv, .r 5d10>=7"
+          }
+        },
+        {
+          "id": "sheet",
+          "source": "engine",
+          "title": "Character sheet",
+          "description": "Show your sheet, or set values on it: NAME=VALUE (also += and -=), or the dice-bot form NAME VALUE. A value may be dice. clear deletes your character; finalize resets its current pools for its final characteristics.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "set", "clear", "finalize"]
+              },
+              "writes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["=", "+=", "-="]
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "required": ["name", "op", "value"],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["sheet", "st"],
+            "usage": ".st [show] | .st STR=60 HP-=2 | .st 力量60 敏捷50 | .st clear | .st finalize"
+          }
+        },
+        {
+          "id": "new_character",
+          "source": "engine",
+          "title": "New character",
+          "description": "Make a new character in a rule system with its creation word (.coc, .dnd) and play it.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["system"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["coc", "coc7", "dnd", "dnd5e"],
+            "usage": ".coc [name] | .dnd [name]"
+          }
+        },
+        {
+          "id": "pc",
+          "source": "engine",
+          "title": "Character roster",
+          "description": "List the characters this room offers, claim one to play it, or release it again.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "claim", "release"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["pc", "roster"],
+            "usage": ".pc [list] | .pc claim <name> | .pc release [name]"
+          }
+        },
+        {
+          "id": "import",
+          "source": "engine",
+          "title": "Import a card",
+          "description": "Bring in a card — a file you uploaded for import, or one a pack enabled here ships: as the room's world (room admin), or as your character.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "pack": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "card": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "as": {
+                "type": "string",
+                "enum": ["world", "character"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["as"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["import"],
+            "usage": ".import world <file hash> | .import character <file hash> [name] | .import world <pack> <card path> | .import character <pack> <card path> [name]"
+          },
+          "reason": "no_media"
+        },
+        {
+          "id": "help",
+          "source": "engine",
+          "title": "Help",
+          "description": "The commands you can use here, or one command in detail.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["help", "h"],
+            "usage": ".help [command]"
+          }
+        }
+      ]
+    },
+    "room": {
+      "locale": "en",
+      "localeLabel": "English",
+      "system": {
+        "id": "coc7",
+        "label": "CoC"
+      },
+      "variant": null,
+      "keeperMuted": false,
+      "uploads": false
+    },
+    "usage": {
+      "last": null
+    },
+    "packs": {
+      "packs": []
+    },
+    "panels": {
+      "panels": []
+    }
+  },
+  "admin": {
+    "me": {
+      "member": {
+        "id": "m-root",
+        "name": "Root",
+        "role": "admin",
+        "roleLabel": "Admin"
+      },
+      "character": null
+    },
+    "party": {
+      "members": [
+        {
+          "id": "m-ada",
+          "name": "Ada",
+          "role": "player",
+          "online": true,
+          "character": "pc-ada"
+        },
+        {
+          "id": "m-bao",
+          "name": "Bao",
+          "role": "player",
+          "online": true,
+          "character": "pc-bao"
+        },
+        {
+          "id": "m-root",
+          "name": "Root",
+          "role": "admin",
+          "online": true,
+          "character": null
+        },
+        {
+          "id": "m-eve",
+          "name": "Eve",
+          "role": "observer",
+          "online": true,
+          "character": null
+        }
+      ],
+      "characters": [
+        {
+          "id": "pc-ada",
+          "name": "Ada Lovelace",
+          "pack": "coc7",
+          "status": [],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": {
+            "id": "m-ada",
+            "name": "Ada"
+          }
+        },
+        {
+          "id": "pc-bao",
+          "name": "Bao Zheng",
+          "pack": "coc7",
+          "status": ["poisoned"],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": {
+            "id": "m-bao",
+            "name": "Bao"
+          }
+        },
+        {
+          "id": "companion",
+          "name": "Rex",
+          "pack": "coc7",
+          "status": [],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": null
+        }
+      ],
+      "initiative": {
+        "round": 1,
+        "acting": "Ada Lovelace",
+        "order": [
+          {
+            "name": "Ada Lovelace",
+            "value": 70
+          },
+          {
+            "name": "Cultist",
+            "value": 40
+          }
+        ]
+      }
+    },
+    "scene": {
+      "name": "The Farm",
+      "focus": "Searching the barn",
+      "established": [
+        {
+          "text": "The mill burned down",
+          "at": null
+        }
+      ],
+      "time": "Day 1 08:00",
+      "clockModule": null,
+      "round": 1
+    },
+    "variables": {
+      "module": [
+        {
+          "id": "morale",
+          "kind": "number",
+          "label": "Morale",
+          "value": 7,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "id": "doom",
+          "kind": "text",
+          "label": "MODVAR-KEEPER-LABEL",
+          "value": "MODVAR-KEEPER-VALUE",
+          "hidden": true
+        }
+      ],
+      "tree": [
+        {
+          "path": "stats.hp",
+          "value": 10
+        },
+        {
+          "path": "plot.ending",
+          "value": "VAR-UNEXPOSED-VALUE",
+          "hidden": true
+        }
+      ]
+    },
+    "characters": {
+      "claimable": [
+        {
+          "id": "pregen-holmes",
+          "name": "Holmes",
+          "blurb": "A detective.",
+          "source": {
+            "kind": "pack",
+            "id": "demo"
+          },
+          "player": null
+        }
+      ],
+      "systems": [
+        {
+          "id": "coc7",
+          "label": "CoC",
+          "active": true
+        },
+        {
+          "id": "dnd5e",
+          "label": "DnD5e",
+          "active": false
+        }
+      ],
+      "mine": null
+    },
+    "commands": {
+      "commands": [
+        {
+          "id": "roll",
+          "source": "engine",
+          "title": "Roll dice",
+          "description": "Roll a dice expression for the table to see. A comparison straight after a dice group counts the dice that meet it (5d10>=7); compare a total in parentheses ((5d10)>6). d% is a d100. N# rolls N times; adv/dis keeps the better or worse of two.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "expr": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "repeat": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["adv", "dis"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["roll", "r"],
+            "usage": ".r [N#][expr] [adv|dis] — e.g. .r 3d6+2, .r 2#1d20 adv, .r 5d10>=7"
+          }
+        },
+        {
+          "id": "sheet",
+          "source": "engine",
+          "title": "Character sheet",
+          "description": "Show your sheet, or set values on it: NAME=VALUE (also += and -=), or the dice-bot form NAME VALUE. A value may be dice. clear deletes your character; finalize resets its current pools for its final characteristics.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "set", "clear", "finalize"]
+              },
+              "writes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["=", "+=", "-="]
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "required": ["name", "op", "value"],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["sheet", "st"],
+            "usage": ".st [show] | .st STR=60 HP-=2 | .st 力量60 敏捷50 | .st clear | .st finalize"
+          }
+        },
+        {
+          "id": "new_character",
+          "source": "engine",
+          "title": "New character",
+          "description": "Make a new character in a rule system with its creation word (.coc, .dnd) and play it.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["system"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["coc", "coc7", "dnd", "dnd5e"],
+            "usage": ".coc [name] | .dnd [name]"
+          }
+        },
+        {
+          "id": "pc",
+          "source": "engine",
+          "title": "Character roster",
+          "description": "List the characters this room offers, claim one to play it, or release it again.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "claim", "release"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["pc", "roster"],
+            "usage": ".pc [list] | .pc claim <name> | .pc release [name]"
+          }
+        },
+        {
+          "id": "var",
+          "source": "engine",
+          "title": "Variables",
+          "description": "The room's variables: list them, show a branch to the players or hide it again, set or adjust a value.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "expose", "hide", "set", "add"]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "delta": {
+                "type": "integer",
+                "minimum": -1000000000,
+                "maximum": 1000000000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["var", "vars"],
+            "usage": ".var [list] | expose <path> | hide <path> | set <path> <value> | add <path> <delta>"
+          }
+        },
+        {
+          "id": "undo",
+          "source": "engine",
+          "title": "Undo",
+          "description": "Rewind the room by one or more turns.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "turns": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["undo"],
+            "usage": ".undo [turns]"
+          },
+          "danger": true
+        },
+        {
+          "id": "import",
+          "source": "engine",
+          "title": "Import a card",
+          "description": "Bring in a card — a file you uploaded for import, or one a pack enabled here ships: as the room's world (room admin), or as your character.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "pack": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "card": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "as": {
+                "type": "string",
+                "enum": ["world", "character"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["as"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["import"],
+            "usage": ".import world <file hash> | .import character <file hash> [name] | .import world <pack> <card path> | .import character <pack> <card path> [name]"
+          },
+          "reason": "no_media"
+        },
+        {
+          "id": "help",
+          "source": "engine",
+          "title": "Help",
+          "description": "The commands you can use here, or one command in detail.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["help", "h"],
+            "usage": ".help [command]"
+          }
+        }
+      ]
+    },
+    "room": {
+      "locale": "en",
+      "localeLabel": "English",
+      "system": {
+        "id": "coc7",
+        "label": "CoC"
+      },
+      "variant": null,
+      "keeperMuted": false,
+      "uploads": false
+    },
+    "usage": {
+      "last": null
+    },
+    "packs": {
+      "packs": []
+    },
+    "panels": {
+      "panels": []
+    }
+  },
+  "observer": {
+    "me": {
+      "member": {
+        "id": "m-eve",
+        "name": "Eve",
+        "role": "observer",
+        "roleLabel": "Observer"
+      },
+      "character": null
+    },
+    "party": {
+      "members": [
+        {
+          "id": "m-ada",
+          "name": "Ada",
+          "role": "player",
+          "online": true,
+          "character": "pc-ada"
+        },
+        {
+          "id": "m-bao",
+          "name": "Bao",
+          "role": "player",
+          "online": true,
+          "character": "pc-bao"
+        },
+        {
+          "id": "m-root",
+          "name": "Root",
+          "role": "admin",
+          "online": true,
+          "character": null
+        },
+        {
+          "id": "m-eve",
+          "name": "Eve",
+          "role": "observer",
+          "online": true,
+          "character": null
+        }
+      ],
+      "characters": [
+        {
+          "id": "pc-ada",
+          "name": "Ada Lovelace",
+          "pack": "coc7",
+          "status": [],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": {
+            "id": "m-ada",
+            "name": "Ada"
+          }
+        },
+        {
+          "id": "pc-bao",
+          "name": "Bao Zheng",
+          "pack": "coc7",
+          "status": ["poisoned"],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": {
+            "id": "m-bao",
+            "name": "Bao"
+          }
+        },
+        {
+          "id": "companion",
+          "name": "Rex",
+          "pack": "coc7",
+          "status": [],
+          "resources": [
+            {
+              "id": "hp",
+              "label": "HP",
+              "value": 10,
+              "max": 10
+            },
+            {
+              "id": "san",
+              "label": "SAN",
+              "value": 50,
+              "max": 99
+            },
+            {
+              "id": "mp",
+              "label": "MP",
+              "value": 10,
+              "max": 10
+            }
+          ],
+          "player": null
+        }
+      ],
+      "initiative": {
+        "round": 1,
+        "acting": "Ada Lovelace",
+        "order": [
+          {
+            "name": "Ada Lovelace",
+            "value": 70
+          },
+          {
+            "name": "Cultist",
+            "value": 40
+          }
+        ]
+      }
+    },
+    "scene": {
+      "name": "The Farm",
+      "focus": "Searching the barn",
+      "established": [
+        {
+          "text": "The mill burned down",
+          "at": null
+        }
+      ],
+      "time": "Day 1 08:00",
+      "clockModule": null,
+      "round": 1
+    },
+    "variables": {
+      "module": [
+        {
+          "id": "morale",
+          "kind": "number",
+          "label": "Morale",
+          "value": 7,
+          "min": 0,
+          "max": 10
+        }
+      ],
+      "tree": [
+        {
+          "path": "stats.hp",
+          "value": 10
+        }
+      ]
+    },
+    "characters": {
+      "claimable": [
+        {
+          "id": "pregen-holmes",
+          "name": "Holmes",
+          "blurb": "A detective.",
+          "source": {
+            "kind": "pack",
+            "id": "demo"
+          },
+          "player": null
+        }
+      ],
+      "systems": [
+        {
+          "id": "coc7",
+          "label": "CoC",
+          "active": true
+        },
+        {
+          "id": "dnd5e",
+          "label": "DnD5e",
+          "active": false
+        }
+      ],
+      "mine": null
+    },
+    "commands": {
+      "commands": [
+        {
+          "id": "roll",
+          "source": "engine",
+          "title": "Roll dice",
+          "description": "Roll a dice expression for the table to see. A comparison straight after a dice group counts the dice that meet it (5d10>=7); compare a total in parentheses ((5d10)>6). d% is a d100. N# rolls N times; adv/dis keeps the better or worse of two.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "expr": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "repeat": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["adv", "dis"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["roll", "r"],
+            "usage": ".r [N#][expr] [adv|dis] — e.g. .r 3d6+2, .r 2#1d20 adv, .r 5d10>=7"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "sheet",
+          "source": "engine",
+          "title": "Character sheet",
+          "description": "Show your sheet, or set values on it: NAME=VALUE (also += and -=), or the dice-bot form NAME VALUE. A value may be dice. clear deletes your character; finalize resets its current pools for its final characteristics.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "set", "clear", "finalize"]
+              },
+              "writes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["=", "+=", "-="]
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "required": ["name", "op", "value"],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["sheet", "st"],
+            "usage": ".st [show] | .st STR=60 HP-=2 | .st 力量60 敏捷50 | .st clear | .st finalize"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "new_character",
+          "source": "engine",
+          "title": "New character",
+          "description": "Make a new character in a rule system with its creation word (.coc, .dnd) and play it.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["system"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["coc", "coc7", "dnd", "dnd5e"],
+            "usage": ".coc [name] | .dnd [name]"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "pc",
+          "source": "engine",
+          "title": "Character roster",
+          "description": "List the characters this room offers, claim one to play it, or release it again.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "claim", "release"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["pc", "roster"],
+            "usage": ".pc [list] | .pc claim <name> | .pc release [name]"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "import",
+          "source": "engine",
+          "title": "Import a card",
+          "description": "Bring in a card — a file you uploaded for import, or one a pack enabled here ships: as the room's world (room admin), or as your character.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "pack": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "card": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "as": {
+                "type": "string",
+                "enum": ["world", "character"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["as"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["import"],
+            "usage": ".import world <file hash> | .import character <file hash> [name] | .import world <pack> <card path> | .import character <pack> <card path> [name]"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "help",
+          "source": "engine",
+          "title": "Help",
+          "description": "The commands you can use here, or one command in detail.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["help", "h"],
+            "usage": ".help [command]"
+          }
+        }
+      ]
+    },
+    "room": {
+      "locale": "en",
+      "localeLabel": "English",
+      "system": {
+        "id": "coc7",
+        "label": "CoC"
+      },
+      "variant": null,
+      "keeperMuted": false,
+      "uploads": false
+    },
+    "usage": {
+      "last": null
+    },
+    "packs": {
+      "packs": []
+    },
+    "panels": {
+      "panels": []
+    }
+  }
+}

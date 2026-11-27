@@ -1,25 +1,27 @@
-import { useEffect, useRef, useState } from "react"
+// The story as the table saw it (protocol 3.0 §7–§8), derived from the session snapshot
+// on every render: its events in `seq` order, then the Keeper's reply as it streams (a
+// draft bubble, replaced by its `narrative` event inside the session). The session also
+// applies `rewind` and `reset` before this reads anything, so the log is simply what
+// `snapshot.events` holds — plus a "load earlier" control while older history exists
+// (`complete` is false) and a marker where a resume could not replay everything (`gap`).
+
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import {
-  stripControlChars,
-  type ErrorFrame,
-  type NarrativeFrame,
-  type SystemFrame,
-} from "@loreweaver/protocol"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
-import { useSessionStore, type LogEntry, type PendingEcho } from "../../store/session"
+import { stripControlChars, type EventFrame, type NarrativeData } from "loreweaver-protocol/v3"
+import { useConnection, useSessionSnapshot } from "../../store/connection"
 import DiceLine from "./DiceLine"
+import { itemBlocks, logItems, type LogItem } from "./log"
 import UiBlocks from "./UiBlocks"
+import { ImageBlockView } from "./UiRichBlocks"
 
 /**
- * The header over a line, or `null` for none. A player line carries the seat's
- * name only when the server knows it: a join replay of an older engine sends
- * the player's words with no `name` at all, and a label invented for that —
- * the "?" this used to show — is worse than none.
+ * The header over a line, or `null` for none. A player line carries the
+ * speaker's name when the server sends one; a label invented for a line
+ * without it is worse than none.
  */
-function speakerLabel(frame: NarrativeFrame, systemLabel: string): string | null {
+function speakerLabel(frame: NarrativeData, systemLabel: string): string | null {
   if (frame.speaker === "kp") return "KP"
   if (frame.speaker === "npc") return stripControlChars(frame.name ?? "NPC")
   if (frame.speaker === "system") return systemLabel
@@ -41,7 +43,7 @@ const NPC_CLOSE_QUOTES = /[”"」』’]+$/
  * A leading mood parenthetical is not the line: the preview starts at the
  * spoken words (without their opening quote) and the mood comes back apart, so
  * the row shows what was SAID rather than the stage direction. */
-function npcPreview(frame: NarrativeFrame, text: string): { text: string; mood: string; cut: boolean } {
+function npcPreview(frame: NarrativeData, text: string): { text: string; mood: string; cut: boolean } {
   const flat = (frame.format === "markdown" ? text.replace(/[*_`~]|^[>#\s]+/g, "") : text)
     .replace(/\s+/g, " ")
     .trim()
@@ -56,7 +58,7 @@ function npcPreview(frame: NarrativeFrame, text: string): { text: string; mood: 
     : { text: words.replace(NPC_CLOSE_QUOTES, ""), mood, cut: false }
 }
 
-function EntryBody({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
+function EntryBody({ frame, draft }: { frame: NarrativeData; draft?: boolean }) {
   const text = stripControlChars(frame.text)
   return (
     <div className="entry-body">
@@ -90,7 +92,7 @@ function NpcMood({ mood }: { mood: string }) {
  * keeps who spoke (and how it began) in place without making the table read a
  * 300-character speech twice. Nothing is dropped and the order is untouched.
  * The unfolded view is always the original line, mood and quotes included. */
-function NpcEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
+function NpcEntry({ frame, draft }: { frame: NarrativeData; draft?: boolean }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const preview = npcPreview(frame, stripControlChars(frame.text))
@@ -128,7 +130,7 @@ function NpcEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) 
   )
 }
 
-function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boolean }) {
+function NarrativeEntry({ frame, draft }: { frame: NarrativeData; draft?: boolean }) {
   const { t } = useTranslation()
   if (frame.speaker === "npc") return <NpcEntry frame={frame} draft={draft} />
   const label = speakerLabel(frame, t("log.system"))
@@ -140,101 +142,121 @@ function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boole
   )
 }
 
-/**
- * A line this client sent, dimmed until the table reflects it back. One that
- * never made it says so and offers to go again: the words are still here, and
- * retyping them is the player's work for nothing.
- */
-function PendingEntry({ seq, pending }: { seq: number; pending: PendingEcho }) {
-  const { t } = useTranslation()
-  const online = useLegacyConnectionStore((s) => s.status === "online")
-  const resend = useSessionStore((s) => s.resendEcho)
-  const seat = stripControlChars(pending.speaker).trim()
+function SystemLine({ text, level = "info" }: { text: string; level?: "info" | "warn" }) {
   return (
-    <article className={`log-entry speaker-player pending${pending.failed ? " failed" : ""}`}>
-      {seat ? <header className="entry-speaker">{seat}</header> : null}
-      <div className="entry-body">
-        <p className="entry-plain">{stripControlChars(pending.text)}</p>
-        {pending.failed ? null : <span className="pending-mark">{t("session.echoPending")}</span>}
+    <div className={`system-line level-${level}`}>
+      <span>{text}</span>
+    </div>
+  )
+}
+
+/** A file shared with the table: a picture is drawn, anything else is named. */
+function MediaEntry({ event }: { event: Extract<EventFrame, { kind: "media" }> }) {
+  const { t } = useTranslation()
+  const name = stripControlChars(event.data.name)
+  if (event.data.mime.startsWith("image/")) {
+    return (
+      <div className="log-ui">
+        <ImageBlockView
+          block={{ kind: "image", hash: event.data.hash, mime: event.data.mime, caption: name }}
+        />
       </div>
-      {pending.failed ? (
-        <div className="pending-actions">
-          <span className="pending-mark">{t("session.echoFailed")}</span>
-          <button
-            type="button"
-            className="ghost-button pending-resend"
-            disabled={!online}
-            title={online ? undefined : t("session.resendOffline")}
-            onClick={() => resend(seq)}
-          >
-            {t("session.resend")}
-          </button>
-        </div>
-      ) : null}
-    </article>
-  )
+    )
+  }
+  return <SystemLine text={t("session.mediaShared", { name })} />
 }
 
-function SystemEntry({ frame }: { frame: SystemFrame }) {
-  return (
-    <div className={`system-line level-${frame.level}`}>
-      {frame.spinner ? <span className="spinner spinner-inline" aria-hidden="true" /> : null}
-      <span>{stripControlChars(frame.text)}</span>
-    </div>
-  )
-}
-
-/** The server refusing something, told where the player is already looking. */
-function ErrorEntry({ frame }: { frame: ErrorFrame }) {
+const Entry = memo(function Entry({ item }: { item: LogItem }) {
   const { t } = useTranslation()
-  const detail = stripControlChars(frame.message).trim()
-  return (
-    <div className="system-line level-error" role="status">
-      <span>{t("session.serverRefused", { message: detail || frame.code })}</span>
-    </div>
-  )
-}
-
-function Entry({ entry }: { entry: LogEntry }) {
-  switch (entry.kind) {
+  if (item.kind === "draft") {
+    return <NarrativeEntry frame={{ speaker: "kp", text: item.draft.text, format: "markdown" }} draft />
+  }
+  const event = item.event
+  switch (event.kind) {
     case "narrative":
-      return <NarrativeEntry frame={entry.frame} draft={entry.draft} />
+      return <NarrativeEntry frame={event.data} />
     case "dice":
-      return <DiceLine frame={entry.frame} />
-    case "system":
-      return <SystemEntry frame={entry.frame} />
-    case "error":
-      return <ErrorEntry frame={entry.frame} />
-    case "ui":
+      return <DiceLine data={event.data} />
+    case "blocks":
       return (
         <div className="log-ui">
-          <UiBlocks frame={entry.frame} />
+          <UiBlocks blocks={itemBlocks(item)?.blocks ?? []} />
         </div>
       )
-    case "pending":
-      return <PendingEntry seq={entry.seq} pending={entry.pending} />
+    case "media":
+      return <MediaEntry event={event} />
+    case "rewind":
+      return <SystemLine text={t("session.rewound")} />
+    case "reset":
+      return <SystemLine text={t(`session.reset.${event.data.scope}`)} />
   }
+}, sameItem)
+
+/** The log is re-derived on every snapshot (each draft slice among them), but its frames
+ * are immutable: an entry whose event (or draft, or replacement) is the same object need
+ * not render again. */
+function sameItem(before: { item: LogItem }, after: { item: LogItem }): boolean {
+  const a = before.item
+  const b = after.item
+  if (a.kind === "draft") return b.kind === "draft" && a.draft === b.draft
+  if (b.kind === "draft") return false
+  return a.event === b.event && a.blocks === b.blocks
 }
 
 /** How close to the bottom (px) still counts as "following the stream". */
 export const FOLLOW_SLACK_PX = 48
 
-/** How often the log checks whether an un-echoed line has run out of time. */
-export const ECHO_SWEEP_MS = 5_000
+/** History before the window, or a hole a resume left: one control loads the next page. */
+function OlderControl({
+  label,
+  loading,
+  onLoad,
+  online,
+}: {
+  label: string
+  loading: boolean
+  onLoad: () => void
+  online: boolean
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="log-older">
+      <button type="button" className="ghost-button" disabled={!online || loading} onClick={onLoad}>
+        {loading ? (
+          <>
+            <span className="spinner spinner-inline" aria-hidden="true" />
+            {t("session.loadingOlder")}
+          </>
+        ) : (
+          label
+        )}
+      </button>
+    </div>
+  )
+}
 
 export default function NarrativeLog() {
   const { t } = useTranslation()
-  const entries = useSessionStore((s) => s.entries)
-  const expireEchoes = useSessionStore((s) => s.expirePendingEchoes)
+  const connection = useConnection()
+  const snapshot = useSessionSnapshot()
+  const events = snapshot?.events
+  const drafts = snapshot?.drafts
+  const gap = snapshot?.gap ?? null
+  const complete = snapshot?.complete ?? true
+  const online = snapshot?.status === "online"
+  const [loading, setLoading] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   // Streaming turns one reply into dozens of updates; only follow when the
   // reader is already pinned at the bottom, so scrolling up to reread history
   // is never yanked back down mid-stream.
   const pinned = useRef(true)
   const lastTop = useRef(0)
+  // Older events land ABOVE what the reader is looking at: keep their distance
+  // from the bottom so the page does not jump.
+  const anchor = useRef<number | null>(null)
 
   // Only the READER moving the scroll position re-decides whether we are following.
-  // Content growing underneath — a Director image that finishes loading after its entry
+  // Content growing underneath — a picture that finishes loading after its entry
   // was placed — leaves the position alone; it used to count as "scrolled away", and the
   // log stopped following every later turn. Our own follow records where it put the
   // position, because its scroll event arrives a frame later: an image that learned its
@@ -253,10 +275,17 @@ export default function NarrativeLog() {
     lastTop.current = el.scrollTop
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scroller.current
-    if (el && pinned.current) follow(el)
-  }, [entries])
+    if (!el) return
+    if (anchor.current !== null) {
+      el.scrollTop = el.scrollHeight - anchor.current
+      lastTop.current = el.scrollTop
+      anchor.current = null
+      return
+    }
+    if (pinned.current) follow(el)
+  }, [events, drafts])
 
   // Media loads after its entry is laid out and grows the log; keep a following reader at
   // the bottom when it does. `load` does not bubble, so listen in the capture phase.
@@ -270,20 +299,41 @@ export default function NarrativeLog() {
     return () => el.removeEventListener("load", onMediaLoad, true)
   }, [])
 
-  // A line the table never reflected back has to say so rather than sit there
-  // looking sent. The sweep only runs while something is actually waiting.
-  const waiting = entries.some((entry) => entry.kind === "pending" && !entry.pending.failed)
-  useEffect(() => {
-    if (!waiting) return
-    const timer = setInterval(() => expireEchoes(Date.now()), ECHO_SWEEP_MS)
-    return () => clearInterval(timer)
-  }, [waiting, expireEchoes])
+  const loadOlder = () => {
+    if (connection === null) return
+    const el = scroller.current
+    if (el) anchor.current = el.scrollHeight - el.scrollTop
+    setLoading(true)
+    void connection.session
+      .loadOlder()
+      .catch(() => 0)
+      .then((added) => {
+        if (added === 0) anchor.current = null
+        setLoading(false)
+      })
+  }
+
+  const items = logItems(events ?? [], drafts ?? [])
+  // Where the hole a resume left sits: after the last event at or before its start.
+  const gapAt =
+    gap === null ? -1 : items.findIndex((item) => item.kind === "event" && item.event.seq >= gap.before)
 
   return (
     <div className="narrative-log" ref={scroller} onScroll={onScroll}>
-      {entries.length === 0 ? <p className="log-empty">{t("session.empty")}</p> : null}
-      {entries.map((entry) => (
-        <Entry key={entry.seq} entry={entry} />
+      {gap === null && !complete ? (
+        <OlderControl label={t("session.loadOlder")} loading={loading} onLoad={loadOlder} online={online} />
+      ) : null}
+      {gap !== null && gapAt < 0 ? (
+        <OlderControl label={t("session.loadGap")} loading={loading} onLoad={loadOlder} online={online} />
+      ) : null}
+      {items.length === 0 && complete ? <p className="log-empty">{t("session.empty")}</p> : null}
+      {items.map((item, index) => (
+        <Fragment key={item.key}>
+          {index === gapAt ? (
+            <OlderControl label={t("session.loadGap")} loading={loading} onLoad={loadOlder} online={online} />
+          ) : null}
+          <Entry item={item} />
+        </Fragment>
       ))}
     </div>
   )

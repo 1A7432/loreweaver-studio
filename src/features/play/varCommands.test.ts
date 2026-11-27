@@ -1,69 +1,56 @@
 import { describe, expect, it } from "vitest"
-import type { ModuleVariable } from "@loreweaver/protocol"
-import { addVarCommand, isWritable, setVarCommand, stepFor } from "./varCommands"
+import type { ViewModuleVariable } from "loreweaver-protocol/v3"
+import { MAX_VAR_PATH_CHARS, addVarArgs, isWritablePath, setVarArgs, stepFor } from "./varCommands"
 
-function variable(patch: Partial<ModuleVariable>): ModuleVariable {
-  return { id: "fear", label: "Fear", kind: "number", value: 3, ...patch }
+// The engine's view-test room's tracker (server/test/gateway/views/fixture.ts).
+const MORALE: ViewModuleVariable = {
+  id: "morale",
+  kind: "number",
+  label: "Morale",
+  value: 7,
+  min: 0,
+  max: 10,
 }
 
-describe("setVarCommand", () => {
-  it("builds the line the engine's own parser reads", () => {
-    expect(setVarCommand("fear", 7)).toBe(".var set fear 7")
-    expect(setVarCommand("真相进度", 2)).toBe(".var set 真相进度 2")
-    expect(setVarCommand("seen", true)).toBe(".var set seen true")
-    expect(setVarCommand("seen", false)).toBe(".var set seen false")
+describe("setVarArgs", () => {
+  it("builds the `var set` arguments, the value as text — the SERVER parses and checks it", () => {
+    expect(setVarArgs("morale", 8)).toEqual({ op: "set", path: "morale", value: "8" })
+    expect(setVarArgs("flag", true)).toEqual({ op: "set", path: "flag", value: "true" })
+    expect(setVarArgs("mood", "  grim  ")).toEqual({ op: "set", path: "mood", value: "grim" })
   })
 
-  it("passes a text value through — the SERVER validates it against the spec", () => {
-    // `set_modvar` knows the variable's kind, bounds and enum options; a second
-    // opinion here could only ever be a wronger one.
-    expect(setVarCommand("stage", "  风暴  ")).toBe(".var set stage 风暴")
-    expect(setVarCommand("stage", "not an option")).toBe(".var set stage not an option")
+  it("carries a path with a space or CJK as written: it is an argument, not a token", () => {
+    expect(setVarArgs("角色.好感 度", "3")).toEqual({ op: "set", path: "角色.好感 度", value: "3" })
   })
 })
 
-describe("addVarCommand", () => {
-  it("emits integer deltas only", () => {
-    // `cmd_var` runs the payload through `coerce_int`, so anything else fails.
-    expect(addVarCommand("fear", 1)).toBe(".var add fear 1")
-    expect(addVarCommand("fear", -2)).toBe(".var add fear -2")
-    expect(addVarCommand("fear", 1.7)).toBe(".var add fear 1")
-  })
-
-  it("refuses a no-op rather than reporting a change that did not happen", () => {
-    expect(addVarCommand("fear", 0)).toBeNull()
-    expect(addVarCommand("fear", Number.NaN)).toBeNull()
+describe("addVarArgs", () => {
+  it("builds integer deltas only, and refuses a no-op", () => {
+    expect(addVarArgs("morale", 1)).toEqual({ op: "add", path: "morale", delta: 1 })
+    expect(addVarArgs("morale", -2.7)).toEqual({ op: "add", path: "morale", delta: -2 })
+    expect(addVarArgs("morale", 0)).toBeNull()
+    expect(addVarArgs("morale", Number.NaN)).toBeNull()
   })
 })
 
-describe("isWritable", () => {
-  it("allows a hidden variable — hiding governs who SEES it, not who sets it", () => {
-    expect(isWritable(variable({ hidden: true }))).toBe(true)
-  })
-
-  it("refuses an id the command's own tokenizer could not carry", () => {
-    expect(isWritable(variable({ id: "" }))).toBe(false)
-    expect(isWritable(variable({ id: "two words" }))).toBe(false)
+describe("isWritablePath", () => {
+  it("refuses an empty path or one longer than the command takes, counted in characters", () => {
+    expect(isWritablePath("morale")).toBe(true)
+    expect(isWritablePath("  ")).toBe(false)
+    expect(isWritablePath("𠮷".repeat(MAX_VAR_PATH_CHARS))).toBe(true)
+    expect(isWritablePath("a".repeat(MAX_VAR_PATH_CHARS + 1))).toBe(false)
   })
 })
 
 describe("stepFor", () => {
-  it("steps a number by one in each direction", () => {
-    expect(stepFor(variable({}), 1)).toBe(1)
-    expect(stepFor(variable({}), -1)).toBe(-1)
-  })
-
-  it("stops at a declared bound instead of asking for a clamp", () => {
-    // `core.modvars` would clamp and report a change of nothing.
-    expect(stepFor(variable({ value: 10, max: 10 }), 1)).toBeNull()
-    expect(stepFor(variable({ value: 10, max: 10 }), -1)).toBe(-1)
-    expect(stepFor(variable({ value: 0, min: 0 }), -1)).toBeNull()
-    expect(stepFor(variable({ value: 0, min: 0 }), 1)).toBe(1)
+  it("steps by one, and stops at a declared bound instead of asking for a clamp", () => {
+    expect(stepFor(MORALE, 1)).toBe(1)
+    expect(stepFor(MORALE, -1)).toBe(-1)
+    expect(stepFor({ ...MORALE, value: 10 }, 1)).toBeNull()
+    expect(stepFor({ ...MORALE, value: 0 }, -1)).toBeNull()
   })
 
   it("offers no step for a kind that has no arithmetic", () => {
-    expect(stepFor(variable({ kind: "bool", value: true }), 1)).toBeNull()
-    expect(stepFor(variable({ kind: "text", value: "x" }), 1)).toBeNull()
-    expect(stepFor(variable({ kind: "enum", value: "calm" }), 1)).toBeNull()
+    expect(stepFor({ id: "mood", kind: "text", label: "Mood", value: "grim" }, 1)).toBeNull()
   })
 })

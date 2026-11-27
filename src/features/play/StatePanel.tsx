@@ -1,44 +1,41 @@
-import { useEffect, useState } from "react"
+// The desk beside the story: the viewer's character, the room's variables, the party and
+// who is at the table, what can be claimed or imported, the scene, the fight's order, the
+// room's settings and the last turn's token figures — each card one built-in view of
+// protocol 3.0 §10.4, read from the session snapshot as it is now.
+//
+// Every action is a command (`command.run`), offered only when the `commands` view lists
+// it as available to this viewer with the arguments it passes; what comes back is shown
+// on the card that ran it. Admin-only controls appear for the ROOM ADMIN (role `admin`).
+
+import { useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import {
   stripControlChars,
-  type CharacterState,
-  type ModuleVariable,
-  type PackCardEntry,
-  type PregenEntry,
-  type ResourceState,
-  type StateFrame,
-} from "@loreweaver/protocol"
-import { transportSend } from "../../lib/transport"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
-import { useSessionStore } from "../../store/session"
-import AudioDeck from "./AudioDeck"
-import Avatar from "./Avatar"
-import MediaDeck from "./MediaDeck"
+  type CharactersView,
+  type MeView,
+  type PacksView,
+  type PartyView,
+  type ViewModuleVariable,
+  type ViewResource,
+  type ViewTreeLeaf,
+} from "loreweaver-protocol/v3"
+import CommandFeedback from "./CommandFeedback"
 import Meter, { type MeterTone } from "./Meter"
-import { addVarCommand, isWritable, setVarCommand, stepFor } from "./varCommands"
-import UiBlocks from "./UiBlocks"
+import { useCommand, useCommandRunner, useOnline, useRole, useView } from "./room"
+import { addVarArgs, isWritablePath, setVarArgs, stepFor } from "./varCommands"
 
-/**
- * Color a vital resource by its pack-declared id (protocol 2.0 `resources`).
- * The well-known vital ids keep their dedicated tones; anything else a rule
- * pack invents falls back to the generic accent.
- */
+/** The well-known vital ids keep their dedicated tones; anything else a rule system
+ * invents takes the generic accent. */
 function resourceTone(id: string): MeterTone {
   if (id === "hp" || id === "mp" || id === "san") return id
   return "accent"
 }
 
-/**
- * Protocol 2.0 vitals: one generic `resources` entry each — bounded entries
- * render as meters, unbounded ones as plain stat rows, and a `max` of zero
- * means the pool does not apply to this character (hidden, like 1.x MP/SAN).
- * Labels arrive pre-localized to the room locale.
- */
-export function ResourceRow({ resource }: { resource: ResourceState }) {
+/** One resource (`{id, label, value, max}`): a meter, or a plain value when it has no
+ * positive maximum to fill against. The label is already in the viewer's language. */
+export function ResourceRow({ resource }: { resource: ViewResource }) {
   const label = stripControlChars(resource.label)
-  if (typeof resource.max === "number") {
-    if (resource.max <= 0) return null
+  if (resource.max > 0) {
     return <Meter label={label} value={resource.value} max={resource.max} tone={resourceTone(resource.id)} />
   }
   return (
@@ -49,44 +46,47 @@ export function ResourceRow({ resource }: { resource: ResourceState }) {
   )
 }
 
-function CharacterCard({ character }: { character: CharacterState }) {
+function StatusChips({ status }: { status: readonly string[] }) {
+  if (status.length === 0) return null
+  return (
+    <div className="chip-row">
+      {status.map((effect) => (
+        <span key={effect} className="chip chip-effect">
+          {stripControlChars(effect)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function CharacterCard({ character }: { character: NonNullable<MeView["character"]> }) {
   const { t } = useTranslation()
   return (
-    <section className="desk-card">
+    <section className="desk-card" aria-label={t("session.character")}>
       <header className="desk-title">
-        <Avatar ref={character.avatar} name={character.name} />
         {stripControlChars(character.name)}
-        <span className="desk-tag">{stripControlChars(character.system)}</span>
+        <span className="desk-tag">{stripControlChars(character.pack)}</span>
       </header>
       {character.resources.map((resource) => (
         <ResourceRow key={resource.id} resource={resource} />
       ))}
-      {character.status_effects.length > 0 ? (
-        <div className="chip-row">
-          {character.status_effects.map((effect) => (
-            <span key={effect} className="chip chip-effect">
-              {stripControlChars(effect)}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      <span className="visually-hidden">{t("session.character")}</span>
+      <StatusChips status={character.status} />
     </section>
   )
 }
 
-/** On a KEEPER connection, unexposed variables arrive flagged `hidden:true`
- * instead of being filtered out (typed since protocol 1.9). */
-function isHidden(variable: ModuleVariable): boolean {
-  return variable.hidden === true
+/** A value of the variable tree as text: a list joined, nothing as a dash. */
+function scalarText(value: ViewTreeLeaf["value"]): string {
+  if (Array.isArray(value)) return value.map((item) => (item === null ? "—" : String(item))).join(", ")
+  return value === null ? "—" : String(value)
 }
 
 /**
- * v1.6 module variables ("trackers"), rendered by kind in definition order:
- * bounded numbers become meters, unbounded numbers stat rows, bools badges,
- * text/enum values plain chips. Labels arrive pre-localized to the room locale.
+ * A declared variable, by kind: a bounded number is a meter, an unbounded one a value
+ * row, a bool an on/off chip, a text or enum its value (an enum's option name when the
+ * pack gives one, the raw option id as the tooltip — the id is what `var set` takes).
  */
-function VariableRow({ variable }: { variable: ModuleVariable }) {
+function VariableRow({ variable }: { variable: ViewModuleVariable }) {
   const label = stripControlChars(variable.label)
   if (variable.kind === "number") {
     const value = Number(variable.value)
@@ -109,13 +109,8 @@ function VariableRow({ variable }: { variable: ModuleVariable }) {
       </div>
     )
   }
-  // "text" and "enum" both carry an opaque current value. The state frame has
-  // no enum options list, so there is nothing selectable to render (see
-  // PROTOCOL_NOTES.md). Since protocol 2.5 an enum whose pack names its options
-  // carries `value_label` — shown in place of the raw option id, which stays the
-  // tooltip because it is what `.var set`, hooks and conditions use.
   const raw = stripControlChars(String(variable.value))
-  const shown = typeof variable.value_label === "string" ? stripControlChars(variable.value_label).trim() : ""
+  const shown = typeof variable.valueLabel === "string" ? stripControlChars(variable.valueLabel).trim() : ""
   return (
     <div className="var-row" data-kind={variable.kind}>
       <span className="var-label">{label}</span>
@@ -126,38 +121,89 @@ function VariableRow({ variable }: { variable: ModuleVariable }) {
   )
 }
 
-/** The keeper's write control for one tracker (UPSTREAM item 11).
- *
- * Everything goes through the ordinary command path — `.var set` / `.var add`
- * — so the same permission gate, the same `core.modvars` validation (bounds,
- * enum options, bool coercion) and the same state push apply as when a keeper
- * types it. Nothing here validates a value itself: guessing at a spec the
- * client cannot see would only produce a second, wronger opinion. */
-function VariableWrite({ variable }: { variable: ModuleVariable }) {
+function LeafRow({ leaf }: { leaf: ViewTreeLeaf }) {
+  const path = stripControlChars(leaf.path)
+  const description = typeof leaf.description === "string" ? stripControlChars(leaf.description).trim() : ""
+  return (
+    <div className="var-row" data-kind="tree">
+      <span className="var-label" title={description || undefined}>
+        {path}
+      </span>
+      <span className="var-value">{stripControlChars(scalarText(leaf.value))}</span>
+    </div>
+  )
+}
+
+type Run = (id: string, args: Record<string, unknown>) => void
+
+/** A free-text value for `var set`: the RAW value is the placeholder, never a display name. */
+function SetField({
+  label,
+  current,
+  onSet,
+}: {
+  label: string
+  current: string
+  onSet: (value: string) => void
+}) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState("")
-
-  const run = (command: string | null) => {
-    if (command === null) return
-    void transportSend({ type: "input", text: command }).catch(() => {
-      // The transport surfaces failures through status events.
-    })
+  const commit = () => {
+    if (draft.trim() === "") return
+    onSet(draft)
+    setDraft("")
   }
+  return (
+    <>
+      <input
+        className="var-set-input"
+        value={draft}
+        aria-label={t("session.varSet", { label })}
+        placeholder={current}
+        title={current}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit()
+        }}
+      />
+      <button type="button" className="ghost-button" disabled={draft.trim() === ""} onClick={commit}>
+        {t("session.varSetAction")}
+      </button>
+    </>
+  )
+}
 
-  if (!isWritable(variable)) return null
+/** The admin's write controls for one declared variable. */
+function VariableWrite({
+  variable,
+  canSet,
+  canAdd,
+  run,
+}: {
+  variable: ViewModuleVariable
+  canSet: boolean
+  canAdd: boolean
+  run: Run
+}) {
+  const { t } = useTranslation()
+  if (!isWritablePath(variable.id)) return null
+  const label = stripControlChars(variable.label)
   const down = stepFor(variable, -1)
   const up = stepFor(variable, 1)
-
   return (
     <div className="var-write">
-      {variable.kind === "number" ? (
+      {variable.kind === "number" && canAdd ? (
         <>
           <button
             type="button"
             className="ghost-button"
             disabled={down === null}
-            aria-label={t("session.varDecrement", { label: variable.label })}
-            onClick={() => run(addVarCommand(variable.id, down ?? -1))}
+            aria-label={t("session.varDecrement", { label })}
+            onClick={() => {
+              const args = addVarArgs(variable.id, down ?? 0)
+              if (args) run("var", args)
+            }}
           >
             −
           </button>
@@ -165,132 +211,151 @@ function VariableWrite({ variable }: { variable: ModuleVariable }) {
             type="button"
             className="ghost-button"
             disabled={up === null}
-            aria-label={t("session.varIncrement", { label: variable.label })}
-            onClick={() => run(addVarCommand(variable.id, up ?? 1))}
+            aria-label={t("session.varIncrement", { label })}
+            onClick={() => {
+              const args = addVarArgs(variable.id, up ?? 0)
+              if (args) run("var", args)
+            }}
           >
             +
           </button>
         </>
       ) : null}
-      {variable.kind === "bool" ? (
+      {variable.kind === "bool" && canSet ? (
         <button
           type="button"
           className="ghost-button"
-          onClick={() => run(setVarCommand(variable.id, variable.value !== true))}
+          onClick={() => run("var", setVarArgs(variable.id, variable.value !== true))}
         >
           {t("session.varToggle")}
         </button>
-      ) : (
-        <>
-          <input
-            className="var-set-input"
-            value={draft}
-            aria-label={t("session.varSet", { label: variable.label })}
-            // The RAW value, never `value_label`: what the keeper types here is checked
-            // by `core.modvars` against the option ids, not their display names.
-            placeholder={String(variable.value)}
-            title={stripControlChars(String(variable.value))}
-            spellCheck={false}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" || draft.trim() === "") return
-              run(setVarCommand(variable.id, draft))
-              setDraft("")
-            }}
-          />
-          <button
-            type="button"
-            className="ghost-button"
-            disabled={draft.trim() === ""}
-            onClick={() => {
-              run(setVarCommand(variable.id, draft))
-              setDraft("")
-            }}
-          >
-            {t("session.varSetAction")}
-          </button>
-        </>
-      )}
+      ) : null}
+      {variable.kind === "enum" && canSet && variable.options && variable.options.length > 0 ? (
+        <select
+          aria-label={t("session.varSet", { label })}
+          value={String(variable.value)}
+          onChange={(e) => run("var", setVarArgs(variable.id, e.target.value))}
+        >
+          {variable.options.map((option) => (
+            <option key={option} value={option}>
+              {stripControlChars(option)}
+            </option>
+          ))}
+        </select>
+      ) : null}
+      {(variable.kind === "text" ||
+        variable.kind === "number" ||
+        (variable.kind === "enum" && !variable.options?.length)) &&
+      canSet ? (
+        <SetField
+          label={label}
+          current={stripControlChars(String(variable.value))}
+          onSet={(value) => run("var", setVarArgs(variable.id, value))}
+        />
+      ) : null}
     </div>
   )
 }
 
-function VariablesCard({ game }: { game: StateFrame }) {
+function HiddenMark({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
-  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
-  // Off by default: a keeper reads this panel far more often than they write
-  // it, and thirty inline inputs would bury the numbers they came to read.
+  return (
+    <div className="var-hidden-row" title={t("session.hiddenVar")}>
+      <span className="var-lock" aria-label={t("session.hiddenVar")}>
+        🔒
+      </span>
+      {children}
+    </div>
+  )
+}
+
+function VariablesCard() {
+  const { t } = useTranslation()
+  const variables = useView("variables")
+  const admin = useRole() === "admin"
+  const canSet = useCommand("var", ["op", "path", "value"]) !== null
+  const canAdd = useCommand("var", ["op", "path", "delta"]) !== null
+  const { run, feedback, dismiss } = useCommandRunner()
+  // Off by default: an admin reads this card far more often than they write it, and
+  // thirty inline inputs would bury the numbers they came to read.
   const [editing, setEditing] = useState(false)
-  if (!game.variables || game.variables.length === 0) return null
+  if (variables === null || (variables.module.length === 0 && variables.tree.length === 0)) return null
+  const writable = admin && (canSet || canAdd)
+  const send: Run = (id, args) => void run(id, args)
   return (
     <section className="desk-card">
       <header className="desk-title">
         {t("session.trackers")}
-        {isKeeper ? (
+        {writable ? (
           <button type="button" className="ghost-button" onClick={() => setEditing(!editing)}>
             {t(editing ? "session.varEditDone" : "session.varEdit")}
           </button>
         ) : null}
       </header>
-      {isKeeper && editing ? <p className="studio-hint">{t("session.varEditHint")}</p> : null}
+      {writable && editing ? <p className="studio-hint">{t("session.varEditHint")}</p> : null}
       <div className="var-list">
-        {game.variables.map((variable) => {
-          const row = isHidden(variable) ? (
-            <div className="var-hidden-row" title={t("session.hiddenVar")}>
-              <span className="var-lock" aria-label={t("session.hiddenVar")}>
-                🔒
-              </span>
+        {variables.module.map((variable) => (
+          <div key={`m:${variable.id}`} className="var-entry">
+            {variable.hidden ? (
+              <HiddenMark>
+                <VariableRow variable={variable} />
+              </HiddenMark>
+            ) : (
               <VariableRow variable={variable} />
-            </div>
-          ) : (
-            <VariableRow variable={variable} />
-          )
-          return (
-            <div key={variable.id} className="var-entry">
-              {row}
-              {isKeeper && editing ? <VariableWrite variable={variable} /> : null}
-            </div>
-          )
-        })}
+            )}
+            {writable && editing ? (
+              <VariableWrite variable={variable} canSet={canSet} canAdd={canAdd} run={send} />
+            ) : null}
+          </div>
+        ))}
+        {variables.tree.map((leaf) => (
+          <div key={`t:${leaf.path}`} className="var-entry">
+            {leaf.hidden ? (
+              <HiddenMark>
+                <LeafRow leaf={leaf} />
+              </HiddenMark>
+            ) : (
+              <LeafRow leaf={leaf} />
+            )}
+            {writable && editing && canSet && !Array.isArray(leaf.value) && isWritablePath(leaf.path) ? (
+              <div className="var-write">
+                <SetField
+                  label={stripControlChars(leaf.path)}
+                  current={stripControlChars(scalarText(leaf.value))}
+                  onSet={(value) => send("var", setVarArgs(leaf.path, value))}
+                />
+              </div>
+            ) : null}
+          </div>
+        ))}
       </div>
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
     </section>
   )
 }
 
-/** Persistent sidebar regions fed by hook-emitted `ui` frames. */
-function UiPanelCards() {
-  const panels = useSessionStore((s) => s.uiPanels)
-  return (
-    <>
-      {panels.map((panel) => (
-        <section key={panel.key} className="desk-card ui-panel" data-panel-id={panel.key}>
-          <UiBlocks frame={panel.frame} />
-        </section>
-      ))}
-    </>
-  )
-}
-
-function PartyCard({ game }: { game: StateFrame }) {
+function PartyCard({ party, mine }: { party: PartyView; mine: string | null }) {
   const { t } = useTranslation()
-  if (game.party.length === 0) return null
+  if (party.characters.length === 0) return null
   return (
     <section className="desk-card">
       <header className="desk-title">{t("session.party")}</header>
       <ul className="party-list">
-        {game.party.map((member) => (
-          <li
-            key={member.name}
-            className={`party-row${member.active ? " is-active" : ""}${member.online ? "" : " is-offline"}`}
-          >
-            <span className={`presence-dot ${member.online ? "online" : "offline"}`} aria-hidden="true" />
-            <Avatar ref={member.avatar} name={member.name} />
-            <span className="party-name">{stripControlChars(member.name)}</span>
-            {member.ai ? <span className="chip chip-ai">AI</span> : null}
-            {(member.resources ?? []).map((resource) => (
+        {party.characters.map((character) => (
+          <li key={character.id} className={`party-row${character.id === mine ? " is-active" : ""}`}>
+            <span className="party-name">{stripControlChars(character.name)}</span>
+            {character.player ? (
+              <span className="desk-tag">{stripControlChars(character.player.name)}</span>
+            ) : null}
+            {character.resources.map((resource) => (
               <span key={resource.id} className="party-stat">
                 {stripControlChars(resource.label)} {resource.value}
-                {typeof resource.max === "number" && resource.max > 0 ? `/${resource.max}` : ""}
+                {resource.max > 0 ? `/${resource.max}` : ""}
+              </span>
+            ))}
+            {character.status.map((effect) => (
+              <span key={effect} className="chip chip-effect">
+                {stripControlChars(effect)}
               </span>
             ))}
           </li>
@@ -300,227 +365,41 @@ function PartyCard({ game }: { game: StateFrame }) {
   )
 }
 
-/** The module's claimable cast (`state.pregens`, protocol 2.0). The roster was
- * already reaching the tier-2 panel bridge; nothing native rendered it, so a
- * player on the studio could not see — let alone claim — the characters the
- * module ships. Claiming goes through the ordinary command path (`.pc claim
- * <name>`, `gateway/commands.py::cmd_pc`), which is a PLAYER action: claiming
- * is the whole point of a pregen roster. */
-export function PregenCard({ game }: { game: StateFrame }) {
+function PresenceCard({ party }: { party: PartyView }) {
   const { t } = useTranslation()
-  // `claimed_by` is the claiming MEMBER ID on the wire (protocol `PregenEntry`),
-  // so "mine" is the welcome id, never the display name.
-  const youId = useLegacyConnectionStore((s) => s.welcome?.you.id ?? "")
-  const online = useLegacyConnectionStore((s) => s.status === "online")
-  const presence = useSessionStore((s) => s.presence)
-  const pregens = game.pregens ?? []
-  if (pregens.length === 0) return null
-  // Another member's claim reads as their name: the server's own record of it
-  // (`claimed_by_name`, protocol 2.5 — stored at claim time, so it survives the
-  // claimer going offline), else the presence roster, else the bare id rather
-  // than nothing.
-  const nameOf = (pregen: PregenEntry, id: string): string =>
-    (typeof pregen.claimed_by_name === "string" ? stripControlChars(pregen.claimed_by_name).trim() : "") ||
-    presence?.players.find((p) => p.id === id)?.name ||
-    id
-
+  if (party.members.length === 0) return null
+  const online = party.members.filter((member) => member.online).length
   return (
     <section className="desk-card">
-      <header className="desk-title">{t("session.pregens")}</header>
+      <header className="desk-title">
+        {t("session.presence")}
+        <span className="desk-tag">{t("session.online", { n: online })}</span>
+      </header>
       <ul className="party-list">
-        {pregens.map((pregen) => {
-          const claimedBy = pregen.claimed_by.trim()
-          const mine = claimedBy !== "" && claimedBy === youId
-          // Stripped BEFORE the emptiness test: a blurb of control characters alone
-          // must render nothing, not an empty line.
-          const blurb = typeof pregen.blurb === "string" ? stripControlChars(pregen.blurb).trim() : ""
-          return (
-            <li key={pregen.name} className={`party-row pregen-row${claimedBy ? " is-offline" : ""}`}>
-              {/* The blurb (protocol 2.5) is the card's player-facing one-liner — what a
-                  player reads to choose; the author's keeper notes never ride the wire. */}
-              <span className="pregen-text">
-                <span className="party-name">{stripControlChars(pregen.name)}</span>
-                {blurb ? <span className="pregen-blurb">{blurb}</span> : null}
-              </span>
-              {claimedBy ? (
-                <span className="chip">
-                  {mine
-                    ? t("session.pregenYours")
-                    : t("session.pregenClaimed", { name: stripControlChars(nameOf(pregen, claimedBy)) })}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  className="ghost-button"
-                  disabled={!online}
-                  onClick={() => {
-                    void transportSend({ type: "input", text: `.pc claim ${pregen.name}` }).catch(() => {
-                      // The transport surfaces failures through status events.
-                    })
-                  }}
-                >
-                  {t("session.pregenClaim")}
-                </button>
-              )}
-            </li>
-          )
-        })}
+        {party.members.map((member) => (
+          <li key={member.id} className={`party-row${member.online ? "" : " is-offline"}`}>
+            <span className={`presence-dot ${member.online ? "online" : "offline"}`} aria-hidden="true" />
+            <span className="party-name">{stripControlChars(member.name)}</span>
+            {member.role ? <span className="desk-tag">{t(`connect.role.${member.role}`)}</span> : null}
+          </li>
+        ))}
       </ul>
     </section>
   )
 }
 
-/** One importable card row: name + owning pack, the raw ref as tooltip.
- * Importing goes through the ordinary command path, the same lane the chat box
- * uses — the server's own gates keep applying no matter how the ref was
- * discovered.
- *
- * The VERB comes from the card's own kind (protocol 2.3). Every client used to
- * hard-code `pc`, so clicking a module's world card asked the server to build a
- * player character out of a module and failed on a name collision. A world card
- * is module machinery: keeper-only, and it lands through `.import <ref> world`. */
-function PackCardRow({
-  card,
-  online,
-  isKeeper,
-}: {
-  card: PackCardEntry
-  online: boolean
-  isKeeper: boolean
-}) {
+function InitiativeCard({ initiative }: { initiative: NonNullable<PartyView["initiative"]> }) {
   const { t } = useTranslation()
-  const world = card.kind === "world"
-  const locked = world && !isKeeper
-  return (
-    <li className="party-row" title={card.ref}>
-      <span className="party-name">{stripControlChars(card.name)}</span>
-      <span className="desk-tag">{stripControlChars(card.pack)}</span>
-      {world ? <span className="desk-tag">{t("session.packImportWorld")}</span> : null}
-      <button
-        type="button"
-        className="ghost-button"
-        disabled={!online || locked}
-        title={locked ? t("session.packImportKeeperOnly") : undefined}
-        onClick={() => {
-          const verb = world ? "world" : "pc"
-          void transportSend({ type: "input", text: `.import ${card.ref} ${verb}` }).catch(() => {
-            // The transport surfaces failures through status events.
-          })
-        }}
-      >
-        {t("session.packImportAction")}
-      </button>
-    </li>
-  )
-}
-
-/** How long the picker waits for a `pack_cards` reply before it stops claiming
- * to load and offers a retry. An older (<2.2) server never answers the request
- * at all, so without this the card would spin forever. */
-export const PACK_CARDS_REPLY_TIMEOUT_MS = 8_000
-
-/** v2.2 "import from installed pack" picker: opening it asks the server for
- * the card files installed packs ship (`list_pack_cards`), so a player never
- * types a path. `packCards === null` means no reply yet. */
-function PackImportCard() {
-  const { t } = useTranslation()
-  const online = useLegacyConnectionStore((s) => s.status === "online")
-  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
-  const packCards = useSessionStore((s) => s.packCards)
-  const requestPackCards = useSessionStore((s) => s.requestPackCards)
-  const [open, setOpen] = useState(false)
-  const [timedOut, setTimedOut] = useState(false)
-  const waiting = open && packCards === null && !timedOut
-  useEffect(() => {
-    if (!waiting) return
-    const timer = window.setTimeout(() => setTimedOut(true), PACK_CARDS_REPLY_TIMEOUT_MS)
-    return () => window.clearTimeout(timer)
-  }, [waiting])
-  if (!online && !open) return null
+  if (initiative.order.length === 0) return null
   return (
     <section className="desk-card">
       <header className="desk-title">
-        {t("session.packImport")}
-        <button
-          type="button"
-          className="ghost-button"
-          onClick={() => {
-            if (!open) {
-              setTimedOut(false)
-              requestPackCards()
-            }
-            setOpen(!open)
-          }}
-        >
-          {t(open ? "session.packImportClose" : "session.packImportBrowse")}
-        </button>
+        {t("session.initiative")}
+        <span className="desk-tag">{t("session.round", { n: initiative.round })}</span>
       </header>
-      {open ? (
-        packCards === null ? (
-          timedOut ? (
-            <p className="studio-hint">
-              {t("session.packImportTimeout")}{" "}
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => {
-                  setTimedOut(false)
-                  requestPackCards()
-                }}
-              >
-                {t("session.packImportRetry")}
-              </button>
-            </p>
-          ) : (
-            <p className="studio-hint">{t("session.packImportLoading")}</p>
-          )
-        ) : packCards.length === 0 ? (
-          <p className="studio-hint">{t("session.packImportEmpty")}</p>
-        ) : (
-          <ul className="party-list">
-            {packCards.map((card) => (
-              <PackCardRow key={card.ref} card={card} online={online} isKeeper={isKeeper} />
-            ))}
-          </ul>
-        )
-      ) : null}
-    </section>
-  )
-}
-
-function SceneCard({ game }: { game: StateFrame }) {
-  const { t } = useTranslation()
-  if (!game.scene && !game.clock) return null
-  return (
-    <section className="desk-card">
-      <header className="desk-title">{t("session.scene")}</header>
-      {game.scene ? (
-        <p className="scene-line">
-          {stripControlChars(game.scene.name)}
-          {game.scene.focus ? (
-            <span className="scene-focus"> · {stripControlChars(game.scene.focus)}</span>
-          ) : null}
-        </p>
-      ) : null}
-      {game.clock ? (
-        <p className="scene-line scene-clock">
-          {stripControlChars(game.clock.time)}
-          {typeof game.clock.round === "number" ? ` · ${t("session.round", { n: game.clock.round })}` : ""}
-        </p>
-      ) : null}
-    </section>
-  )
-}
-
-function InitiativeCard({ game }: { game: StateFrame }) {
-  const { t } = useTranslation()
-  if (game.initiative.length === 0) return null
-  return (
-    <section className="desk-card">
-      <header className="desk-title">{t("session.initiative")}</header>
       <ol className="initiative-list">
-        {game.initiative.map((entry) => (
-          <li key={entry.name} className={entry.current ? "is-current" : ""}>
+        {initiative.order.map((entry, index) => (
+          <li key={`${index}:${entry.name}`} className={entry.name === initiative.acting ? "is-current" : ""}>
             <span className="initiative-value">{entry.value}</span>
             {stripControlChars(entry.name)}
           </li>
@@ -530,60 +409,218 @@ function InitiativeCard({ game }: { game: StateFrame }) {
   )
 }
 
-function UsageCard({ game }: { game: StateFrame }) {
+/**
+ * The characters on offer (`characters.claimable`): claim one to play it — a player's
+ * action, through `pc {op: "claim", name: <id>}` — or release the one you hold.
+ */
+export function ClaimableCard() {
   const { t } = useTranslation()
-  const usage = game.usage
-  if (!usage || usage.context_window <= 0) return null
+  const characters: CharactersView | null = useView("characters")
+  const me = useView("me")
+  const online = useOnline()
+  const pc = useCommand("pc", ["op", "name"])
+  const { run, feedback, dismiss, pending } = useCommandRunner()
+  const claimable = characters?.claimable ?? []
+  if (claimable.length === 0) return null
+  const myId = me?.member.id ?? null
   return (
-    <section className="desk-card desk-card-dim">
-      <Meter
-        label={t("session.context")}
-        value={usage.context_tokens}
-        max={usage.context_window}
-        tone="context"
-      />
+    <section className="desk-card">
+      <header className="desk-title">{t("session.pregens")}</header>
+      <ul className="party-list">
+        {claimable.map((entry) => {
+          const mine = entry.id === characters?.mine || (entry.player !== null && entry.player.id === myId)
+          const blurb = stripControlChars(entry.blurb).trim()
+          return (
+            <li
+              key={entry.id}
+              className={`party-row pregen-row${entry.player && !mine ? " is-offline" : ""}`}
+            >
+              <span className="pregen-text">
+                <span className="party-name">{stripControlChars(entry.name)}</span>
+                {blurb ? <span className="pregen-blurb">{blurb}</span> : null}
+              </span>
+              {mine ? (
+                <>
+                  <span className="chip">{t("session.pregenYours")}</span>
+                  {pc ? (
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={!online || pending}
+                      onClick={() => void run("pc", { op: "release" })}
+                    >
+                      {t("session.pregenRelease")}
+                    </button>
+                  ) : null}
+                </>
+              ) : entry.player ? (
+                <span className="chip">
+                  {t("session.pregenClaimed", { name: stripControlChars(entry.player.name) })}
+                </span>
+              ) : pc ? (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={!online || pending}
+                  onClick={() => void run("pc", { op: "claim", name: entry.id })}
+                >
+                  {t("session.pregenClaim")}
+                </button>
+              ) : null}
+            </li>
+          )
+        })}
+      </ul>
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
     </section>
   )
 }
 
-function PresenceCard() {
+/**
+ * The card files the room's packs ship (`packs`): importing one runs
+ * `import {pack, card, as}` with the card's own kind. A world card is module machinery:
+ * only the room admin imports it (the server refuses anyone else), so a player is shown
+ * it without a button.
+ */
+export function PackImportCard({ only }: { only?: "character" | "world" }) {
   const { t } = useTranslation()
-  const presence = useSessionStore((s) => s.presence)
-  if (!presence) return null
+  const packs: PacksView | null = useView("packs")
+  const admin = useRole() === "admin"
+  const online = useOnline()
+  const usable = useCommand("import", ["pack", "card", "as"]) !== null
+  const { run, feedback, dismiss, pending } = useCommandRunner()
+  const [open, setOpen] = useState(false)
+  if (!usable || packs === null) return null
+  const cards = packs.packs.flatMap((pack) =>
+    pack.cards.filter((card) => only === undefined || card.kind === only).map((card) => ({ pack, card })),
+  )
   return (
     <section className="desk-card">
       <header className="desk-title">
-        {t("session.presence")}
-        <span className="desk-tag">{t("session.online", { n: presence.online })}</span>
+        {t("session.packImport")}
+        <button type="button" className="ghost-button" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {t(open ? "session.packImportClose" : "session.packImportBrowse")}
+        </button>
       </header>
-      <ul className="party-list">
-        {presence.players.map((player) => (
-          <li key={player.id} className={`party-row${player.online ? "" : " is-offline"}`}>
-            <span className={`presence-dot ${player.online ? "online" : "offline"}`} aria-hidden="true" />
-            <span className="party-name">{stripControlChars(player.name)}</span>
-          </li>
-        ))}
-      </ul>
+      {open ? (
+        cards.length === 0 ? (
+          <p className="studio-hint">{t("session.packImportEmpty")}</p>
+        ) : (
+          <ul className="party-list">
+            {cards.map(({ pack, card }) => {
+              const world = card.kind === "world"
+              const locked = world && !admin
+              return (
+                <li key={`${pack.id}/${card.file}`} className="party-row" title={card.file}>
+                  <span className="party-name">{stripControlChars(card.name)}</span>
+                  <span className="desk-tag">{stripControlChars(pack.name)}</span>
+                  {world ? <span className="desk-tag">{t("session.packImportWorld")}</span> : null}
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={!online || locked || pending}
+                    title={locked ? t("session.packImportAdminOnly") : undefined}
+                    onClick={() => void run("import", { pack: pack.id, card: card.file, as: card.kind })}
+                  >
+                    {t("session.packImportAction")}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )
+      ) : null}
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
+    </section>
+  )
+}
+
+function SceneCard() {
+  const { t } = useTranslation()
+  const scene = useView("scene")
+  if (scene === null) return null
+  const empty = !scene.name && !scene.focus && scene.time === null && scene.established.length === 0
+  if (empty) return null
+  return (
+    <section className="desk-card">
+      <header className="desk-title">{t("session.scene")}</header>
+      {scene.name || scene.focus ? (
+        <p className="scene-line">
+          {stripControlChars(scene.name)}
+          {scene.focus ? <span className="scene-focus"> · {stripControlChars(scene.focus)}</span> : null}
+        </p>
+      ) : null}
+      {scene.time !== null ? (
+        <p className="scene-line scene-clock">
+          {stripControlChars(scene.time)}
+          {typeof scene.round === "number" ? ` · ${t("session.round", { n: scene.round })}` : ""}
+        </p>
+      ) : null}
+      {scene.established.length > 0 ? (
+        <ul className="scene-facts">
+          {scene.established.map((fact, index) => (
+            <li key={index}>
+              {stripControlChars(fact.text)}
+              {fact.at ? <span className="scene-focus"> · {stripControlChars(fact.at)}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  )
+}
+
+function RoomCard() {
+  const { t } = useTranslation()
+  const room = useView("room")
+  if (room === null) return null
+  return (
+    <section className="desk-card desk-card-dim">
+      <header className="desk-title">{t("session.room")}</header>
+      <p className="scene-line">
+        {room.system ? stripControlChars(room.system.label) : t("session.noSystem")}
+        {room.variant ? <span className="scene-focus"> · {stripControlChars(room.variant)}</span> : null}
+        <span className="scene-focus"> · {stripControlChars(room.localeLabel)}</span>
+      </p>
+      {room.keeperMuted ? <span className="chip badge-warn">{t("session.keeperMuted")}</span> : null}
+    </section>
+  )
+}
+
+function UsageCard() {
+  const { t } = useTranslation()
+  const last = useView("usage")?.last ?? null
+  if (last === null) return null
+  return (
+    <section className="desk-card desk-card-dim">
+      <p className="scene-line">
+        {t("session.usage", {
+          turn: last.turn,
+          input: last.inputTokens,
+          output: last.outputTokens,
+          cached: last.cachedInputTokens,
+        })}
+        {last.estimated ? ` ${t("session.usageEstimated")}` : ""}
+      </p>
     </section>
   )
 }
 
 export default function StatePanel() {
-  const game = useSessionStore((s) => s.game)
+  const me = useView("me")
+  const party = useView("party")
   return (
     <div className="desk-stack">
-      <UiPanelCards />
-      {game?.character ? <CharacterCard character={game.character} /> : null}
-      {game ? <VariablesCard game={game} /> : null}
-      {game ? <PartyCard game={game} /> : null}
-      {game ? <PregenCard game={game} /> : null}
+      {me?.character ? <CharacterCard character={me.character} /> : null}
+      <VariablesCard />
+      {party ? <PartyCard party={party} mine={me?.character?.id ?? null} /> : null}
+      <ClaimableCard />
       <PackImportCard />
-      {game ? <SceneCard game={game} /> : null}
-      {game ? <InitiativeCard game={game} /> : null}
-      <PresenceCard />
-      <MediaDeck />
-      <AudioDeck />
-      {game ? <UsageCard game={game} /> : null}
+      <SceneCard />
+      {party?.initiative ? <InitiativeCard initiative={party.initiative} /> : null}
+      {party ? <PresenceCard party={party} /> : null}
+      <RoomCard />
+      <UsageCard />
     </div>
   )
 }

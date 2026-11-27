@@ -1,4 +1,4 @@
-// The protocol-2.1 rich blocks: `image` plus the four M19 performance
+// The rich blocks of protocol 3.0 §8.3: `image` plus the four performance
 // templates (`letter`, `clipping`, `map_pin`, `title_card`). They are
 // DECLARATIVE, not markup — the studio is the rich client, so a letter draws
 // as stationery and a title card as an act break, while a text-first client
@@ -13,20 +13,19 @@
 
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import {
-  stripControlChars,
-  type UiClippingBlock,
-  type UiImageBlock,
-  type UiLetterBlock,
-  type UiMapPinBlock,
-  type UiTitleCardBlock,
-} from "@loreweaver/protocol"
+import { stripControlChars, type Block } from "loreweaver-protocol/v3"
 import { loadDataUrl as loadCachedDataUrl } from "../../lib/dataUrlCache"
 import { assetFetch, assetReadBase64 } from "./panels/assets"
 
 // The server stamps the authoritative mime; anything outside the image
 // whitelist is dropped from the data URL (the browser then sniffs instead).
 const IMAGE_MIME_RE = /^image\/(png|jpeg|webp|gif|svg\+xml)$/
+
+type ImageBlock = Extract<Block, { kind: "image" }>
+type MapPinBlock = Extract<Block, { kind: "map_pin" }>
+type LetterBlock = Extract<Block, { kind: "letter" }>
+type ClippingBlock = Extract<Block, { kind: "clipping" }>
+type TitleCardBlock = Extract<Block, { kind: "title_card" }>
 
 function loadDataUrl(hash: string, mime: string | undefined): Promise<string> {
   return loadCachedDataUrl(hash, () =>
@@ -62,7 +61,7 @@ function useAssetDataUrl(hash: string, mime: string | undefined): { phase: LoadP
   return { phase, url }
 }
 
-export function ImageBlockView({ block }: { block: UiImageBlock }) {
+export function ImageBlockView({ block }: { block: ImageBlock }) {
   const { t } = useTranslation()
   const { phase, url } = useAssetDataUrl(block.hash, block.mime)
   const caption = block.caption ? stripControlChars(block.caption) : undefined
@@ -82,7 +81,7 @@ export function ImageBlockView({ block }: { block: UiImageBlock }) {
   )
 }
 
-export function MapPinBlockView({ block }: { block: UiMapPinBlock }) {
+export function MapPinBlockView({ block }: { block: MapPinBlock }) {
   const { t } = useTranslation()
   const { phase, url } = useAssetDataUrl(block.hash, block.mime)
   const label = stripControlChars(block.label)
@@ -119,7 +118,7 @@ function attribution(parts: (string | undefined)[]): string | null {
   return joined ? `— ${joined}` : null
 }
 
-export function LetterBlockView({ block }: { block: UiLetterBlock }) {
+export function LetterBlockView({ block }: { block: LetterBlock }) {
   const meta = attribution([
     block.from ? stripControlChars(block.from) : undefined,
     block.date ? stripControlChars(block.date) : undefined,
@@ -133,7 +132,7 @@ export function LetterBlockView({ block }: { block: UiLetterBlock }) {
   )
 }
 
-export function ClippingBlockView({ block }: { block: UiClippingBlock }) {
+export function ClippingBlockView({ block }: { block: ClippingBlock }) {
   const meta = attribution([
     block.source ? stripControlChars(block.source) : undefined,
     block.date ? stripControlChars(block.date) : undefined,
@@ -152,7 +151,7 @@ export function ClippingBlockView({ block }: { block: UiClippingBlock }) {
   )
 }
 
-export function TitleCardBlockView({ block }: { block: UiTitleCardBlock }) {
+export function TitleCardBlockView({ block }: { block: TitleCardBlock }) {
   return (
     <div className="ui-title-card">
       <div className="ui-title-card-rule" aria-hidden="true" />

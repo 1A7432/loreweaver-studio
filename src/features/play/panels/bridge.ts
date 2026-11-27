@@ -1,5 +1,10 @@
 // The host side of the Tier-2 panel bridge (spec M15, "Tier-2 runtime").
 //
+// PARKED (protocol 3.0 move): this is the protocol 2.x page bridge — `state` projections
+// in, `panel_intent` out — and nothing renders a page yet: a 3.0 `page` panel shows its
+// `fallback` (`PanelCard.tsx`). It stays, compiling and tested, as the starting point of
+// the 3.0 page bridge, which the desktop client defines in a later step.
+//
 // A panel iframe is an OPAQUE origin; the only channel between host and panel
 // is postMessage, authenticated by a per-mount 128-bit nonce that the panel
 // learns from its host-injected bootstrap (served over the panel's own secret
@@ -22,7 +27,6 @@ import type {
   StateFrame,
   UsageState,
 } from "@loreweaver/protocol"
-import { visibleVariables } from "./templates"
 
 export const BRIDGE_VERSION = "1"
 /** Mirror of the server-side `panel_intent.value` cap. */
@@ -50,6 +54,23 @@ export interface PanelStateSnapshot {
   online: number
   usage?: UsageState
   pregens?: PregenEntry[]
+}
+
+/** The variables a panel may read: a keeper-flagged hidden one never crosses. */
+function visibleVariables(variables: readonly ModuleVariable[]): ModuleVariable[] {
+  return variables.filter((variable) => variable.hidden !== true)
+}
+
+/** A 2.x panel title (a locale map or a plain string): this locale, else `en`, else any. */
+export function pickText(value: unknown, locale?: string): string | undefined {
+  if (typeof value === "string") return value
+  if (typeof value !== "object" || value === null) return undefined
+  const map = value as Record<string, unknown>
+  const short = (locale ?? "en").slice(0, 2)
+  for (const candidate of [map[short], map.en, ...Object.values(map)]) {
+    if (typeof candidate === "string" && candidate) return candidate
+  }
+  return undefined
 }
 
 export function projectStateForPanel(frame: StateFrame | null): PanelStateSnapshot | null {

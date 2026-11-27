@@ -1,7 +1,13 @@
-import { stripControlChars, type UiBlock, type UiChoiceOption, type UiFrame } from "@loreweaver/protocol"
-import { transportSend } from "../../lib/transport"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
+// The eleven block kinds of protocol 3.0 §8.3 — the one vocabulary of a `blocks` event and
+// of a panel template once it is instantiated. A block of a kind this version does not
+// know is skipped (the session has already dropped an event whose known blocks were
+// malformed). Pressing a `choices` option runs `command.run {id: command, args}` as the
+// member pressing it; what comes back is shown under the blocks.
+
+import { stripControlChars, type Block as WireBlock } from "loreweaver-protocol/v3"
+import CommandFeedback from "./CommandFeedback"
 import Meter from "./Meter"
+import { useCommandRunner, useOnline } from "./room"
 import {
   ClippingBlockView,
   ImageBlockView,
@@ -10,19 +16,17 @@ import {
   TitleCardBlockView,
 } from "./UiRichBlocks"
 
-/**
- * One concrete v1.7 block. `onChoose` overrides what picking a choices option
- * sends: hook-emitted `ui` frames send a plain `input` (the default), while
- * tier-1 panel templates send a `panel_intent` (see panels/Tier1Blocks).
- */
+export type ChoiceOption = Extract<WireBlock, { kind: "choices" }>["options"][number]
+
+/** One concrete block. `onChoose` runs a `choices` option; without it the buttons are inert. */
 export function Block({
   block,
   online,
   onChoose,
 }: {
-  block: UiBlock
+  block: WireBlock
   online: boolean
-  onChoose?: (option: UiChoiceOption) => void
+  onChoose?: (option: ChoiceOption) => void
 }) {
   switch (block.kind) {
     case "meter":
@@ -54,14 +58,8 @@ export function Block({
                 key={option.id}
                 type="button"
                 className="choice-button"
-                disabled={!online}
-                // Picking a choice sends its `input` back verbatim as a NORMAL
-                // input frame — there is no dedicated choice frame type.
-                onClick={() =>
-                  onChoose
-                    ? onChoose(option)
-                    : void transportSend({ type: "input", text: option.input }).catch(() => {})
-                }
+                disabled={!online || onChoose === undefined}
+                onClick={() => onChoose?.(option)}
               >
                 {stripControlChars(option.label)}
               </button>
@@ -80,18 +78,27 @@ export function Block({
     case "title_card":
       return <TitleCardBlockView block={block} />
     default:
-      // Additive protocol: block kinds we don't know yet are skipped.
+      // Additive protocol: block kinds this version does not know are skipped.
       return null
   }
 }
 
-export default function UiBlocks({ frame }: { frame: UiFrame }) {
-  const online = useLegacyConnectionStore((s) => s.status === "online")
+/** A list of blocks whose choices run as commands, with what came back beneath them. */
+export default function UiBlocks({ blocks }: { blocks: readonly WireBlock[] }) {
+  const online = useOnline()
+  const { run, feedback, dismiss } = useCommandRunner()
+  if (blocks.length === 0) return null
   return (
     <div className="ui-blocks">
-      {frame.blocks.map((block, index) => (
-        <Block key={index} block={block} online={online} />
+      {blocks.map((block, index) => (
+        <Block
+          key={index}
+          block={block}
+          online={online}
+          onChoose={(option) => void run(option.command, option.args ?? {})}
+        />
       ))}
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
     </div>
   )
 }

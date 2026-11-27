@@ -1,20 +1,19 @@
-// The panels menu in the session header: every manifest panel is listed here
-// — modal panels open from it, closed sidebar/tray panels reopen from it —
-// plus the blocks-only client setting. This menu is app chrome; module code
-// never touches it.
+// The panels menu in the session header: every listed panel is here — overlay
+// panels open from it, closed sidebar/tray panels reopen from it. This menu is
+// app chrome; pack content never touches it.
 
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import type { UiManifestPanel } from "@loreweaver/protocol"
+import type { PanelEntry } from "loreweaver-protocol/v3"
 import { usePanelsStore } from "../../../store/panels"
-import { pickText } from "./templates"
+import { panelTitle, usePanelList } from "./panelList"
 
-function MenuRow({ panel, onDone }: { panel: UiManifestPanel; onDone: () => void }) {
-  const { t, i18n } = useTranslation()
+function MenuRow({ panel, onDone }: { panel: PanelEntry; onDone: () => void }) {
+  const { t } = useTranslation()
   const closed = usePanelsStore((s) => Boolean(s.closed[panel.id]))
   const setClosed = usePanelsStore((s) => s.setClosed)
   const openModal = usePanelsStore((s) => s.openModal)
-  const title = pickText(panel.title, i18n.resolvedLanguage) ?? panel.id
+  const title = panelTitle(panel)
   const action = panel.slot === "modal" ? t("panels.open") : closed ? t("panels.reopen") : t("panels.close")
   return (
     <li className="panel-menu-row">
@@ -42,9 +41,7 @@ function MenuRow({ panel, onDone }: { panel: UiManifestPanel; onDone: () => void
 
 export default function PanelMenu() {
   const { t } = useTranslation()
-  const manifest = usePanelsStore((s) => s.manifest)
-  const blocksOnly = usePanelsStore((s) => s.blocksOnly)
-  const setBlocksOnly = usePanelsStore((s) => s.setBlocksOnly)
+  const panels = usePanelList()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -58,7 +55,7 @@ export default function PanelMenu() {
     return () => window.removeEventListener("pointerdown", onPointerDown)
   }, [open])
 
-  if (manifest.length === 0) return null
+  if (panels.length === 0) return null
   return (
     <div className="panel-menu" ref={rootRef}>
       <button
@@ -69,12 +66,12 @@ export default function PanelMenu() {
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        {t("panels.menu", { n: manifest.length })}
+        {t("panels.menu", { n: panels.length })}
       </button>
       {open ? (
         <div className="panel-menu-pop" role="menu" aria-label={t("panels.menuAria")}>
           <ul className="panel-menu-list">
-            {manifest.map((panel) => (
+            {panels.map((panel) => (
               <MenuRow
                 key={panel.id}
                 panel={panel}
@@ -85,17 +82,6 @@ export default function PanelMenu() {
               />
             ))}
           </ul>
-          <label className="panel-menu-setting">
-            <input
-              type="checkbox"
-              checked={blocksOnly}
-              onChange={(event) => setBlocksOnly(event.target.checked)}
-            />
-            <span>
-              {t("panels.blocksOnly")}
-              <small className="panel-menu-hint">{t("panels.blocksOnlyHint")}</small>
-            </span>
-          </label>
         </div>
       ) : null}
     </div>

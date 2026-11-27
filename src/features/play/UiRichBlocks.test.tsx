@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { UiFrame } from "@loreweaver/protocol"
+import type { Block } from "loreweaver-protocol/v3"
 import "../../i18n"
 import { clearDataUrlCache } from "../../lib/dataUrlCache"
 import UiBlocks from "./UiBlocks"
@@ -84,25 +84,21 @@ describe("MapPinBlockView", () => {
   })
 })
 
-describe("performance templates via the ui-frame renderer", () => {
-  const FRAME: UiFrame = {
-    type: "ui",
-    panel: "inline",
-    blocks: [
-      { kind: "letter", body: "Meet at the pier.", from: "K.", to: "Inspector", date: "March 3" },
-      {
-        kind: "clipping",
-        headline: "Nine lanterns vanish",
-        body: "The tide took them.",
-        source: "Gazette",
-        date: "3/3",
-      },
-      { kind: "title_card", title: "The Send-Off", subtitle: "what the tide keeps", act: "Act III" },
-    ],
-  }
+describe("performance templates via the blocks renderer", () => {
+  const BLOCKS: Block[] = [
+    { kind: "letter", body: "Meet at the pier.", from: "K.", to: "Inspector", date: "March 3" },
+    {
+      kind: "clipping",
+      headline: "Nine lanterns vanish",
+      body: "The tide took them.",
+      source: "Gazette",
+      date: "3/3",
+    },
+    { kind: "title_card", title: "The Send-Off", subtitle: "what the tide keeps", act: "Act III" },
+  ]
 
   it("styles a letter as stationery with its attribution line", () => {
-    const { container } = render(<UiBlocks frame={FRAME} />)
+    const { container } = render(<UiBlocks blocks={BLOCKS} />)
     const letter = container.querySelector(".ui-letter") as HTMLElement
     expect(letter.querySelector(".ui-letter-to")).toHaveTextContent("Inspector")
     expect(letter.querySelector(".ui-letter-body")).toHaveTextContent("Meet at the pier.")
@@ -110,7 +106,7 @@ describe("performance templates via the ui-frame renderer", () => {
   })
 
   it("styles a clipping as a newspaper cut-out", () => {
-    const { container } = render(<UiBlocks frame={FRAME} />)
+    const { container } = render(<UiBlocks blocks={BLOCKS} />)
     const clipping = container.querySelector(".ui-clipping") as HTMLElement
     expect(clipping.querySelector(".ui-clipping-headline")).toHaveTextContent("Nine lanterns vanish")
     expect(clipping.querySelector(".ui-clipping-body")).toHaveTextContent("The tide took them.")
@@ -118,7 +114,7 @@ describe("performance templates via the ui-frame renderer", () => {
   })
 
   it("styles a title_card as a ruled act break", () => {
-    const { container } = render(<UiBlocks frame={FRAME} />)
+    const { container } = render(<UiBlocks blocks={BLOCKS} />)
     const card = container.querySelector(".ui-title-card") as HTMLElement
     expect(card.querySelectorAll(".ui-title-card-rule")).toHaveLength(2)
     expect(card.querySelector(".ui-title-card-act")).toHaveTextContent("Act III")

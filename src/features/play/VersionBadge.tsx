@@ -1,26 +1,20 @@
-// Who the two ends of this connection actually are.
+// Who the two ends of this connection actually are: the server's own release version
+// (`welcome.server.version`) beside the studio's, and the wire version it speaks
+// (`welcome.protocol`).
 //
-// `welcome.version` is the server's own release version, and `welcome.protocol`
-// is the wire version it speaks — the protocol document says the first "exists
-// precisely for client/server drift detection". Neither was ever displayed, so
-// an operator debugging a table had no way to see which server they were
-// talking to short of reading its terminal.
-//
-// The soft flag is on the PROTOCOL, not on the two product versions: the studio
-// and the engine are separate products with separate version lines, so
-// comparing "0.1.0" to "2.1.dev141" would flag every healthy connection. A
-// different protocol MINOR is the real drift — same major, so the connection is
-// sound (the store refuses a major mismatch outright), but one side knows
-// frames the other does not.
+// The soft flag is on the PROTOCOL, not on the two product versions: the studio and the
+// engine are separate products with separate version lines. A different protocol MINOR
+// is the real drift — same major, so the connection is sound (the session refuses a
+// major mismatch outright), but one side knows frames the other does not.
 
 import { useTranslation } from "react-i18next"
-import { PROTOCOL_VERSION } from "@loreweaver/protocol"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
+import { PROTOCOL_VERSION } from "loreweaver-protocol/v3"
+import { useSessionSnapshot } from "../../store/connection"
 import { STUDIO_VERSION } from "../../version"
 
 export default function VersionBadge() {
   const { t } = useTranslation()
-  const welcome = useLegacyConnectionStore((s) => s.welcome)
+  const welcome = useSessionSnapshot()?.welcome ?? null
   if (welcome === null) return null
 
   const serverProtocol = welcome.protocol
@@ -35,7 +29,7 @@ export default function VersionBadge() {
       }
     >
       {t("connect.versions", {
-        server: welcome.version || t("connect.versionUnknown"),
+        server: welcome.server.version || t("connect.versionUnknown"),
         client: STUDIO_VERSION,
       })}
       {drifted ? (

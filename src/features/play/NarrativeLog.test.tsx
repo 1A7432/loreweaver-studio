@@ -1,62 +1,332 @@
+// The log, read from a real protocol `Session` fed real 3.0 frames. The frames of the
+// table session are protocol.md §13.1's, verbatim; the others follow §8's shapes.
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import "../../i18n"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
-import { PENDING_ECHO_TIMEOUT_MS, useSessionStore } from "../../store/session"
-import NarrativeLog, { ECHO_SWEEP_MS, NPC_PREVIEW_CHARS } from "./NarrativeLog"
+import { DEFAULT_REDIAL_BASE_MS } from "../../lib/connection"
+import { flush } from "../../lib/connection.testkit"
+import NarrativeLog, { NPC_PREVIEW_CHARS } from "./NarrativeLog"
+import { TestRoom } from "./room.testkit"
 
-const transport = vi.hoisted(() => ({ send: vi.fn() }))
-vi.mock("../../lib/transport", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../lib/transport")>()),
-  transportSend: (frame: unknown) => {
-    transport.send(frame)
-    return Promise.resolve()
+// protocol.md §13.1, steps 2 and 4.
+const BAO_LINE = {
+  type: "event",
+  seq: 1,
+  id: "2c1f8e7a-6b5d-4c3e-9f2a-1b0c9d8e7f6a",
+  ts: 1764240000001,
+  kind: "narrative",
+  turn: 1,
+  data: {
+    speaker: "player",
+    name: "Bao",
+    member: "m:b40a5aaa35ea",
+    text: "I wait by the quay.",
+    format: "plain",
   },
-}))
+}
+const FOG = {
+  type: "event",
+  seq: 2,
+  id: "7d6e5f4a-3b2c-4d1e-8f9a-0b1c2d3e4f5a",
+  ts: 1764240002410,
+  kind: "narrative",
+  turn: 1,
+  data: { speaker: "kp", text: "The fog thickens.", format: "markdown" },
+}
+const ADA_LINE = {
+  type: "event",
+  seq: 3,
+  id: "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+  ts: 1764240010000,
+  kind: "narrative",
+  turn: 2,
+  data: {
+    speaker: "player",
+    name: "Ada",
+    member: "m:15b5f3445045",
+    text: "I light the lantern. [[1d6]]",
+    format: "plain",
+  },
+}
+const INLINE_ROLL = {
+  type: "event",
+  seq: 4,
+  id: "0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+  ts: 1764240010001,
+  kind: "dice",
+  turn: 2,
+  data: {
+    actor: "Ada",
+    kind: "roll",
+    expr: "1d6",
+    rolls: [6],
+    total: 6,
+    detail: { text: "1d6 (6) = 6", inline: true },
+  },
+}
+const BUSY = { type: "signal", kind: "turn", data: { status: "busy", actor: "Ada" } }
+const DRAFT_ID = "9b4f6c1e-2d3a-4e5f-8a7b-1c2d3e4f5a6b"
+const SLICE_1 = { type: "signal", kind: "draft", data: { id: DRAFT_ID, text: "The lantern catches, " } }
+const SLICE_2 = {
+  type: "signal",
+  kind: "draft",
+  data: { id: DRAFT_ID, text: "and the quay comes out of the dark." },
+}
+const REPLY = {
+  type: "event",
+  seq: 5,
+  id: DRAFT_ID,
+  ts: 1764240014820,
+  kind: "narrative",
+  turn: 2,
+  data: {
+    speaker: "kp",
+    text: "The lantern catches, and the quay comes out of the dark.",
+    format: "markdown",
+  },
+}
+const IDLE = { type: "signal", kind: "turn", data: { status: "idle" } }
+// §13.1 step 7: the undo of turn 2.
+const REWIND = {
+  type: "event",
+  seq: 8,
+  id: "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d",
+  ts: 1764240030000,
+  kind: "rewind",
+  data: { from: 3, kept: [], epoch: 2 },
+}
 
-const ingest = useSessionStore.getState().ingest
+let nextSeq = 100
+function narrative(data: Record<string, unknown>, seq = nextSeq++) {
+  return { type: "event", seq, id: `n-${seq}`, ts: 1764240000000 + seq, kind: "narrative", data }
+}
 
-describe("NarrativeLog", () => {
-  beforeEach(() => {
-    useSessionStore.getState().clear()
-    useLegacyConnectionStore.setState({ status: "offline" })
-    transport.send.mockClear()
+let room: TestRoom | null = null
+async function open(head = 2, first = 1): Promise<TestRoom> {
+  room = await TestRoom.open("player", { views: false, head, first })
+  return room
+}
+afterEach(() => {
+  room?.close()
+  room = null
+})
+
+describe("NarrativeLog: the table session", () => {
+  it("renders the replay: a player line under its name, the Keeper's markdown under KP", async () => {
+    const r = await open()
+    await r.feed(BAO_LINE, narrative({ speaker: "kp", text: "The **lantern** dies.", format: "markdown" }, 2))
+    const { container } = render(<NarrativeLog />)
+    expect(screen.getByText("Bao")).toBeInTheDocument()
+    expect(screen.getByText("I wait by the quay.")).toBeInTheDocument()
+    expect(screen.getByText("lantern").tagName).toBe("STRONG")
+    expect(container.querySelector(".log-entry.speaker-kp .entry-speaker")).toHaveTextContent("KP")
   })
 
-  it("renders markdown narrative as rich text", () => {
-    ingest({
-      type: "narrative",
-      id: "n1",
-      speaker: "kp",
-      text: "The **lantern** dies.",
-      format: "markdown",
+  it("streams the reply into a bubble with a cursor, and its event replaces the bubble", async () => {
+    const r = await open()
+    await r.feed(BAO_LINE, FOG)
+    const { container } = render(<NarrativeLog />)
+    await r.feed(ADA_LINE, INLINE_ROLL, BUSY, SLICE_1)
+    expect(container.querySelector(".stream-cursor")).not.toBeNull()
+    expect(screen.getByText("The lantern catches,")).toBeInTheDocument()
+
+    await r.feed(SLICE_2)
+    expect(screen.getByText("The lantern catches, and the quay comes out of the dark.")).toBeInTheDocument()
+
+    await r.feed(REPLY, IDLE)
+    expect(container.querySelector(".stream-cursor")).toBeNull()
+    // One bubble, not the draft AND the event.
+    expect(screen.getAllByText("The lantern catches, and the quay comes out of the dark.")).toHaveLength(1)
+    expect(container.querySelectorAll(".log-entry")).toHaveLength(4)
+  })
+
+  it("drops a bubble the turn never turned into an event when the turn goes idle", async () => {
+    const r = await open()
+    const { container } = render(<NarrativeLog />)
+    await r.feed(BUSY, SLICE_1)
+    expect(container.querySelector(".stream-cursor")).not.toBeNull()
+    await r.feed(IDLE)
+    expect(container.querySelector(".stream-cursor")).toBeNull()
+    expect(screen.queryByText(/The lantern catches/)).toBeNull()
+  })
+
+  it("draws an inline roll as a dice line, from its readable text", async () => {
+    const r = await open()
+    await r.feed(ADA_LINE, INLINE_ROLL)
+    const { container } = render(<NarrativeLog />)
+    const dice = container.querySelector(".dice-line") as HTMLElement
+    expect(dice).toHaveTextContent("Ada 1d6 (6) = 6")
+    expect(dice).toHaveClass("rank-neutral")
+  })
+
+  it("applies an undo: the rewound events go, and the log says the story was rewound", async () => {
+    const r = await open()
+    await r.feed(BAO_LINE, FOG, ADA_LINE, INLINE_ROLL, REPLY)
+    render(<NarrativeLog />)
+    expect(screen.getByText(/I light the lantern/)).toBeInTheDocument()
+    await r.feed(REWIND)
+    expect(screen.queryByText(/I light the lantern/)).toBeNull()
+    expect(screen.queryByText(/The lantern catches/)).toBeNull()
+    expect(screen.getByText("I wait by the quay.")).toBeInTheDocument()
+    expect(screen.getByText("The story was rewound.")).toBeInTheDocument()
+  })
+
+  it("applies a reset: the scrollback empties and the reset is the first line of the new log", async () => {
+    const r = await open()
+    await r.feed(BAO_LINE, FOG)
+    render(<NarrativeLog />)
+    await r.feed({
+      type: "event",
+      seq: 9,
+      id: "reset-9",
+      ts: 1764240050000,
+      kind: "reset",
+      data: { scope: "all", epoch: 3 },
+    })
+    expect(screen.queryByText("I wait by the quay.")).toBeNull()
+    expect(screen.getByText("The campaign was wiped clean.")).toBeInTheDocument()
+  })
+
+  it("draws a shared picture under its name", async () => {
+    const r = await open()
+    // protocol.md §13.2: the file the table sees arrive.
+    await r.feed({
+      type: "event",
+      seq: 9,
+      id: "e1d2c3b4-a5f6-4e7d-8c9b-0a1f2e3d4c5b",
+      ts: 1764240040000,
+      kind: "media",
+      data: {
+        hash: "3f9a0c7d2b1e4f5a6c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+        mime: "image/png",
+        size: 48213,
+        name: "map.png",
+        from: "m:15b5f3445045",
+      },
     })
     render(<NarrativeLog />)
-    expect(screen.getByText("lantern")).toBeInstanceOf(HTMLElement)
-    expect(screen.getByText("lantern").tagName).toBe("STRONG")
+    expect(screen.getAllByText(/map\.png/).length).toBeGreaterThan(0)
+  })
+})
+
+describe("NarrativeLog: blocks", () => {
+  const block = (seq: number, id: string, title: string, replace?: boolean) => ({
+    type: "event",
+    seq,
+    id,
+    ts: 1764240000000 + seq,
+    kind: "blocks",
+    data: {
+      blocks: [{ kind: "title_card", title, subtitle: "The Drowned Quay" }],
+      ...(replace ? { replace } : {}),
+    },
   })
 
-  it("labels NPC lines with the NPC name and players with theirs", () => {
-    ingest({
-      type: "narrative",
-      id: "n2",
-      speaker: "npc",
-      name: "沈墨",
-      text: "别碰那口井。",
-      format: "markdown",
+  it("draws a replacement in place of the blocks it replaces — never both", async () => {
+    const r = await open()
+    await r.feed(block(1, "b-1", "Act I"))
+    const { container } = render(<NarrativeLog />)
+    expect(screen.getByText("Act I")).toBeInTheDocument()
+    await r.feed(FOG, block(3, "b-1", "Act II", true))
+    expect(screen.queryByText("Act I")).toBeNull()
+    expect(screen.getAllByText("Act II")).toHaveLength(1)
+    // Where the first one was: before the Keeper's line.
+    const order = Array.from(container.querySelectorAll(".ui-title-card-title, .log-entry")).map(
+      (el) => el.textContent,
+    )
+    expect(order[0]).toBe("Act II")
+  })
+})
+
+describe("NarrativeLog: history", () => {
+  it("offers older history while the window does not reach the start, and pages it in", async () => {
+    // head 300, oldest 1: only the newest 200 are replayed, the rest is older history.
+    const r = await open(300, 1)
+    await r.feed(narrative({ speaker: "kp", text: "Line 101.", format: "markdown" }, 101))
+    render(<NarrativeLog />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Load earlier" }))
+    expect(r.lastRequest()).toMatchObject({
+      type: "call",
+      method: "log.page",
+      params: { before: 101, limit: 100 },
     })
-    ingest({
-      type: "narrative",
-      id: "n3",
-      speaker: "player",
-      name: "Ash",
-      text: "I step back.",
-      format: "plain",
+    await r.answer({
+      ok: true,
+      data: { events: [narrative({ speaker: "kp", text: "Line 50.", format: "markdown" }, 50)] },
     })
+    expect(screen.getByText("Line 50.")).toBeInTheDocument()
+    // Fewer than a page came back: that was the start of the room's log.
+    expect(screen.queryByRole("button", { name: "Load earlier" })).toBeNull()
+  })
+
+  it("marks the hole a resume could not replay, and fills it from there", async () => {
+    const r = await open(2, 1)
+    await r.feed(BAO_LINE, FOG)
+    render(<NarrativeLog />)
+    // The link drops; the room moves on 500 events while we are away.
+    await r.drop()
+    await act(async () => {
+      r.timers.advance(DEFAULT_REDIAL_BASE_MS)
+      r.connection.handleEvent(r.driver.up())
+      await flush()
+      r.connection.handleEvent(
+        r.driver.frame({
+          type: "welcome",
+          protocol: "3.0",
+          server: { name: "loreweaver", version: "3.0.0-alpha.0" },
+          room: { id: "main", locale: "en" },
+          you: { id: "m-ada", name: "Ada", role: "player" },
+          features: [],
+          epoch: 1,
+          head: 500,
+          first: 1,
+        }),
+      )
+      await flush()
+    })
+    await r.feed(narrative({ speaker: "kp", text: "Line 301.", format: "markdown" }, 301))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Load the missing lines" }))
+    expect(r.lastRequest()).toMatchObject({ method: "log.page", params: { before: 301, limit: 100 } })
+    await r.answer({
+      ok: true,
+      data: { events: [narrative({ speaker: "player", name: "Bao", text: "Line 3.", format: "plain" }, 3)] },
+    })
+    expect(screen.getByText("Line 3.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Load the missing lines" })).toBeNull()
+  })
+})
+
+describe("NarrativeLog: speakers", () => {
+  it("labels NPC lines with the NPC's name and players with theirs", async () => {
+    const r = await open()
+    await r.feed(
+      narrative({ speaker: "npc", name: "沈墨", text: "别碰那口井。", format: "markdown" }),
+      narrative({ speaker: "player", name: "Ash", member: "m-ash", text: "I step back.", format: "plain" }),
+    )
     render(<NarrativeLog />)
     expect(screen.getByText("沈墨")).toBeInTheDocument()
     expect(screen.getByText("Ash")).toBeInTheDocument()
+  })
+
+  it("gives a nameless or control-character-named player line no header", async () => {
+    const r = await open()
+    await r.feed(
+      narrative({ speaker: "player", text: "I step back.", format: "plain" }),
+      narrative({ speaker: "player", name: " \u0007 ", text: "Hm.", format: "plain" }),
+    )
+    const { container } = render(<NarrativeLog />)
+    expect(screen.getByText("I step back.")).toBeInTheDocument()
+    expect(container.querySelector(".entry-speaker")).toBeNull()
+  })
+
+  it("names a system announcement as the system", async () => {
+    const r = await open()
+    await r.feed(narrative({ speaker: "system", text: "Ada claimed Holmes.", format: "plain" }))
+    render(<NarrativeLog />)
+    expect(screen.getByText("System")).toBeInTheDocument()
   })
 
   describe("NPC lines", () => {
@@ -64,285 +334,103 @@ describe("NarrativeLog", () => {
     // so the same speech arrives twice: the NPC bubble, then the narration.
     const SPEECH =
       "别碰那口井。我在这渡口守了三十年，从没见过潮水退得这样干净，井口的铁链也锈得不像话，你们若还想活着回到岸上，天黑以前就该离开这里。"
+    const speak = () => narrative({ speaker: "npc", name: "沈墨", text: SPEECH, format: "markdown" })
     const narrate = () =>
-      ingest({
-        type: "narrative",
-        id: "kp1",
-        speaker: "kp",
-        text: `沈墨压低了嗓子：“${SPEECH}”`,
-        format: "markdown",
-      })
-    const speak = () =>
-      ingest({
-        type: "narrative",
-        id: "npc1",
-        speaker: "npc",
-        name: "沈墨",
-        text: SPEECH,
-        format: "markdown",
-      })
+      narrative({ speaker: "kp", text: `沈墨压低了嗓子：“${SPEECH}”`, format: "markdown" })
 
-    it("folds a long line to the NPC's name and its first words, and leaves the narration to carry it", () => {
-      speak()
-      narrate()
-      render(<NarrativeLog />)
-
+    it("folds a long line to the NPC's name and its first words, and leaves the narration to carry it", async () => {
+      const r = await open()
+      await r.feed(speak(), narrate())
+      const { container } = render(<NarrativeLog />)
       const toggle = screen.getByRole("button", { name: /沈墨/ })
       const head = Array.from(SPEECH).slice(0, NPC_PREVIEW_CHARS).join("")
       expect(toggle).toHaveTextContent(`沈墨${head}…`)
       expect(toggle).toHaveAttribute("aria-expanded", "false")
-      // The speech is read once: inside the narration, not again in the bubble.
       expect(screen.queryByText(SPEECH)).toBeNull()
       expect(screen.getByText(/沈墨压低了嗓子/)).toBeInTheDocument()
-    })
-
-    it("keeps the entry where it arrived — nothing dropped, nothing reordered", () => {
-      speak()
-      narrate()
-      const { container } = render(<NarrativeLog />)
-      const entries = Array.from(container.querySelectorAll(".log-entry"))
-      expect(entries.map((entry) => entry.className)).toEqual([
+      // Nothing dropped, nothing reordered.
+      expect(Array.from(container.querySelectorAll(".log-entry")).map((entry) => entry.className)).toEqual([
         "log-entry speaker-npc npc-line",
         "log-entry speaker-kp",
       ])
     })
 
-    it("unfolds to the full line on click and folds back", async () => {
+    it("unfolds to the full line on click, and from the keyboard", async () => {
       const user = userEvent.setup()
-      speak()
+      const r = await open()
+      await r.feed(speak())
       render(<NarrativeLog />)
-
       const toggle = screen.getByRole("button", { name: /沈墨/ })
       await user.click(toggle)
       expect(screen.getByText(SPEECH)).toBeInTheDocument()
-      expect(toggle).toHaveAttribute("aria-expanded", "true")
-
       await user.click(toggle)
       expect(screen.queryByText(SPEECH)).toBeNull()
-      expect(toggle).toHaveAttribute("aria-expanded", "false")
-    })
-
-    it("opens from the keyboard", async () => {
-      const user = userEvent.setup()
-      speak()
-      render(<NarrativeLog />)
-
-      await user.tab()
-      expect(screen.getByRole("button", { name: /沈墨/ })).toHaveFocus()
+      toggle.focus()
       await user.keyboard("{Enter}")
       expect(screen.getByText(SPEECH)).toBeInTheDocument()
     })
 
-    it("shows a line that fits the preview as it is, with nothing to unfold", () => {
-      ingest({
-        type: "narrative",
-        id: "npc2",
-        speaker: "npc",
-        name: "沈墨",
-        text: "别碰那口井。",
-        format: "markdown",
-      })
+    it("leads with the spoken words after a mood parenthetical, and keeps the mood apart", async () => {
+      const words = "哎哟哟，停手停手！我这把老骨头还经不起你这样折腾，快放下快放下，别把东西摔了。"
+      const mood = "嘴上嫌他手笨、念叨个不停"
+      const r = await open()
+      await r.feed(
+        narrative({ speaker: "npc", name: "沈墨", text: `（${mood}）“${words}”`, format: "markdown" }),
+      )
+      const { container } = render(<NarrativeLog />)
+      const head = Array.from(words).slice(0, NPC_PREVIEW_CHARS).join("")
+      expect(container.querySelector(".npc-line-preview")).toHaveTextContent(`${head}…`)
+      expect(container.querySelector(".npc-line-mood")).toHaveTextContent(mood)
+    })
+
+    it("shows a line that fits the preview as it is, with nothing to unfold", async () => {
+      const r = await open()
+      await r.feed(narrative({ speaker: "npc", name: "沈墨", text: "别碰那口井。", format: "markdown" }))
       render(<NarrativeLog />)
       expect(screen.getByText("别碰那口井。")).toBeInTheDocument()
       expect(screen.queryByRole("button")).toBeNull()
     })
-
-    it("cuts by characters, and shows markdown as plain words", () => {
-      // 30 astral-plane characters: a cut by UTF-16 unit would split a pair.
-      ingest({
-        type: "narrative",
-        id: "npc3",
-        speaker: "npc",
-        name: "Wen",
-        text: "𠮷".repeat(30),
-        format: "plain",
-      })
-      ingest({
-        type: "narrative",
-        id: "npc4",
-        speaker: "npc",
-        name: "Ash",
-        text: `*${"a".repeat(40)}*`,
-        format: "markdown",
-      })
-      render(<NarrativeLog />)
-      expect(screen.getByRole("button", { name: /Wen/ })).toHaveTextContent(
-        `Wen${"𠮷".repeat(NPC_PREVIEW_CHARS)}…`,
-      )
-      expect(screen.getByRole("button", { name: /Ash/ })).toHaveTextContent(
-        `Ash${"a".repeat(NPC_PREVIEW_CHARS)}…`,
-      )
-    })
-
-    describe("with a mood parenthetical", () => {
-      const WORDS = "哎哟哟，停手停手！我这把老骨头还经不起你这样折腾，快放下快放下，别把东西摔了。"
-      const head = Array.from(WORDS).slice(0, NPC_PREVIEW_CHARS).join("")
-
-      it("leads with the spoken words after a full-width parenthetical, and keeps the mood apart", async () => {
-        const user = userEvent.setup()
-        const mood = "嘴上嫌他手笨、念叨个不停、心里却领了他这份不收钱的好意"
-        const line = `（${mood}）“${WORDS}”`
-        ingest({ type: "narrative", id: "m1", speaker: "npc", name: "沈墨", text: line, format: "markdown" })
-        const { container } = render(<NarrativeLog />)
-
-        const toggle = screen.getByRole("button", { name: /沈墨/ })
-        // The words, minus their opening quote — not the stage direction.
-        expect(container.querySelector(".npc-line-preview")).toHaveTextContent(`${head}…`)
-        expect(container.querySelector(".npc-line-preview")).not.toHaveTextContent("嘴上嫌他")
-        // The mood is its own muted piece, whole in the tooltip.
-        expect(container.querySelector(".npc-line-mood")).toHaveTextContent(mood)
-        expect(screen.getByTitle(mood)).toBeInTheDocument()
-
-        // Unfolded, it is the original line: mood and quotes untouched.
-        await user.click(toggle)
-        expect(screen.getByText(line)).toBeInTheDocument()
-        expect(container.querySelector(".npc-line-mood")).toBeNull()
-      })
-
-      it("does the same with an ASCII parenthetical and straight quotes", () => {
-        const text =
-          '(sighs, wiping the counter) "Nobody drinks at the Anchor after dusk, stranger — not since the tide turned wrong."'
-        ingest({ type: "narrative", id: "m2", speaker: "npc", name: "Bram", text, format: "markdown" })
-        const { container } = render(<NarrativeLog />)
-
-        expect(container.querySelector(".npc-line-preview")).toHaveTextContent("Nobody drinks at the Anc…")
-        expect(container.querySelector(".npc-line-mood")).toHaveTextContent("sighs, wiping the counter")
-      })
-
-      it("shows a short spoken line inline, unquoted, beside its mood", () => {
-        ingest({
-          type: "narrative",
-          id: "m3",
-          speaker: "npc",
-          name: "沈墨",
-          text: "（笑）“好。”",
-          format: "plain",
-        })
-        const { container } = render(<NarrativeLog />)
-
-        expect(screen.queryByRole("button")).toBeNull()
-        expect(container.querySelector(".npc-line-preview")).toHaveTextContent(/^好。$/)
-        expect(container.querySelector(".npc-line-mood")).toHaveTextContent("笑")
-      })
-
-      it("shows a line that is only a parenthetical as it is", () => {
-        ingest({
-          type: "narrative",
-          id: "m4",
-          speaker: "npc",
-          name: "沈墨",
-          text: "（沉默）",
-          format: "plain",
-        })
-        const { container } = render(<NarrativeLog />)
-
-        expect(container.querySelector(".npc-line-preview")).toHaveTextContent("（沉默）")
-        expect(container.querySelector(".npc-line-mood")).toBeNull()
-      })
-
-      it("has no mood piece when the line does not open with a parenthetical", () => {
-        ingest({
-          type: "narrative",
-          id: "m5",
-          speaker: "npc",
-          name: "沈墨",
-          text: `${WORDS}（他停了停）`,
-          format: "markdown",
-        })
-        const { container } = render(<NarrativeLog />)
-
-        expect(container.querySelector(".npc-line-mood")).toBeNull()
-        expect(container.querySelector(".npc-line-preview")).toHaveTextContent(`${head}…`)
-      })
-    })
-
-    it("leaves every other speaker's text in full", () => {
-      narrate()
-      render(<NarrativeLog />)
-      expect(screen.queryByRole("button")).toBeNull()
-      expect(screen.getByText(new RegExp(SPEECH))).toBeInTheDocument()
-    })
   })
+})
 
-  // A join replay from an engine that does not name the seat yet sends the
-  // player's words with no `name`. The header used to read "?".
-  it("gives a nameless player line no header instead of a question mark", () => {
-    ingest({ type: "narrative", id: "r1", speaker: "player", text: "I step back.", format: "plain" })
-    ingest({ type: "narrative", id: "r2", speaker: "kp", text: "The pier creaks.", format: "markdown" })
-    const { container } = render(<NarrativeLog />)
+describe("NarrativeLog: following the stream", () => {
+  const slice = (text: string) => ({ type: "signal", kind: "draft", data: { id: "d-1", text } })
 
-    expect(screen.getByText("I step back.")).toBeInTheDocument()
-    expect(screen.queryByText("?")).toBeNull()
-    const player = container.querySelector(".log-entry.speaker-player") as HTMLElement
-    expect(player.querySelector(".entry-speaker")).toBeNull()
-    // The other speakers keep their headers.
-    expect(container.querySelector(".log-entry.speaker-kp .entry-speaker")).toHaveTextContent("KP")
-  })
-
-  it("treats a blank or control-character name as no name", () => {
-    ingest({ type: "narrative", id: "r1", speaker: "player", name: " \u0007 ", text: "Hm.", format: "plain" })
-    const { container } = render(<NarrativeLog />)
-    expect(container.querySelector(".entry-speaker")).toBeNull()
-  })
-
-  it("shows a blinking cursor only while the draft is open", () => {
-    ingest({
-      type: "narrative_delta",
-      id: "s1",
-      speaker: "kp",
-      text: "The fog",
-    })
-    const { container, rerender } = render(<NarrativeLog />)
-    expect(container.querySelector(".stream-cursor")).not.toBeNull()
-
-    // The closing `narrative` (same id, full final text) seals the bubble.
-    ingest({
-      type: "narrative",
-      id: "s1",
-      speaker: "kp",
-      text: "The fog settles.",
-      format: "markdown",
-    })
-    rerender(<NarrativeLog />)
-    expect(container.querySelector(".stream-cursor")).toBeNull()
-    expect(screen.getByText("The fog settles.")).toBeInTheDocument()
-  })
-
-  it("follows a stream only while the reader is pinned near the bottom", () => {
-    const delta = (text: string) =>
-      act(() => ingest({ type: "narrative_delta", id: "s1", speaker: "kp", text }))
-    delta("The fog ")
+  async function streaming() {
+    const r = await open()
     const { container } = render(<NarrativeLog />)
     const log = container.querySelector(".narrative-log") as HTMLDivElement
+    return { r, log }
+  }
+
+  it("follows a stream only while the reader is pinned near the bottom", async () => {
+    const { r, log } = await streaming()
     Object.defineProperty(log, "scrollHeight", { value: 1000, configurable: true })
     Object.defineProperty(log, "clientHeight", { value: 200, configurable: true })
+    await r.feed(slice("The fog "))
 
-    // Scrolled up to reread history: a new delta must not yank the view down.
+    // Scrolled up to reread history: a new slice must not yank the view down.
     log.scrollTop = 100
     fireEvent.scroll(log)
-    delta("thickens ")
+    await r.feed(slice("thickens "))
     expect(log.scrollTop).toBe(100)
 
     // Back at the bottom: following resumes.
     log.scrollTop = 780
     fireEvent.scroll(log)
-    delta("over the pier.")
+    await r.feed(slice("over the pier."))
     expect(log.scrollTop).toBe(1000)
   })
 
-  it("keeps following when media grows the log underneath a pinned reader", () => {
-    const delta = (text: string) =>
-      act(() => ingest({ type: "narrative_delta", id: "s2", speaker: "kp", text }))
-    delta("A lantern ")
-    const { container } = render(<NarrativeLog />)
-    const log = container.querySelector(".narrative-log") as HTMLDivElement
+  it("keeps following when a picture grows the log underneath a pinned reader", async () => {
+    const { r, log } = await streaming()
     let height = 1000
     Object.defineProperty(log, "scrollHeight", { get: () => height, configurable: true })
     Object.defineProperty(log, "clientHeight", { value: 200, configurable: true })
+    await r.feed(slice("A lantern "))
     log.scrollTop = 800
     fireEvent.scroll(log)
 
-    // An image finishes loading: the log is 600px taller, the position did not move.
     height = 1600
     fireEvent.scroll(log)
     const img = document.createElement("img")
@@ -350,167 +438,8 @@ describe("NarrativeLog", () => {
     fireEvent.load(img)
     expect(log.scrollTop).toBe(1600)
 
-    // …and the next line of the turn still follows.
     height = 1700
-    delta("swings.")
+    await r.feed(slice("swings."))
     expect(log.scrollTop).toBe(1700)
-  })
-
-  it("keeps following when an image sizes itself before our own follow's scroll event lands", () => {
-    const delta = (text: string) =>
-      act(() => ingest({ type: "narrative_delta", id: "s3", speaker: "kp", text }))
-    delta("The gate ")
-    const { container } = render(<NarrativeLog />)
-    const log = container.querySelector(".narrative-log") as HTMLDivElement
-    let height = 1000
-    Object.defineProperty(log, "scrollHeight", { get: () => height, configurable: true })
-    Object.defineProperty(log, "clientHeight", { value: 200, configurable: true })
-    log.scrollTop = 800
-    fireEvent.scroll(log)
-
-    // A new line: the log follows to 1100…
-    height = 1100
-    delta("opens.")
-    expect(log.scrollTop).toBe(1100)
-    // …an image learns its size before that follow's scroll event is dispatched…
-    height = 1700
-    fireEvent.scroll(log)
-    // …and when it finishes loading the reader is still following.
-    const img = document.createElement("img")
-    log.appendChild(img)
-    fireEvent.load(img)
-    expect(log.scrollTop).toBe(1700)
-  })
-
-  it("renders a pending echo dimmed, and stops rendering it once the line lands", () => {
-    act(() => {
-      useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx")
-    })
-    const { container, rerender } = render(<NarrativeLog />)
-    expect(container.querySelector(".log-entry.pending")).not.toBeNull()
-    expect(screen.getByText("sending…")).toBeInTheDocument()
-
-    act(() => {
-      ingest({
-        type: "narrative",
-        id: "p1",
-        speaker: "player",
-        name: "Nyx",
-        text: "I check the ledger.",
-        format: "plain",
-      })
-    })
-    rerender(<NarrativeLog />)
-    expect(container.querySelector(".log-entry.pending")).toBeNull()
-    // Once — never the echo and the real line side by side.
-    expect(screen.getAllByText("I check the ledger.")).toHaveLength(1)
-  })
-
-  it("turns an un-echoed line into a failure notice after the timeout", () => {
-    vi.useFakeTimers()
-    try {
-      act(() => {
-        useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx", Date.now())
-      })
-      const { container } = render(<NarrativeLog />)
-      act(() => {
-        vi.advanceTimersByTime(PENDING_ECHO_TIMEOUT_MS + ECHO_SWEEP_MS)
-      })
-      expect(container.querySelector(".log-entry.pending.failed")).not.toBeNull()
-      expect(screen.getByText("not delivered")).toBeInTheDocument()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it("renders system spinner notices with an animated spinner element", () => {
-    ingest({ type: "system", level: "info", text: "Summoning the Keeper…", spinner: true })
-    const { container } = render(<NarrativeLog />)
-    expect(container.querySelector(".spinner")).not.toBeNull()
-  })
-
-  it("shows the turn-queued notice as a visible info line beside the still-pending echo", () => {
-    // `net/session.py: notify_turn_queued` — sent privately to a member whose
-    // input arrived while someone else's turn holds the room lock, well before
-    // the queued line itself runs. The exact wire shape the engine sends.
-    act(() => {
-      useSessionStore.getState().echoLocalInput(".pack install gh:1A7432/antu@v1.0.0", "Nyx")
-    })
-    act(() => {
-      ingest({ type: "system", level: "info", text: "Your input is queued behind the running turn." })
-    })
-    const { container } = render(<NarrativeLog />)
-
-    // The held line is still there, dimmed…
-    expect(container.querySelector(".log-entry.pending")).not.toBeNull()
-    // …and the queue notice is its own visible line beside it, not swallowed.
-    expect(screen.getByText("Your input is queued behind the running turn.")).toBeInTheDocument()
-    const notice = container.querySelector(".system-line")
-    expect(notice?.className).toContain("level-info")
-    expect(notice?.className).not.toContain("level-error")
-  })
-  describe("an undelivered line", () => {
-    const undelivered = (text = "I check the ledger.") => {
-      let seq = 0
-      act(() => {
-        seq = useSessionStore.getState().echoLocalInput(text, "Nyx", Date.now())
-        useSessionStore.getState().failEcho(seq)
-      })
-      return seq
-    }
-
-    it("offers to resend, and sends the same words once the table is back", () => {
-      undelivered()
-      act(() => useLegacyConnectionStore.setState({ status: "online" }))
-      const { container } = render(<NarrativeLog />)
-      expect(screen.getByText("not delivered")).toBeInTheDocument()
-
-      fireEvent.click(screen.getByRole("button", { name: "Resend" }))
-
-      expect(transport.send).toHaveBeenCalledTimes(1)
-      expect(transport.send).toHaveBeenCalledWith({ type: "input", text: "I check the ledger." })
-      // Back to waiting, in place: the failure mark and the button are gone.
-      expect(container.querySelector(".log-entry.pending.failed")).toBeNull()
-      expect(screen.queryByRole("button", { name: "Resend" })).toBeNull()
-      expect(screen.getByText("sending…")).toBeInTheDocument()
-      expect(screen.getAllByText("I check the ledger.")).toHaveLength(1)
-    })
-
-    it("cannot be sent twice by a double click", () => {
-      undelivered()
-      act(() => useLegacyConnectionStore.setState({ status: "online" }))
-      render(<NarrativeLog />)
-      const button = screen.getByRole("button", { name: "Resend" })
-
-      fireEvent.click(button)
-      fireEvent.click(button)
-
-      expect(transport.send).toHaveBeenCalledTimes(1)
-    })
-
-    it("is disabled while offline, and says why", () => {
-      undelivered()
-      render(<NarrativeLog />)
-      const button = screen.getByRole("button", { name: "Resend" })
-      expect(button).toBeDisabled()
-      expect(button).toHaveAttribute("title", "Offline — you can resend once you are reconnected.")
-
-      fireEvent.click(button)
-      expect(transport.send).not.toHaveBeenCalled()
-
-      // The link comes back: the same button is live.
-      act(() => useLegacyConnectionStore.setState({ status: "online" }))
-      expect(screen.getByRole("button", { name: "Resend" })).toBeEnabled()
-    })
-
-    it("is offered on failed lines only", () => {
-      act(() => {
-        useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx", Date.now())
-      })
-      act(() => useLegacyConnectionStore.setState({ status: "online" }))
-      render(<NarrativeLog />)
-      expect(screen.getByText("sending…")).toBeInTheDocument()
-      expect(screen.queryByRole("button", { name: "Resend" })).toBeNull()
-    })
   })
 })

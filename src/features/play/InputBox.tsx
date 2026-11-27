@@ -1,75 +1,56 @@
-import { useEffect, useState, type FormEvent } from "react"
+// The line a person types: speech or a text command, sent as one `input` (protocol 3.0
+// §5.2). The server decides which it is; the session does the rest — speech comes back
+// as the table's `narrative` event, so there is no local echo to keep in step with it.
+// What the result says is shown under the field: a command's answer, or a refusal in the
+// member's own language, as written. A line that never reached the room is put back in
+// the field when the field is still empty, so nobody retypes it.
+
+import { useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
-import { transportSend } from "../../lib/transport"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
-import { JOIN_REPLAY_TIMEOUT_MS, useSessionStore } from "../../store/session"
+import { useConnection } from "../../store/connection"
+import CommandFeedback from "./CommandFeedback"
+import { feedbackOf, useOnline, type Feedback } from "./room"
 
 export default function InputBox() {
   const { t } = useTranslation()
-  const status = useLegacyConnectionStore((s) => s.status)
-  const seat = useLegacyConnectionStore((s) => s.welcome?.you.name ?? "")
-  const echoLocalInput = useSessionStore((s) => s.echoLocalInput)
-  const failEcho = useSessionStore((s) => s.failEcho)
-  // The transport is online the moment the welcome lands, but the room's history
-  // is still arriving behind it: a line sent now would sit in the middle of the
-  // log being rebuilt. The draft is HELD — the field stays editable, Enter keeps
-  // it — until the replay ends, which is normally a beat.
-  const replaySince = useSessionStore((s) => s.replay?.since ?? null)
-  const expireReplay = useSessionStore((s) => s.expireReplay)
+  const connection = useConnection()
+  const online = useOnline()
   const [text, setText] = useState("")
-  const online = status === "online"
-  const syncing = replaySince !== null
-
-  // A server that never closes its replay must not hold the input for ever.
-  useEffect(() => {
-    if (replaySince === null) return
-    const timer = setTimeout(
-      () => expireReplay(Date.now()),
-      Math.max(0, replaySince + JOIN_REPLAY_TIMEOUT_MS - Date.now()),
-    )
-    return () => clearTimeout(timer)
-  }, [replaySince, expireReplay])
+  const [feedback, setFeedback] = useState<Feedback | null>(null)
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    const trimmed = text.trim()
-    if (!online || syncing || trimmed.length === 0) return
-    // Echo first: a turn already running holds the room's turn lock, so this
-    // line can wait in the queue for a long while before anything comes back.
-    const seq = echoLocalInput(trimmed, seat)
-    void transportSend({ type: "input", text: trimmed }).catch(() => {
-      // The transport surfaces failures through status events; the echo says
-      // so where the player is actually looking.
-      failEcho(seq)
-    })
+    const line = text.trim()
+    if (connection === null || !online || line.length === 0) return
     setText("")
+    setFeedback(null)
+    connection.session.input(line).then(
+      (result) => setFeedback(feedbackOf(result)),
+      (error: unknown) => {
+        const code =
+          typeof error === "object" && error !== null && "code" in error ? String(error.code) : "failed"
+        setFeedback(feedbackOf({ failed: code }))
+        setText((current) => (current === "" ? line : current))
+      },
+    )
   }
 
-  const holding = online && syncing
   return (
-    <form className="input-box" onSubmit={submit}>
-      <input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={t("session.inputPlaceholder")}
-        aria-label={t("session.inputPlaceholder")}
-        disabled={!online}
-        spellCheck={false}
-      />
-      <button
-        type="submit"
-        disabled={!online || syncing || text.trim().length === 0}
-        title={holding ? t("session.syncingHint") : undefined}
-      >
-        {holding ? (
-          <span className="input-syncing" role="status">
-            <span className="spinner spinner-inline" aria-hidden="true" />
-            {t("session.syncing")}
-          </span>
-        ) : (
-          t("session.send")
-        )}
-      </button>
-    </form>
+    <div className="input-area">
+      <CommandFeedback feedback={feedback} onDismiss={() => setFeedback(null)} />
+      <form className="input-box" onSubmit={submit}>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={t("session.inputPlaceholder")}
+          aria-label={t("session.inputPlaceholder")}
+          disabled={!online}
+          spellCheck={false}
+        />
+        <button type="submit" disabled={!online || text.trim().length === 0}>
+          {t("session.send")}
+        </button>
+      </form>
+    </div>
   )
 }

@@ -339,24 +339,6 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* The room while the play screens move to protocol 3.0: who is connected where. */
-.room-facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 6px 12px;
-  margin: 0;
-  font-size: 13px;
-}
-
-.room-facts dt {
-  color: var(--ink-dim);
-}
-
-.room-facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
 /* ---- Status pill ---- */
 
 .status-pill {
@@ -714,44 +696,6 @@ button.npc-line-toggle {
   text-shadow: 0 0 14px rgba(232, 191, 89, 0.35);
 }
 
-/* A line this client sent, waiting for the table to reflect it back. */
-.log-entry.pending .entry-body {
-  opacity: 0.55;
-}
-
-.log-entry.pending.failed {
-  --rail: var(--danger);
-}
-
-.pending-mark {
-  display: inline-block;
-  margin-top: 2px;
-  font: 11px/1.4 var(--font-ui);
-  letter-spacing: 0.04em;
-  color: var(--ink-faint);
-}
-
-.log-entry.pending.failed .pending-mark {
-  color: var(--danger);
-}
-
-/* The undelivered state sits below the dimmed body, so it keeps full strength. */
-.pending-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 2px;
-}
-
-.pending-actions .pending-mark {
-  margin-top: 0;
-}
-
-.pending-resend {
-  padding: 3px 8px;
-  font-size: 11px;
-}
-
 /* ---- System lines ---- */
 
 .system-line {
@@ -872,11 +816,55 @@ button.npc-line-toggle {
   cursor: default;
 }
 
-/* The held-send state while a join replay rebuilds the log. */
-.input-syncing {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* What came back to this person from a command: an answer, a refusal, nothing sent. */
+.command-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.input-area .command-feedback {
+  margin: 0 24px;
+}
+
+.command-feedback.is-refusal,
+.command-feedback.is-failed {
+  border-color: var(--danger);
+  color: var(--ink);
+}
+
+.command-feedback-text {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Out-of-band notices, just above the input line. */
+.notice-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 24px;
+}
+
+/* "Load earlier" at the top of the log, or where a resume left a hole. */
+.log-older {
+  display: flex;
+  justify-content: center;
+}
+
+.scene-facts {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--ink-dim);
 }
 
 /* ---- Keeper's desk (state panel) ---- */
@@ -3573,54 +3561,6 @@ button.npc-line-toggle {
   color: var(--ink-dim);
   border: 1px solid var(--border-soft);
   border-radius: 3px;
-}
-
-.dice-opposed,
-.dice-detail {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
-  margin-left: 8px;
-}
-
-.dice-side {
-  display: inline-flex;
-  gap: 3px;
-  align-items: baseline;
-  color: var(--ink-dim);
-}
-
-/* The winner is the one thing a reader looks for; nothing else is emphasized. */
-.dice-side.won {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.dice-side-target {
-  color: var(--ink-faint);
-}
-
-.dice-versus,
-.dice-winner {
-  font-size: 11px;
-  color: var(--ink-dim);
-}
-
-.dice-chip {
-  display: inline-flex;
-  gap: 4px;
-  align-items: baseline;
-  font-size: 11px;
-  color: var(--ink-dim);
-}
-
-.dice-chip-label::after {
-  content: ":";
-}
-
-.dice-chip-value {
-  color: var(--ink);
 }
 
 /* --- version badge ------------------------------------------------------- */

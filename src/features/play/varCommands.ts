@@ -1,58 +1,37 @@
-// The keeper's variable writes, as commands.
-//
-// `.var set <id> <value>` and `.var add <id> <delta>` landed upstream
-// (UPSTREAM item 11) — keeper-gated, validated by `core.modvars`. There is no
-// wire frame for a variable write and there should not be: routing it through
-// the ordinary command path means the same permission check, the same spec
-// validation (bounds, enum options, bool coercion) and the same state push a
-// keeper typing it by hand would get. This module only builds the line.
-//
-// Two shapes the engine's own parser imposes, mirrored here:
-//   - `cmd_var` reads `rest.split(None, 1)`, so the ID must be ONE token and
-//     everything after it is the payload. A variable id can be CJK but never
-//     contains whitespace (`core.modvars._valid_id` rejects separators), so
-//     that split is always safe.
-//   - `add` runs its payload through `coerce_int`, so a delta is an integer or
-//     the command fails. The UI never offers a fractional step.
+// The room admin's variable writes, as the `var` command's arguments (protocol 3.0 §6.8:
+// `op` set|add, `path`, `value` a string, `delta` an integer). There is no frame for a
+// variable write and there should not be: the command path means the same permission
+// check, the same validation against the variable's own spec (bounds, enum options, bool
+// coercion) and the same view refresh a typed `.var set` gets. This module only builds the
+// argument objects; nothing here second-guesses a value the server will check.
 
-import type { ModuleVariable } from "@loreweaver/protocol"
+import type { ViewModuleVariable } from "loreweaver-protocol/v3"
 
-/** `.var set <id> <value>` — the value is validated against the variable's own
- * spec server-side, so this passes it through rather than second-guessing. */
-export function setVarCommand(id: string, value: string | number | boolean): string {
-  return `.var set ${id.trim()} ${formatValue(value)}`
+/** The longest `path` the `var` command takes, in code points. */
+export const MAX_VAR_PATH_CHARS = 200
+
+/** `var {op: "set", path, value}` — the value travels as text and is parsed by the server. */
+export function setVarArgs(path: string, value: string | number | boolean): Record<string, unknown> {
+  return { op: "set", path, value: typeof value === "string" ? value.trim() : String(value) }
 }
 
-/** `.var add <id> <delta>` — integers only. A zero delta is not a command:
- * the engine would do nothing and reply as if something happened. */
-export function addVarCommand(id: string, delta: number): string | null {
+/** `var {op: "add", path, delta}` — integers only. A zero delta is not a command: the server
+ * would change nothing and answer as if something happened. */
+export function addVarArgs(path: string, delta: number): Record<string, unknown> | null {
   const step = Math.trunc(delta)
   if (!Number.isFinite(step) || step === 0) return null
-  return `.var add ${id.trim()} ${step}`
+  return { op: "add", path, delta: step }
 }
 
-function formatValue(value: string | number | boolean): string {
-  if (typeof value === "boolean") return value ? "true" : "false"
-  if (typeof value === "number") return String(value)
-  // `ctx.args.split()` collapses runs of whitespace, so a value's internal
-  // spacing is normalized server-side no matter what we send. Trimming the
-  // ends is the honest half of that; nothing here can preserve the rest.
-  return value.trim()
+/** Can a variable be written from the panel at all? A hidden one is as writable as any
+ * other — hiding governs who SEES it — but a path the command could not carry is not. */
+export function isWritablePath(path: string): boolean {
+  return path.trim() !== "" && Array.from(path).length <= MAX_VAR_PATH_CHARS
 }
 
-/** Can a keeper write this variable from the panel at all?
- *
- * A hidden (keeper-only) variable is as writable as any other — hiding governs
- * who SEES it, not who may set it. What is refused is an id the command's own
- * tokenizer could not carry. */
-export function isWritable(variable: ModuleVariable): boolean {
-  return variable.id.trim() !== "" && !/\s/.test(variable.id)
-}
-
-/** The step a `+`/`−` control should use for one variable: 1 normally, and
- * nothing at all once the value is against a declared bound in that direction —
- * `core.modvars` would clamp it and report a no-op change. */
-export function stepFor(variable: ModuleVariable, direction: 1 | -1): number | null {
+/** The step a `+`/`−` control uses: 1, or nothing once the value is against a declared
+ * bound in that direction (the server would clamp it and report a no-op). */
+export function stepFor(variable: ViewModuleVariable, direction: 1 | -1): number | null {
   if (variable.kind !== "number" || typeof variable.value !== "number") return null
   const next = variable.value + direction
   if (typeof variable.max === "number" && next > variable.max) return null

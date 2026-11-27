@@ -1,615 +1,263 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+// The desk cards, from the engine's own view values (fixtures/views.json) fed into a real
+// session, and their actions as `command.run` calls with the `commands` view's arguments.
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
-
-const sent: unknown[] = []
-vi.mock("../../lib/transport", () => ({
-  TRANSPORT_EVENT: "loreweaver://transport",
-  isTauri: () => true,
-  transportSend: async (frame: unknown) => {
-    sent.push(frame)
-  },
-}))
-
+import { afterEach, describe, expect, it } from "vitest"
+import type { Role } from "loreweaver-protocol/v3"
 import "../../i18n"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
-import { useSessionStore } from "../../store/session"
-import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS } from "./StatePanel"
+import { TestRoom, fixtureView } from "./room.testkit"
+import StatePanel from "./StatePanel"
 
-describe("StatePanel", () => {
-  beforeEach(() => useSessionStore.getState().clear())
+let room: TestRoom | null = null
+afterEach(() => {
+  room?.close()
+  room = null
+})
 
-  it("renders character meters, party, scene, initiative, and presence", () => {
-    useSessionStore.getState().ingest({
-      type: "state",
-      character: {
-        name: "Ash",
-        system: "coc7",
-        resources: [
-          { id: "hp", label: "HP", value: 9, max: 12 },
-          { id: "mp", label: "MP", value: 3, max: 8 },
-          { id: "san", label: "SAN", value: 44, max: 60 },
-        ],
-        attributes: {},
-        status_effects: ["bleeding"],
-      },
-      party: [
-        { name: "Ash", online: true, active: true },
-        {
-          name: "Bo",
-          online: false,
-          active: false,
-          ai: true,
-          resources: [{ id: "hp", label: "HP", value: 5, max: 10 }],
-        },
+async function open(role: Role = "player") {
+  room = await TestRoom.open(role)
+  return room
+}
+
+function card(title: string): HTMLElement {
+  const header = screen.getAllByText(title).find((el) => el.closest(".desk-card"))
+  if (!header) throw new Error(`no card ${title}`)
+  return header.closest(".desk-card") as HTMLElement
+}
+
+/** The `commands` view with `import` available, as in a room with an enabled pack. */
+function withImport(role: Role) {
+  const commands = fixtureView(role, "commands") as {
+    commands: { id: string; available: boolean; reason?: string }[]
+  }
+  for (const entry of commands.commands) {
+    if (entry.id === "import") {
+      entry.available = true
+      delete entry.reason
+    }
+  }
+  return commands
+}
+
+const PACKS = {
+  packs: [
+    {
+      id: "harbor",
+      version: "1.0.0",
+      name: "The Harbor",
+      enabled: true,
+      cards: [
+        { file: "cards/pilot.json", name: "The Pilot", kind: "character" },
+        { file: "cards/world.json", name: "The Drowned Quay", kind: "world" },
       ],
-      scene: { name: "Old Pier", focus: "fog" },
-      clock: { time: "23:40", round: 2 },
-      initiative: [
-        { name: "Ash", value: 8, current: true },
-        { name: "Bo", value: 5, current: false },
-      ],
-      online: 2,
-    })
-    useSessionStore.getState().ingest({
-      type: "presence",
-      players: [{ id: "u1", name: "Nyx", online: true }],
-      online: 1,
-    })
+    },
+  ],
+}
 
-    const { container } = render(<StatePanel />)
-    expect(screen.getByText("Ash", { selector: ".desk-title" })).toBeInTheDocument()
-    expect(screen.getByText("9/12")).toBeInTheDocument()
-    expect(screen.getByText("44/60")).toBeInTheDocument()
-    expect(screen.getByText("bleeding")).toBeInTheDocument()
-    expect(screen.getByText("AI")).toBeInTheDocument()
-    expect(screen.getByText(/5\/10/)).toBeInTheDocument()
-    expect(screen.getByText(/Old Pier/)).toBeInTheDocument()
-    expect(screen.getByText(/23:40/)).toBeInTheDocument()
-    expect(screen.getByText("Nyx")).toBeInTheDocument()
-    expect(container.querySelector(".initiative-list .is-current")).toHaveTextContent("Ash")
-    const bo = screen.getByText("Bo", { selector: ".party-name" }).closest(".party-row")
-    expect(bo).toHaveClass("is-offline")
+describe("StatePanel: what the table sees", () => {
+  it("renders the character, the party, the scene, the fight, who is here and the room", async () => {
+    await open()
+    render(<StatePanel />)
+    const me = card("Ada Lovelace")
+    expect(within(me).getByText("coc7")).toBeInTheDocument()
+    expect(within(me).getByText("HP")).toBeInTheDocument()
+
+    const party = card("Party")
+    expect(within(party).getByText("Bao Zheng")).toBeInTheDocument()
+    expect(within(party).getByText("Bao")).toBeInTheDocument()
+    expect(within(party).getByText("poisoned")).toBeInTheDocument()
+    expect(within(party).getByText("Rex")).toBeInTheDocument()
+
+    const scene = card("Scene")
+    expect(scene).toHaveTextContent("The Farm · Searching the barn")
+    expect(scene).toHaveTextContent("Day 1 08:00 · round 1")
+    expect(scene).toHaveTextContent("The mill burned down")
+
+    const fight = card("Initiative")
+    expect(within(fight).getByText("Ada Lovelace").closest("li")).toHaveClass("is-current")
+    expect(within(fight).getByText("Cultist")).toBeInTheDocument()
+
+    const here = card("At the table")
+    expect(here).toHaveTextContent("4 online")
+    expect(within(here).getByText("Root")).toBeInTheDocument()
+    expect(within(here).getAllByText("Room admin")).toHaveLength(1)
+
+    expect(card("Room")).toHaveTextContent("CoC · English")
   })
 
-  it("renders nothing without state or presence", () => {
+  it("renders nothing before any view arrives", async () => {
+    room = await TestRoom.open("player", { views: false })
     const { container } = render(<StatePanel />)
     expect(container.querySelectorAll(".desk-card")).toHaveLength(0)
   })
-})
 
-describe("StatePanel — module variables (v1.6)", () => {
-  beforeEach(() => useSessionStore.getState().clear())
-
-  it("renders each variable kind as its widget", () => {
-    useSessionStore.getState().ingest({
-      type: "state",
-      party: [],
-      initiative: [],
-      online: 1,
-      variables: [
-        { id: "suspicion", label: "Suspicion", kind: "number", value: 7, min: 0, max: 10 },
-        { id: "doom", label: "Doom", kind: "number", value: 42 },
-        { id: "alerted", label: "Alerted", kind: "bool", value: true },
-        { id: "calm", label: "Calm", kind: "bool", value: false },
-        { id: "phase", label: "Phase", kind: "enum", value: "night" },
-        { id: "motto", label: "Motto", kind: "text", value: "trust no one" },
-      ],
-    })
-    const { container } = render(<StatePanel />)
-    expect(screen.getByText("7/10")).toBeInTheDocument()
-    expect(screen.getByText("42")).toBeInTheDocument()
-    expect(container.querySelector('[data-kind="bool"] .chip-on')).not.toBeNull()
-    expect(container.querySelectorAll('[data-kind="bool"] .chip-off')).toHaveLength(1)
-    expect(screen.getByText("night")).toBeInTheDocument()
-    expect(screen.getByText("trust no one")).toBeInTheDocument()
-  })
-
-  it("offers the whole tracker name as a tooltip, for when the column cuts it", () => {
-    useSessionStore.getState().ingest({
-      type: "state",
-      party: [],
-      initiative: [],
-      online: 1,
-      variables: [{ id: "moon", label: "休环月倒计时", kind: "number", value: 3, min: 0, max: 12 }],
-    })
+  it("re-renders when a view's new value arrives", async () => {
+    const r = await open()
     render(<StatePanel />)
-    expect(screen.getByText("休环月倒计时")).toHaveAttribute("title", "休环月倒计时")
+    expect(card("Trackers")).toHaveTextContent("7/10")
+    const variables = fixtureView("player", "variables") as { module: { value: number }[] }
+    variables.module[0].value = 8
+    await r.view("variables", variables)
+    expect(card("Trackers")).toHaveTextContent("8/10")
   })
 
-  it("shows an enum's option name (v2.5 value_label), keeping the raw id as the tooltip", () => {
-    useSessionStore.getState().ingest({
-      type: "state",
-      party: [],
-      initiative: [],
-      online: 1,
-      variables: [
-        { id: "column_state", label: "队列", kind: "enum", value: "marching", value_label: "在道\u0007上" },
-        { id: "weather", label: "Weather", kind: "enum", value: "fog" },
-      ],
-    })
+  it("says when the Keeper is not answering, and the last turn's token figures", async () => {
+    const r = await open()
     render(<StatePanel />)
-    expect(screen.getByText("在道上")).toHaveAttribute("title", "marching")
-    expect(screen.queryByText("marching")).not.toBeInTheDocument()
-    // No label on the wire (a pack that names nothing, a 2.4 server): the raw id, as before.
-    expect(screen.getByText("fog")).not.toHaveAttribute("title")
-  })
-
-  it("dims and locks keeper-view hidden variables (v1.7 additive hidden:true)", () => {
-    useSessionStore.getState().ingest({
-      type: "state",
-      party: [],
-      initiative: [],
-      online: 1,
-      variables: [
-        { id: "public", label: "Public", kind: "number", value: 1 },
-        { id: "plot", label: "Plot flag", kind: "bool", value: true, hidden: true },
-      ],
-    })
-    const { container } = render(<StatePanel />)
-    const hiddenRow = container.querySelector(".var-hidden-row")
-    expect(hiddenRow).not.toBeNull()
-    expect(hiddenRow?.textContent).toContain("Plot flag")
-    expect(container.querySelectorAll(".var-hidden-row")).toHaveLength(1)
-  })
-
-  it("renders hook-emitted sidebar ui panels", () => {
-    useSessionStore.getState().ingest({
-      type: "ui",
-      panel: "sidebar",
-      id: "hud",
-      blocks: [{ kind: "badge", label: "omen", tone: "warn" }],
-    })
-    render(<StatePanel />)
-    expect(screen.getByText("omen")).toHaveClass("badge-warn")
-  })
-})
-
-describe("PregenCard", () => {
-  beforeEach(() => {
-    sent.length = 0
-    useSessionStore.getState().clear()
-  })
-
-  const BASE = {
-    type: "state" as const,
-    party: [],
-    initiative: [],
-    online: 1,
-  }
-
-  beforeEach(() => {
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.1",
-        room: "table",
-        you: { id: "u1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver/1",
+    await r.view("room", { ...fixtureView("player", "room"), keeperMuted: true })
+    expect(screen.getByText("The Keeper is not answering")).toBeInTheDocument()
+    await r.view("usage", {
+      last: {
+        turn: 4,
+        inputTokens: 1200,
+        outputTokens: 300,
+        cachedInputTokens: 1000,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        estimated: false,
       },
     })
+    expect(screen.getByText(/Turn 4: 1200 tokens in · 300 out · 1000 cached/)).toBeInTheDocument()
   })
+})
 
-  // `claimed_by` is the claiming member's ID on the wire; the welcome frame above
-  // seats this player as id "u1" / name "Nyx".
-  const present = (players: { id: string; name: string; online: boolean }[]) =>
-    useSessionStore.setState({ presence: { type: "presence", players, online: players.length } })
-
-  it("renders the module's cast and offers an unclaimed one", async () => {
-    useSessionStore.setState({
-      game: { ...BASE, pregens: [{ name: "林晚", claimed_by: "" }] },
-    })
+describe("StatePanel: variables", () => {
+  it("shows a player the visible tracker and leaf, and no way to write them", async () => {
+    await open()
     render(<StatePanel />)
-
-    expect(screen.getByText("林晚")).toBeInTheDocument()
-
-    // Claiming is a PLAYER action and goes down the ordinary command path.
-    await userEvent.click(screen.getByRole("button", { name: "Claim" }))
-    expect(sent).toContainEqual({ type: "input", text: ".pc claim 林晚" })
+    const trackers = card("Trackers")
+    expect(within(trackers).getByText("Morale")).toBeInTheDocument()
+    expect(within(trackers).getByText("stats.hp")).toBeInTheDocument()
+    expect(within(trackers).queryByRole("button")).toBeNull()
   })
 
-  it("reads your own claim as yours, matched by member id rather than display name", () => {
-    useSessionStore.setState({
-      game: { ...BASE, pregens: [{ name: "白榆生", claimed_by: "u1" }] },
-    })
-    present([{ id: "u1", name: "Nyx", online: true }])
+  it("shows the room admin the hidden ones too, locked", async () => {
+    await open("admin")
     render(<StatePanel />)
-
-    expect(screen.getByText("yours")).toBeInTheDocument()
-    expect(screen.queryByText(/claimed by/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/u1/)).not.toBeInTheDocument()
+    const trackers = card("Trackers")
+    expect(within(trackers).getAllByLabelText(/Not exposed to players yet/)).toHaveLength(2)
+    expect(within(trackers).getByText("plot.ending")).toBeInTheDocument()
   })
 
-  it("names another member's claim from the presence roster, not their raw id", () => {
-    useSessionStore.setState({
-      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1" }] },
-    })
-    present([
-      { id: "u1", name: "Nyx", online: true },
-      { id: "tui:2600a9b1", name: "Ash", online: true },
+  it("lets the room admin step a tracker through `var add`, and stops at a declared bound", async () => {
+    const r = await open("admin")
+    const user = userEvent.setup()
+    render(<StatePanel />)
+    await user.click(within(card("Trackers")).getByRole("button", { name: "Write" }))
+    await user.click(screen.getByRole("button", { name: "Increase Morale" }))
+    expect(r.commands()).toEqual([{ id: "var", args: { op: "add", path: "morale", delta: 1 } }])
+
+    const variables = fixtureView("admin", "variables") as { module: { value: unknown }[] }
+    variables.module[0].value = 10
+    await r.view("variables", variables)
+    expect(screen.getByRole("button", { name: "Increase Morale" })).toBeDisabled()
+  })
+
+  it("sets a value and a tree leaf through `var set`, and shows what the server answered", async () => {
+    const r = await open("admin")
+    const user = userEvent.setup()
+    render(<StatePanel />)
+    await user.click(within(card("Trackers")).getByRole("button", { name: "Write" }))
+    await user.type(screen.getByLabelText("Set MODVAR-KEEPER-LABEL"), "calm{Enter}")
+    await r.answer({ ok: true, text: "doom = calm" })
+    expect(screen.getByRole("status")).toHaveTextContent("doom = calm")
+    await user.type(screen.getByLabelText("Set stats.hp"), "9{Enter}")
+    await r.answer({ ok: false, error: { code: "var_refused", message: "stats.hp cannot take that value." } })
+    expect(screen.getByRole("alert")).toHaveTextContent("stats.hp cannot take that value.")
+    expect(r.commands()).toEqual([
+      { id: "var", args: { op: "set", path: "doom", value: "calm" } },
+      { id: "var", args: { op: "set", path: "stats.hp", value: "9" } },
     ])
-    render(<StatePanel />)
-
-    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
-    expect(screen.queryByText(/tui:2600a9b1/)).not.toBeInTheDocument()
-    expect(screen.queryByText("yours")).not.toBeInTheDocument()
-  })
-
-  it("strips control characters from the resolved member name", () => {
-    useSessionStore.setState({
-      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "u2" }] },
-    })
-    present([{ id: "u2", name: "As\u001bh\u0007", online: true }])
-    render(<StatePanel />)
-
-    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
-  })
-
-  it("falls back to the id for a claimer the presence roster does not know", () => {
-    useSessionStore.setState({
-      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1" }] },
-    })
-    // Presence only lists connected members: nobody, or somebody else, is there.
-    present([{ id: "u1", name: "Nyx", online: true }])
-    render(<StatePanel />)
-    expect(screen.getByText("claimed by tui:2600a9b1")).toBeInTheDocument()
-  })
-
-  it("falls back to the id before any presence frame has arrived", () => {
-    useSessionStore.setState({
-      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1" }] },
-    })
-    render(<StatePanel />)
-    expect(screen.getByText("claimed by tui:2600a9b1")).toBeInTheDocument()
-  })
-
-  it("names the claimer from the server's stored name (v2.5) before presence or id", () => {
-    useSessionStore.setState({
-      game: {
-        ...BASE,
-        pregens: [{ name: "陈九鲤", claimed_by: "tui:2600a9b1", claimed_by_name: "As\u001bh" }],
-      },
-    })
-    // The claimer is offline — presence does not know them — yet they are still named.
-    present([{ id: "u1", name: "Nyx", online: true }])
-    render(<StatePanel />)
-    expect(screen.getByText("claimed by Ash")).toBeInTheDocument()
-    expect(screen.queryByText(/tui:2600a9b1/)).not.toBeInTheDocument()
-  })
-
-  it("falls back past a stored claimer name made only of control characters", () => {
-    useSessionStore.setState({
-      game: { ...BASE, pregens: [{ name: "陈九鲤", claimed_by: "u2", claimed_by_name: "\u001b" }] },
-    })
-    present([{ id: "u2", name: "Nyx", online: true }])
-    render(<StatePanel />)
-    expect(screen.getByText("claimed by Nyx")).toBeInTheDocument()
-  })
-
-  it("still decides 'yours' by member id, whatever name the claim carries", () => {
-    useSessionStore.setState({
-      game: {
-        ...BASE,
-        pregens: [
-          { name: "白榆生", claimed_by: "u1", claimed_by_name: "an old name" },
-          { name: "陈九鲤", claimed_by: "u2", claimed_by_name: "Nyx" },
-        ],
-      },
-    })
-    render(<StatePanel />)
-    expect(screen.getAllByText("yours")).toHaveLength(1)
-    expect(screen.getByText("claimed by Nyx")).toBeInTheDocument()
-  })
-
-  it("shows each pregen's player-facing blurb (v2.5), stripped of control characters", () => {
-    useSessionStore.setState({
-      game: {
-        ...BASE,
-        pregens: [
-          { name: "林晚", claimed_by: "", blurb: "A courier who\u0007 knows the old roads" },
-          { name: "白榆生", claimed_by: "", blurb: "  " },
-          { name: "陈九鲤", claimed_by: "" },
-          { name: "关五", claimed_by: "", blurb: "\u0007\u001b" },
-        ],
-      },
-    })
-    const { container } = render(<StatePanel />)
-    expect(screen.getByText("A courier who knows the old roads")).toHaveClass("pregen-blurb")
-    expect(container.querySelectorAll(".pregen-blurb")).toHaveLength(1)
-  })
-
-  it("shows nothing when the module ships no cast", () => {
-    useSessionStore.setState({ game: { ...BASE, pregens: [] } })
-    render(<StatePanel />)
-    expect(screen.queryByText("Pre-generated cast")).not.toBeInTheDocument()
   })
 })
 
-describe("PackImportCard (v2.2)", () => {
-  beforeEach(() => {
-    sent.length = 0
-    useSessionStore.getState().clear()
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.1",
-        room: "table",
-        you: { id: "u1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver/1",
-      },
-    })
-  })
-
-  it("requests the card list on open, renders entries, and imports through the chat lane", async () => {
+describe("StatePanel: the characters on offer", () => {
+  it("offers an unclaimed character and claims it by its id", async () => {
+    const r = await open()
+    const user = userEvent.setup()
     render(<StatePanel />)
-
-    // Opening the picker is what asks the server — no request before that.
-    expect(sent).toEqual([])
-    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
-    expect(sent).toEqual([{ type: "list_pack_cards" }])
-    expect(screen.getByText("Fetching the card list…")).toBeInTheDocument()
-
-    // The unicast reply lands in the store; drive it directly (the installed
-    // 2.1.x package validator would drop the frame on a real connection).
-    act(() => {
-      useSessionStore.getState().ingest({
-        type: "pack_cards",
-        cards: [
-          { ref: "midnight-pier/cards/lin_wan.png", pack: "midnight-pier", name: "lin_wan" },
-          { ref: "midnight-pier/cards/chen_jiuli.png", pack: "midnight-pier", name: "chen_jiuli" },
-        ],
-      })
-    })
-
-    expect(screen.getByText("lin_wan")).toBeInTheDocument()
-    expect(screen.getAllByText("midnight-pier")).toHaveLength(2)
-    // The raw ref rides along as the row tooltip.
-    expect(screen.getByText("lin_wan").closest("li")).toHaveAttribute(
-      "title",
-      "midnight-pier/cards/lin_wan.png",
-    )
-
-    await userEvent.click(screen.getAllByRole("button", { name: "Import" })[0])
-    expect(sent).toContainEqual({ type: "input", text: ".import midnight-pier/cards/lin_wan.png pc" })
+    const cast = card("Pre-generated cast")
+    expect(within(cast).getByText("A detective.")).toBeInTheDocument()
+    await user.click(within(cast).getByRole("button", { name: "Claim" }))
+    expect(r.commands()).toEqual([{ id: "pc", args: { op: "claim", name: "pregen-holmes" } }])
+    await r.answer({ ok: false, error: { code: "taken", message: "Holmes is already played." } })
+    expect(within(cast).getByRole("alert")).toHaveTextContent("Holmes is already played.")
   })
 
-  it("stops claiming to load when the server never answers, and retry re-asks", () => {
-    // An older (<2.2) server never sends `pack_cards`; without the timeout the
-    // picker would spin forever on "Fetching the card list…". fireEvent (not
-    // userEvent) on purpose: userEvent's own waiting deadlocks under fake timers.
-    vi.useFakeTimers()
-    try {
-      render(<StatePanel />)
-      fireEvent.click(screen.getByRole("button", { name: "Browse" }))
-      expect(screen.getByText("Fetching the card list…")).toBeInTheDocument()
-
-      act(() => {
-        vi.advanceTimersByTime(PACK_CARDS_REPLY_TIMEOUT_MS)
-      })
-      expect(screen.getByText(/No reply from the server/)).toBeInTheDocument()
-
-      sent.length = 0
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }))
-      expect(sent).toEqual([{ type: "list_pack_cards" }])
-      expect(screen.getByText("Fetching the card list…")).toBeInTheDocument()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it("shows a friendly empty state when no installed pack ships cards", async () => {
+  it("names another member's claim, and offers your own for release", async () => {
+    const r = await open()
+    const user = userEvent.setup()
     render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
-    act(() => {
-      useSessionStore.getState().ingest({ type: "pack_cards", cards: [] })
+    const characters = fixtureView("player", "characters") as Record<string, unknown>
+    await r.view("characters", {
+      ...characters,
+      claimable: [
+        {
+          id: "pregen-holmes",
+          name: "Holmes",
+          blurb: "",
+          source: { kind: "pack", id: "demo" },
+          player: { id: "m-bao", name: "Bao" },
+        },
+        {
+          id: "pregen-watson",
+          name: "Watson",
+          blurb: "",
+          source: { kind: "pack", id: "demo" },
+          player: { id: "m-ada", name: "Ada" },
+        },
+      ],
     })
-    expect(screen.getByText("No installed pack ships character cards.")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument()
+    const cast = card("Pre-generated cast")
+    expect(within(cast).getByText("claimed by Bao")).toBeInTheDocument()
+    expect(within(cast).getByText("yours")).toBeInTheDocument()
+    await user.click(within(cast).getByRole("button", { name: "Release" }))
+    expect(r.commands()).toEqual([{ id: "pc", args: { op: "release" } }])
   })
 
-  it("imports a world card with the WORLD verb when the keeper clicks it", async () => {
-    // The bug: every picker hard-coded `pc`, so the module's own world card was
-    // offered as a character and the import died on a name collision.
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.3",
-        room: "table",
-        you: { id: "u1", name: "Nyx", role: "keeper" },
-        locale: "en",
-        server: "loreweaver/1",
-      },
-    })
+  it("offers an observer nothing to claim: the command is not available to them", async () => {
+    await open("observer")
     render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
-    act(() => {
-      useSessionStore.getState().ingest({
-        type: "pack_cards",
-        cards: [
-          {
-            ref: "mistwharf/cards/customs.json",
-            pack: "mistwharf",
-            name: "customs",
-            kind: "world",
-          },
-        ],
-      })
-    })
-
-    const row = screen.getByText("customs").closest("li")!
-    expect(within(row).getByText("world card")).toBeInTheDocument()
-    await userEvent.click(within(row).getByRole("button", { name: "Import" }))
-    expect(sent).toContainEqual({ type: "input", text: ".import mistwharf/cards/customs.json world" })
-  })
-
-  it("offers a player no click on a world card", async () => {
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.3",
-        room: "table",
-        you: { id: "u1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver/1",
-      },
-    })
-    render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
-    act(() => {
-      useSessionStore.getState().ingest({
-        type: "pack_cards",
-        cards: [
-          {
-            ref: "mistwharf/cards/customs.json",
-            pack: "mistwharf",
-            name: "customs",
-            kind: "world",
-          },
-        ],
-      })
-    })
-
-    const row = screen.getByText("customs").closest("li")!
-    expect(within(row).getByRole("button", { name: "Import" })).toBeDisabled()
-  })
-
-  it("still sends `pc` for a card whose kind a pre-2.3 server omits", async () => {
-    render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Browse" }))
-    act(() => {
-      useSessionStore.getState().ingest({
-        type: "pack_cards",
-        cards: [{ ref: "harbour/cards/pilot.json", pack: "harbour", name: "pilot" }],
-      })
-    })
-
-    await userEvent.click(screen.getByRole("button", { name: "Import" }))
-    expect(sent).toContainEqual({ type: "input", text: ".import harbour/cards/pilot.json pc" })
-  })
-
-  it("stays hidden while offline", () => {
-    useLegacyConnectionStore.setState({ status: "offline", welcome: null })
-    render(<StatePanel />)
-    expect(screen.queryByText("Import from pack")).not.toBeInTheDocument()
+    expect(within(card("Pre-generated cast")).queryByRole("button")).toBeNull()
   })
 })
 
-describe("keeper variable writes", () => {
-  const GAME = {
-    type: "state" as const,
-    party: [],
-    initiative: [],
-    online: 1,
-    variables: [
-      { id: "fear", label: "Fear", kind: "number" as const, value: 3, min: 0, max: 10 },
-      { id: "seen", label: "Seen the fog", kind: "bool" as const, value: false },
-      { id: "truth", label: "Truth", kind: "number" as const, value: 5, hidden: true },
-    ],
-  }
-
-  function connect(role: "keeper" | "player") {
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.1",
-        room: "table",
-        you: { id: "u1", name: "Nyx", role },
-        locale: "en",
-        server: "loreweaver/1",
-      },
-    })
-  }
-
-  beforeEach(() => {
-    sent.length = 0
-    useSessionStore.getState().clear()
-    useSessionStore.setState({ game: GAME })
+describe("StatePanel: importing a pack's card", () => {
+  it("stays hidden while the room cannot import", async () => {
+    const r = await open()
+    await r.view("packs", PACKS)
+    render(<StatePanel />)
+    expect(screen.queryByText("Import from pack")).toBeNull()
   })
 
-  it("offers nothing to a player", () => {
-    connect("player")
+  it("imports a character card with its own kind", async () => {
+    const r = await open()
+    await r.view("packs", PACKS)
+    await r.view("commands", withImport("player"))
+    const user = userEvent.setup()
     render(<StatePanel />)
-    expect(screen.queryByRole("button", { name: "Write" })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Browse" }))
+    const pilot = screen.getByText("The Pilot").closest("li") as HTMLElement
+    await user.click(within(pilot).getByRole("button", { name: "Import" }))
+    expect(r.commands()).toEqual([
+      { id: "import", args: { pack: "harbor", card: "cards/pilot.json", as: "character" } },
+    ])
+    // A world card is the room admin's to import.
+    const world = screen.getByText("The Drowned Quay").closest("li") as HTMLElement
+    expect(within(world).getByRole("button", { name: "Import" })).toBeDisabled()
   })
 
-  it("is off until the keeper asks for it", async () => {
-    connect("keeper")
+  it("lets the room admin import a world card as the world", async () => {
+    const r = await open("admin")
+    await r.view("packs", PACKS)
+    await r.view("commands", withImport("admin"))
+    const user = userEvent.setup()
     render(<StatePanel />)
-    // A keeper reads this panel far more often than they write it.
-    expect(screen.queryByLabelText("Increase Fear")).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole("button", { name: "Write" }))
-    expect(screen.getByLabelText("Increase Fear")).toBeInTheDocument()
-  })
-
-  it("steps a number through .var add, and stops at a declared bound", async () => {
-    connect("keeper")
-    useSessionStore.setState({
-      game: { ...GAME, variables: [{ ...GAME.variables[0], value: 10 }] },
-    })
-    render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Write" }))
-
-    expect(screen.getByLabelText("Increase Fear")).toBeDisabled()
-    await userEvent.click(screen.getByLabelText("Decrease Fear"))
-    expect(sent).toEqual([{ type: "input", text: ".var add fear -1" }])
-  })
-
-  it("toggles a bool through .var set", async () => {
-    connect("keeper")
-    render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Write" }))
-    await userEvent.click(screen.getByRole("button", { name: "Toggle" }))
-    expect(sent).toContainEqual({ type: "input", text: ".var set seen true" })
-  })
-
-  it("writes a keeper-only variable — hiding governs who SEES it", async () => {
-    connect("keeper")
-    render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Write" }))
-    await userEvent.click(screen.getByLabelText("Increase Truth"))
-    expect(sent).toContainEqual({ type: "input", text: ".var add truth 1" })
-  })
-
-  it("sets a value from the field and clears it", async () => {
-    connect("keeper")
-    render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Write" }))
-    const field = screen.getByLabelText("Set Fear")
-    await userEvent.type(field, "8")
-    await userEvent.click(screen.getAllByRole("button", { name: "Set" })[0])
-    expect(sent).toContainEqual({ type: "input", text: ".var set fear 8" })
-    expect(field).toHaveValue("")
-  })
-
-  it("shows the keeper the raw option id where they type, not its display name (v2.5)", async () => {
-    connect("keeper")
-    useSessionStore.setState({
-      game: {
-        ...GAME,
-        variables: [
-          {
-            id: "column_state",
-            label: "Column",
-            kind: "enum" as const,
-            value: "marching",
-            value_label: "On the road",
-          },
-        ],
-      },
-    })
-    render(<StatePanel />)
-    await userEvent.click(screen.getByRole("button", { name: "Write" }))
-    const field = screen.getByLabelText("Set Column")
-    expect(field).toHaveAttribute("placeholder", "marching")
-    expect(field).toHaveAttribute("title", "marching")
-    await userEvent.type(field, "camped{Enter}")
-    expect(sent).toContainEqual({ type: "input", text: ".var set column_state camped" })
+    await user.click(screen.getByRole("button", { name: "Browse" }))
+    const world = screen.getByText("The Drowned Quay").closest("li") as HTMLElement
+    await user.click(within(world).getByRole("button", { name: "Import" }))
+    expect(r.commands()).toEqual([
+      { id: "import", args: { pack: "harbor", card: "cards/world.json", as: "world" } },
+    ])
   })
 })

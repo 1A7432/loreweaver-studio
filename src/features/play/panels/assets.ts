@@ -5,6 +5,7 @@
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core"
 import type { UiManifestPanel } from "@loreweaver/protocol"
+import type { PanelEntry } from "loreweaver-protocol/v3"
 
 export interface ServeAsset {
   path: string
@@ -69,20 +70,17 @@ function ensureAsset(hash: string): Promise<void> {
   return pull
 }
 
-/** Pull every hash the panel's manifest names into the verified cache. */
+/** Pull every hash a 2.x tier-2 panel names into the verified cache (the parked
+ * `Tier2Frame`'s; a 3.0 page is one HTML file, `entry.page`). */
 export async function ensurePanelAssets(panel: UiManifestPanel): Promise<void> {
   if (!panel.entry?.hash) throw new Error("tier-2 panel has no entry hash")
   const hashes = [panel.entry.hash, ...(panel.assets ?? []).map((asset) => asset.hash)]
   await Promise.all(hashes.map(ensureAsset))
 }
 
-/** Total bytes of Tier-2 content the manifest names (for the consent notice). */
-export function tier2FootprintBytes(panels: readonly UiManifestPanel[]): number {
+/** Total bytes of page HTML the `panels` view names (for the consent notice). */
+export function pageFootprintBytes(panels: readonly PanelEntry[]): number {
   let total = 0
-  for (const panel of panels) {
-    if (panel.tier !== 2) continue
-    total += panel.entry?.size ?? 0
-    for (const asset of panel.assets ?? []) total += asset.size
-  }
+  for (const panel of panels) if (panel.kind === "page") total += panel.page?.size ?? 0
   return total
 }

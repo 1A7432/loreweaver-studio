@@ -1,37 +1,32 @@
-// One mounted panel with its shell chrome: localized title, collapse and
-// close controls. The PLAYER always wins — any panel can be collapsed or
-// closed regardless of what the module wants, and closing never leaves the
-// manifest (reopen lives in the panels menu).
+// One mounted panel with its shell chrome: its title (already in the viewer's language),
+// collapse and close controls. The PLAYER always wins — any panel can be collapsed or
+// closed whatever the pack wants, and closing never leaves the list (reopen lives in the
+// panels menu).
+//
+// A page panel (`kind: "page"`) shows its `fallback` blocks: running pages is a later
+// step, and the 2.x page host (`Tier2Frame`) is parked, not rendered.
 
 import { useTranslation } from "react-i18next"
-import type { UiManifestPanel } from "@loreweaver/protocol"
+import type { PanelEntry } from "loreweaver-protocol/v3"
 import { usePanelsStore } from "../../../store/panels"
-import { pickText } from "./templates"
-import PanelFallback from "./PanelFallback"
+import { panelTitle } from "./panelList"
 import Tier1Blocks from "./Tier1Blocks"
-import Tier2Frame from "./Tier2Frame"
 
-/** The panel body per tier, honoring blocks-only mode for Tier 2. */
-export function PanelBody({ panel }: { panel: UiManifestPanel }) {
-  const blocksOnly = usePanelsStore((s) => s.blocksOnly)
-  if (panel.tier === 2) {
-    if (blocksOnly) return <PanelFallback panel={panel} />
-    return <Tier2Frame panel={panel} />
-  }
-  return <Tier1Blocks panelId={panel.id} blocks={panel.blocks} />
+/** The panel body: the evaluated template, or a page's fallback. */
+export function PanelBody({ panel }: { panel: PanelEntry }) {
+  return <Tier1Blocks panel={panel} />
 }
 
-export default function PanelCard({ panel }: { panel: UiManifestPanel }) {
-  const { t, i18n } = useTranslation()
+export default function PanelCard({ panel }: { panel: PanelEntry }) {
+  const { t } = useTranslation()
   const collapsed = usePanelsStore((s) => Boolean(s.collapsed[panel.id]))
   const toggleCollapsed = usePanelsStore((s) => s.toggleCollapsed)
   const setClosed = usePanelsStore((s) => s.setClosed)
-  const title = pickText(panel.title, i18n.resolvedLanguage) ?? panel.id
 
   return (
-    <section className="desk-card panel-card" data-panel-id={panel.id} data-tier={panel.tier}>
+    <section className="desk-card panel-card" data-panel-id={panel.id} data-kind={panel.kind}>
       <header className="desk-title panel-card-head">
-        <span className="panel-card-title">{title}</span>
+        <span className="panel-card-title">{panelTitle(panel)}</span>
         <span className="panel-card-actions">
           <button
             type="button"

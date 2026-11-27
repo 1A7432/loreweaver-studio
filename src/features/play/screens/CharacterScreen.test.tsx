@@ -1,260 +1,168 @@
-// The character screen's two jobs: make one, and change one. Both go out as ordinary
-// commands, and everything the screen knows about a rule system it learned from the
-// wire — pinned here, because the failure mode is a client quietly growing its own
-// copy of CoC and D&D (which is what the TUI's equivalent screen did).
+// The character screen's jobs: make one, claim one, change one. Everything goes out as a
+// `command.run` with the `commands` view's argument names, and everything the screen
+// knows about a rule system it learned from the views — pinned here, because the failure
+// mode is a client quietly growing its own copy of CoC and D&D.
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
-
-const sent: unknown[] = []
-vi.mock("../../../lib/transport", () => ({
-  TRANSPORT_EVENT: "loreweaver://transport",
-  isTauri: () => true,
-  transportSend: async (frame: unknown) => {
-    sent.push(frame)
-  },
-}))
-
+import { afterEach, describe, expect, it } from "vitest"
 import "../../../i18n"
-import { useLegacyConnectionStore } from "../../../store/legacyConnection"
-import { useSessionStore } from "../../../store/session"
+import { TestRoom, fixtureView } from "../room.testkit"
 import CharacterScreen from "./CharacterScreen"
-import { sheetWrite } from "./sheetWrite"
+import { sheetSetArgs } from "./sheetWrite"
 
-const SYSTEMS = [{ id: "coc7", make_char: "coc" }, { id: "dnd5e", make_char: "dnd" }, { id: "wod" }]
+let room: TestRoom | null = null
+afterEach(() => {
+  room?.close()
+  room = null
+})
 
-function stateFrame(extra: Record<string, unknown> = {}) {
-  return {
-    type: "state" as const,
-    party: [],
-    initiative: [],
-    online: 1,
-    systems: SYSTEMS,
-    ...extra,
-  }
+/** A player with no character yet: the fixture room, unseated. */
+async function unseated() {
+  const r = await TestRoom.open("player")
+  await r.view("me", { ...fixtureView("player", "me"), character: null })
+  await r.view("characters", { ...fixtureView("player", "characters"), mine: null })
+  room = r
+  return r
 }
 
-const SHEET = {
-  name: "Lin Quill",
-  system: "coc7",
-  resources: [{ id: "hp", label: "HP", value: 11, max: 11 }],
-  attributes: { 力量: 55, 敏捷: 60, 职业: "档案员" },
-  status_effects: [],
+async function seated() {
+  room = await TestRoom.open("player")
+  return room
 }
 
-describe("CharacterScreen — creation", () => {
-  beforeEach(() => {
-    sent.length = 0
-    useSessionStore.getState().clear()
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.3",
-        room: "table",
-        you: { id: "u1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver/1",
-      },
-    })
-    useSessionStore.getState().ingest(stateFrame())
-  })
+/** The sheet row labelled `label`. */
+function row(label: string): HTMLElement {
+  return screen.getByText(label).closest("tr") as HTMLElement
+}
 
-  it("offers the systems the SERVER reported, not a hard-coded pair", async () => {
+describe("CharacterScreen — no character yet", () => {
+  it("offers the systems the SERVER listed, the room's own first, and rolls in the chosen one", async () => {
+    const r = await unseated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-
     const picker = screen.getByLabelText("Rule system") as HTMLSelectElement
-    // Roll mode can only offer systems whose pack declares a make-char word.
-    expect([...picker.options].map((option) => option.value)).toEqual(["coc7", "dnd5e"])
+    expect(Array.from(picker.options).map((option) => [option.value, option.text])).toEqual([
+      ["coc7", "CoC"],
+      ["dnd5e", "DnD5e"],
+    ])
+    expect(picker.value).toBe("coc7")
+    await user.selectOptions(picker, "dnd5e")
+    await user.type(screen.getByLabelText("Name"), "  Mira  ")
+    await user.click(screen.getByRole("button", { name: "Create character" }))
+    expect(r.commands()).toEqual([{ id: "new_character", args: { system: "dnd5e", name: "Mira" } }])
   })
 
-  it("rolls with the pack's own dialect word", async () => {
+  it("lets the server name the character when the name is left empty, and shows a refusal", async () => {
+    const r = await unseated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.type(screen.getByLabelText("Name"), "Lin Quill")
-    await userEvent.click(screen.getByRole("button", { name: "Create character" }))
-
-    expect(sent).toEqual([{ type: "input", text: ".coc Lin Quill" }])
+    await user.click(screen.getByRole("button", { name: "Create character" }))
+    expect(r.commands()).toEqual([{ id: "new_character", args: { system: "coc7" } }])
+    await r.answer({
+      ok: false,
+      error: { code: "name_taken", message: "Someone at this table is already called that." },
+    })
+    expect(screen.getByRole("alert")).toHaveTextContent("Someone at this table is already called that.")
   })
 
-  it("uses the chosen system's word, so a pack's own system works untouched", async () => {
+  it("offers the room's cast to claim beside the creation form", async () => {
+    const r = await unseated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.selectOptions(screen.getByLabelText("Rule system"), "dnd5e")
-    await userEvent.click(screen.getByRole("button", { name: "Create character" }))
-
-    expect(sent).toEqual([{ type: "input", text: ".dnd" }])
+    await user.click(screen.getByRole("button", { name: "Claim" }))
+    expect(r.commands()).toEqual([{ id: "pc", args: { op: "claim", name: "pregen-holmes" } }])
   })
 
-  it("drafts from a description through the server's own generator", async () => {
+  it("says so plainly when the room offers no system", async () => {
+    const r = await unseated()
+    await r.view("characters", { claimable: [], systems: [], mine: null })
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "Describe" }))
-    await userEvent.type(screen.getByLabelText("Name"), "Rhee")
-    await userEvent.type(screen.getByLabelText("Who are they?"), "A harbour pilot.")
-    await userEvent.click(screen.getByRole("button", { name: "Create character" }))
-
-    expect(sent).toEqual([{ type: "input", text: ".genchar coc7 Rhee | A harbour pilot." }])
-  })
-
-  it("imports a card as a PC", async () => {
-    render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "Import a card" }))
-    await userEvent.type(screen.getByLabelText("Card file"), "harbour/cards/pilot.png")
-    await userEvent.click(screen.getByRole("button", { name: "Create character" }))
-
-    expect(sent).toEqual([{ type: "input", text: ".import harbour/cards/pilot.png coc7 pc" }])
-  })
-
-  it("says so plainly when the server reported no systems at all", () => {
-    useSessionStore.getState().clear()
-    useSessionStore.getState().ingest({ type: "state", party: [], initiative: [], online: 1 })
-    render(<CharacterScreen onBack={() => {}} />)
-
-    expect(screen.getByText(/no rule systems/i)).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Create character" })).not.toBeInTheDocument()
+    expect(screen.getByText(/no rule system to make a character in/)).toBeInTheDocument()
   })
 })
 
-describe("CharacterScreen — editing", () => {
-  beforeEach(() => {
-    sent.length = 0
-    useSessionStore.getState().clear()
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.3",
-        room: "table",
-        you: { id: "u1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver/1",
-      },
-    })
-    useSessionStore.getState().ingest(stateFrame({ character: SHEET }))
+describe("CharacterScreen — the sheet", () => {
+  it("shows the sheet from `me`: each value under its label in the viewer's language", async () => {
+    await seated()
+    render(<CharacterScreen onBack={() => {}} />)
+    expect(screen.getByRole("heading", { name: /Ada Lovelace/ })).toBeInTheDocument()
+    expect(row("Max HP")).toHaveTextContent("10")
+    expect(screen.getByText("Max HP")).toHaveAttribute("title", "HPMAX")
+    expect(row("Accounting")).toHaveTextContent("5")
   })
 
-  it("writes one attribute through `.st`, using the sheet's own canonical name", async () => {
+  it("writes one value through `sheet set` with the sheet's own key and the explicit `=`", async () => {
+    const r = await seated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "55" }))
-    const box = screen.getByLabelText("力量")
-    await userEvent.clear(box)
-    await userEvent.type(box, "70{Enter}")
-
-    expect(sent).toEqual([{ type: "input", text: ".st 力量=70" }])
-  })
-
-  it("shows each attribute by its display name (v2.5) but writes the raw key", async () => {
-    useSessionStore.getState().ingest(
-      stateFrame({
-        character: {
-          ...SHEET,
-          attributes: { APP: 50, constructor: 7, STR: 40 },
-          attribute_labels: { APP: "外\u0007貌", STR: "" },
-        },
-      }),
-    )
-    render(<CharacterScreen onBack={() => {}} />)
-
-    const name = screen.getByText("外貌")
-    expect(name).toHaveAttribute("title", "APP")
-    expect(screen.queryByText("APP")).not.toBeInTheDocument()
-    // No usable label — an empty one, or a key the map does not own (a plain-object
-    // lookup of `constructor` would find an inherited function): the key, as before.
-    expect(screen.getByText("STR")).not.toHaveAttribute("title")
-    expect(screen.getByText("constructor")).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole("button", { name: "50" }))
-    const box = screen.getByLabelText("外貌")
-    await userEvent.clear(box)
-    await userEvent.type(box, "65{Enter}")
-    expect(sent).toEqual([{ type: "input", text: ".st APP=65" }])
+    await user.click(within(row("Luck")).getByRole("button", { name: "50" }))
+    const box = screen.getByLabelText("Luck")
+    await user.clear(box)
+    await user.type(box, "-5{Enter}")
+    expect(r.commands()).toEqual([
+      { id: "sheet", args: { op: "set", writes: [{ name: "LUC", op: "=", value: "-5" }] } },
+    ])
+    expect(sheetSetArgs("会计", 30)).toEqual({ op: "set", writes: [{ name: "会计", op: "=", value: "30" }] })
   })
 
   it("edits through a text box, because pasting into a number box took the app down", async () => {
-    // Three times out of three, ⌘V into this field reloaded the whole WebView and dropped
-    // the table (2026-08-20 play-test) — a crash below our floor, in WebKit's native paste
-    // path for `<input type=number>`. The dodge is also the better control: no spinner, and
-    // no scroll wheel quietly rewriting a stat. Pinned so nobody "tidies" it back.
+    // Three times out of three, ⌘V into this field reloaded the whole WebView (2026-08-20
+    // play-test) — a crash below our floor, in WebKit's native paste path for
+    // `<input type=number>`. Pinned so nobody "tidies" it back.
+    const r = await seated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "55" }))
-    const box = screen.getByLabelText("力量")
+    await user.click(within(row("STR")).getByRole("button", { name: "50" }))
+    const box = screen.getByLabelText("STR")
     expect(box).toHaveAttribute("type", "text")
     expect(box).toHaveAttribute("inputMode", "numeric")
-
-    // And what a paste actually delivers — stray whitespace and all — still commits.
-    await userEvent.clear(box)
-    await userEvent.paste("  62  ")
-    await userEvent.keyboard("{Enter}")
-    expect(sent).toEqual([{ type: "input", text: ".st 力量=62" }])
+    await user.clear(box)
+    await user.paste("  62  ")
+    await user.keyboard("{Enter}")
+    expect(r.commands()).toEqual([
+      { id: "sheet", args: { op: "set", writes: [{ name: "STR", op: "=", value: "62" }] } },
+    ])
   })
 
-  it("writes through the explicit `=` form, so a negative or a digit-bearing key is exact", async () => {
-    // The bare `.st X -3` is "current minus 3" to the engine and `.st skill2 30` splits
-    // the name; `.st X=-3` / `.st skill2=30` are absolute and unambiguous (engine 2.3).
-    expect(sheetWrite("力量", 70)).toBe(".st 力量=70")
-    expect(sheetWrite("mod", -3)).toBe(".st mod=-3")
-    expect(sheetWrite("skill2", 30)).toBe(".st skill2=30")
-
+  it("clears the draft on Escape, and sends nothing for an unchanged value", async () => {
+    const r = await seated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "55" }))
-    const box = screen.getByLabelText("力量")
-    await userEvent.clear(box)
-    await userEvent.type(box, "-5{Enter}")
-    expect(sent).toEqual([{ type: "input", text: ".st 力量=-5" }])
+    await user.click(within(row("STR")).getByRole("button", { name: "50" }))
+    await user.type(screen.getByLabelText("STR"), "70{Escape}")
+    expect(screen.queryByLabelText("STR")).toBeNull()
+    await user.click(within(row("CON")).getByRole("button", { name: "50" }))
+    await user.type(screen.getByLabelText("CON"), "{Enter}")
+    expect(r.commands()).toEqual([])
   })
 
-  it("keeps the picker honest across modes: a system chosen for Describe is not shown for Roll", async () => {
-    useSessionStore.getState().clear()
-    useSessionStore.getState().ingest(stateFrame())
+  it("shows what the server answered a write, and the next `me` value is the truth", async () => {
+    const r = await seated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "Describe" }))
-    await userEvent.selectOptions(screen.getByLabelText("Rule system"), "wod")
-    await userEvent.click(screen.getByRole("button", { name: "Roll" }))
-    // Roll cannot make a wod sheet (no make-char word): the box falls back to the
-    // first rollable system and the button is live for THAT, not disabled for wod.
-    expect((screen.getByLabelText("Rule system") as HTMLSelectElement).value).toBe("coc7")
-    expect(screen.getByRole("button", { name: "Create character" })).toBeEnabled()
+    await user.click(within(row("STR")).getByRole("button", { name: "50" }))
+    const box = screen.getByLabelText("STR")
+    await user.clear(box)
+    await user.type(box, "999{Enter}")
+    await r.answer({ ok: false, error: { code: "sheet_refused", message: "STR must be between 15 and 90." } })
+    expect(screen.getByRole("alert")).toHaveTextContent("STR must be between 15 and 90.")
+    expect(within(row("STR")).getByRole("button", { name: "50" })).toBeInTheDocument()
   })
 
-  it("clears the draft on Escape and does not write", async () => {
+  it("re-derives vitals and asks before deleting, through the `sheet` command", async () => {
+    const r = await seated()
+    const user = userEvent.setup()
     render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "55" }))
-    const box = screen.getByLabelText("力量")
-    await userEvent.clear(box)
-    await userEvent.type(box, "70")
-    await userEvent.keyboard("{Escape}")
-
-    expect(sent).toEqual([])
-    expect(screen.queryByLabelText("力量")).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "55" })).toBeInTheDocument()
-  })
-
-  it("sends nothing when the value did not change", async () => {
-    render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "60" }))
-    await userEvent.type(screen.getByLabelText("敏捷"), "{Enter}")
-
-    expect(sent).toEqual([])
-  })
-
-  it("leaves a non-numeric field alone — `.st` could not express it", () => {
-    render(<CharacterScreen onBack={() => {}} />)
-    expect(screen.queryByRole("button", { name: "档案员" })).not.toBeInTheDocument()
-    expect(screen.getByText("档案员")).toBeInTheDocument()
-  })
-
-  it("re-derives vitals with the canonical word, never a locale dialect one", async () => {
-    render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "Re-derive vitals" }))
-
-    expect(sent).toEqual([{ type: "input", text: ".st finalize" }])
-  })
-
-  it("asks before deleting a character", async () => {
-    render(<CharacterScreen onBack={() => {}} />)
-    await userEvent.click(screen.getByRole("button", { name: "Delete character" }))
-    expect(sent).toEqual([])
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete for good" }))
-    expect(sent).toEqual([{ type: "input", text: ".st delete" }])
+    await user.click(screen.getByRole("button", { name: "Re-derive vitals" }))
+    expect(r.commands()).toEqual([{ id: "sheet", args: { op: "finalize" } }])
+    await r.answer({ ok: true, text: "Ada Lovelace is finalized." })
+    await user.click(screen.getByRole("button", { name: "Delete character" }))
+    expect(r.commands()).toHaveLength(1)
+    await user.click(screen.getByRole("button", { name: "Delete for good" }))
+    expect(r.commands()).toEqual([
+      { id: "sheet", args: { op: "finalize" } },
+      { id: "sheet", args: { op: "clear" } },
+    ])
   })
 })

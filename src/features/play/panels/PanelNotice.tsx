@@ -1,25 +1,24 @@
-// Player consent, one line: the first join to a room whose keeper enabled
-// panels states what arrived (N panels, X MB of Tier-2 content) — dismissed
-// once per room. Rendering stays default-on; the sandbox is what makes that
-// defensible, and blocks-only mode lives one click away in the panels menu.
+// Player consent, one line: the first join to a room whose packs bring panels
+// states what arrived (N panels, X MB of page content) — dismissed once per room.
 
 import { useTranslation } from "react-i18next"
-import { useLegacyConnectionStore } from "../../../store/legacyConnection"
+import { useSessionSnapshot } from "../../../store/connection"
 import { usePanelsStore } from "../../../store/panels"
-import { tier2FootprintBytes } from "./assets"
+import { pageFootprintBytes } from "./assets"
+import { usePanelList } from "./panelList"
 
 export default function PanelNotice() {
   const { t } = useTranslation()
-  const manifest = usePanelsStore((s) => s.manifest)
+  const panels = usePanelList()
   const noticeRooms = usePanelsStore((s) => s.noticeRooms)
   const markNoticeSeen = usePanelsStore((s) => s.markNoticeSeen)
-  const room = useLegacyConnectionStore((s) => s.welcome?.room ?? null)
+  const room = useSessionSnapshot()?.welcome?.room.id ?? null
 
-  if (!room || manifest.length === 0 || noticeRooms.includes(room)) return null
-  const mb = (tier2FootprintBytes(manifest) / (1024 * 1024)).toFixed(1)
+  if (!room || panels.length === 0 || noticeRooms.includes(room)) return null
+  const mb = (pageFootprintBytes(panels) / (1024 * 1024)).toFixed(1)
   return (
     <div className="panel-notice" role="status">
-      <span className="panel-notice-text">{t("panels.notice", { n: manifest.length, mb })}</span>
+      <span className="panel-notice-text">{t("panels.notice", { n: panels.length, mb })}</span>
       <button type="button" className="ghost-button" onClick={() => markNoticeSeen(room)}>
         {t("panels.noticeOk")}
       </button>

@@ -128,6 +128,9 @@ export interface ConnectionOptions {
   readonly redialBaseMs?: number
   readonly redialMaxMs?: number
   readonly maxRedials?: number
+  /** Views wanted for the life of the connection: subscribed on every welcome, a resume's
+   * included (the session keeps the wanted set and re-subscribes it itself). */
+  readonly views?: readonly string[]
   /** Every welcome, a resume's included. */
   readonly onWelcome?: (welcome: WelcomeFrame) => void
   /** The server refused for good. */
@@ -181,6 +184,11 @@ export class Connection {
       onListenerError: () => undefined,
     })
     this.session.subscribe(this.#onSession)
+    // Wanted before the first attach: the session subscribes them on every welcome. The
+    // call itself is refused now (`not_connected`) — the names stay wanted all the same.
+    if (options.views && options.views.length > 0) {
+      void this.session.viewSubscribe(options.views).catch(() => undefined)
+    }
   }
 
   // --- the owner's own state -------------------------------------------------------------

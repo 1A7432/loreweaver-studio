@@ -25,7 +25,6 @@ vi.mock("../../lib/transport", () => ({
 import i18n from "../../i18n"
 import { useConnectionStore } from "../../store/connection"
 import { useReportStore } from "../../store/report"
-import { useSessionStore } from "../../store/session"
 import ReportNotice from "./ReportNotice"
 
 const HASH = "cd".repeat(32)
@@ -108,10 +107,8 @@ describe("ReportNotice", () => {
   })
 
   it("is not fed from the link any more: the 2.x frame router is gone until the move to 3.0", () => {
-    useSessionStore.getState().clear()
     useReportStore.getState().reset()
     useConnectionStore.getState().handleEvent({ kind: "frame", connectionId: "gen-report", frame: FRAME })
     expect(useReportStore.getState().offers).toEqual([])
-    expect(useSessionStore.getState().entries).toEqual([])
   })
 })

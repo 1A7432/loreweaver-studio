@@ -7,7 +7,7 @@
 // copy of either is kept here.
 
 import { useSyncExternalStore } from "react"
-import type { SessionSnapshot } from "loreweaver-protocol/v3"
+import type { BuiltInViewName, SessionSnapshot } from "loreweaver-protocol/v3"
 import { create } from "zustand"
 import i18n from "../i18n"
 import {
@@ -25,11 +25,31 @@ import {
   type LinkEvent,
   type NetworkProfile,
 } from "../lib/transport"
+import { clearDataUrlCache } from "../lib/dataUrlCache"
 import { STUDIO_VERSION } from "../version"
 import { useLastTableStore, type RememberedTable } from "./lastTable"
+import { usePanelsStore } from "./panels"
 
 /** The name this client gives in `hello`. */
 export const CLIENT_NAME = "loreweaver-studio"
+
+/**
+ * The built-in views the room screen shows, wanted for the whole life of a connection: the
+ * session subscribes them on every welcome, a resume's included. Views only one screen
+ * reads (a panel's own views) are subscribed by that screen while it is open.
+ */
+export const ROOM_VIEWS: readonly BuiltInViewName[] = [
+  "me",
+  "party",
+  "scene",
+  "variables",
+  "characters",
+  "commands",
+  "room",
+  "usage",
+  "packs",
+  "panels",
+]
 
 /** Tolerate the ticket shapes people actually paste: a `ticket=endpoint…`
  * sidecar line, a console announce line, a ticket a terminal wrapped across
@@ -93,6 +113,10 @@ export const useConnectionStore = create<ConnectionSlot>((set, get) => ({
   connect: async (params, options) => {
     pendingRemember = null
     get().connection?.stop()
+    // Another table: the panels' UI state (collapsed, closed, the open overlay) and the
+    // decoded pictures belong to the one just left.
+    usePanelsStore.getState().resetSession()
+    clearDataUrlCache()
     const table: RememberedTable = {
       ticket: sanitizeTicket(params.ticket),
       key: params.key.trim(),
@@ -106,6 +130,7 @@ export const useConnectionStore = create<ConnectionSlot>((set, get) => ({
       client: { name: CLIENT_NAME, version: STUDIO_VERSION },
       network: params.network ?? "n0",
       driver: linkDriver(),
+      views: ROOM_VIEWS,
       onWelcome: () => {
         if (pendingRemember?.connection !== connection) return
         useLastTableStore.getState().remember(pendingRemember.table)

@@ -1,207 +1,106 @@
-// My character — the full sheet, and the two things you actually do to it:
-// make one, and change it. Both go through the ordinary command lane
-// (`transportSend({type:"input"})`), the same one the chat box uses, so the
-// server's own validation (`core.character_rules`) stays the only authority.
+// My character — the full sheet from the `me` view, and the things you actually do to it:
+// make one, claim one, change one. Every action is a command (`command.run`), so the
+// server's own validation against the rule system stays the only authority; what comes
+// back is shown on this screen.
 //
-// This screen knows NOTHING about any rule system. The systems it offers come
-// from `state.systems` (protocol 2.3) — the id plus the dialect word that makes
-// a character in it — and the attributes it edits come from the live sheet.
-// That is deliberate: the TUI's equivalent screen hard-codes CoC's and D&D's
-// attribute tables, ranges, point-buy costs and budgets, which is exactly the
-// per-system knowledge M16 deleted from the engine. Copying it here would put a
-// second rule engine in a client and lock every community pack's own system out
-// of this screen until the studio shipped a release.
-//
-// The one creation mode NOT offered is manual point-buy, for the same reason:
-// its budgets and ranges live in a pack's `creation_constraints` and no frame
-// carries them. Rolling, describing and importing all resolve server-side.
+// This screen knows NOTHING about any rule system. The systems it offers come from the
+// `characters` view, the attributes it edits from the live sheet (each with its label in
+// the viewer's language and the key the `sheet` command writes). There is no point-buy
+// mode for the same reason: its budgets live in a pack's constraints and no view carries
+// them. A card file of your own is imported through the byte channel, which this screen
+// does not offer yet; the cards a pack ships are importable below.
 
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { stripControlChars, type RuleSystemEntry } from "@loreweaver/protocol"
-import { transportSend } from "../../../lib/transport"
-import { useLegacyConnectionStore } from "../../../store/legacyConnection"
-import { useSessionStore } from "../../../store/session"
-import { PregenCard, ResourceRow } from "../StatePanel"
+import { stripControlChars, type ViewStat } from "loreweaver-protocol/v3"
+import CommandFeedback from "../CommandFeedback"
+import { useCommand, useCommandRunner, useOnline, useView } from "../room"
+import { ClaimableCard, PackImportCard, ResourceRow } from "../StatePanel"
 import ScreenShell from "./ScreenShell"
-import { sheetWrite } from "./sheetWrite"
+import { sheetSetArgs } from "./sheetWrite"
 
-function attrText(value: unknown): string {
-  if (value === null || value === undefined) return ""
-  if (typeof value === "object") return JSON.stringify(value)
-  return stripControlChars(String(value))
-}
-
-/** Only whole numbers are `.st`-assignable; a derived object or a text field is shown
- * but not offered as an edit box, because the command would be nonsense. */
-function isEditable(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value)
-}
-
-function send(text: string): void {
-  void transportSend({ type: "input", text }).catch(() => {
-    // The transport surfaces failures through status events.
-  })
-}
-
-/** The one empty list every "no systems" answer returns. A fresh `[]` per call makes
- * a zustand selector look changed on every render, which is an infinite re-render, not
- * a style point. */
-const NO_SYSTEMS: RuleSystemEntry[] = []
-
-type CreateMode = "roll" | "describe" | "import"
-
-/** Make a character. Three modes, all resolved by the server: it rolls, it drafts from
- * a description, or it reads a card file. */
+/** Make a character: the server rolls it in the chosen system (`new_character`). */
 function CreateCharacter() {
   const { t } = useTranslation()
-  const systems = useSessionStore((s) => s.game?.systems ?? NO_SYSTEMS)
-  const online = useLegacyConnectionStore((s) => s.status === "online")
-  const creatable = systems.filter((entry) => entry.make_char)
-  const [mode, setMode] = useState<CreateMode>("roll")
+  const characters = useView("characters")
+  const online = useOnline()
+  const usable = useCommand("new_character", ["system", "name"]) !== null
+  const { run, feedback, dismiss, pending } = useCommandRunner()
   const [system, setSystem] = useState("")
   const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
-  const [path, setPath] = useState("")
-  const [sent, setSent] = useState("")
+  const systems = characters?.systems ?? []
 
-  // The picker offers the CURRENT mode's list (roll needs a make-char word; describe
-  // and import take any system) and defaults to its first entry rather than to a
-  // hard-coded one; `systems` arrives with the first state frame. A pick that is not
-  // in this mode's list (chosen in another mode) falls back the same way, so the box
-  // never shows one system while the button is disabled for another.
-  const offered = mode === "roll" ? creatable : systems
-  const chosen = offered.some((entry) => entry.id === system) ? system : (offered[0]?.id ?? "")
-  const makeCharWord = creatable.find((entry) => entry.id === chosen)?.make_char ?? ""
-
+  if (!usable) return null
   if (systems.length === 0) {
     return <p className="placeholder">{t("play.character.noSystems")}</p>
   }
-
-  const buildCommand = (): string => {
-    const trimmedName = name.trim()
-    if (mode === "roll") {
-      if (!makeCharWord) return ""
-      return trimmedName ? `.${makeCharWord} ${trimmedName}` : `.${makeCharWord}`
-    }
-    if (mode === "describe") {
-      const trimmedDescription = description.trim()
-      if (!trimmedDescription) return ""
-      return trimmedName
-        ? `.genchar ${chosen} ${trimmedName} | ${trimmedDescription}`
-        : `.genchar ${chosen} | ${trimmedDescription}`
-    }
-    const trimmedPath = path.trim()
-    return trimmedPath ? `.import ${trimmedPath} ${chosen} pc` : ""
-  }
+  // The pick defaults to the room's own system, else the first one offered.
+  const chosen = systems.some((entry) => entry.id === system)
+    ? system
+    : (systems.find((entry) => entry.active) ?? systems[0]).id
 
   const submit = () => {
-    const command = buildCommand()
-    if (!command) return
-    send(command)
-    setSent(command)
+    const trimmed = name.trim()
+    void run("new_character", trimmed ? { system: chosen, name: trimmed } : { system: chosen })
   }
-
-  const ready =
-    mode === "roll"
-      ? Boolean(makeCharWord)
-      : mode === "describe"
-        ? Boolean(description.trim())
-        : Boolean(path.trim())
 
   return (
     <div className="play-form">
-      <div className="chip-row" role="group" aria-label={t("play.character.createMode")}>
-        {(["roll", "describe", "import"] as CreateMode[]).map((value) => (
-          <button
-            key={value}
-            type="button"
-            className={value === mode ? "primary-button" : "ghost-button"}
-            onClick={() => setMode(value)}
-          >
-            {t(`play.character.mode.${value}`)}
-          </button>
-        ))}
-      </div>
-      <p className="studio-hint">{t(`play.character.mode.${mode}.hint`)}</p>
-
+      <p className="studio-hint">{t("play.character.rollHint")}</p>
       <label className="field">
         {t("play.character.system")}
         <select value={chosen} onChange={(e) => setSystem(e.target.value)}>
-          {offered.map((entry) => (
+          {systems.map((entry) => (
             <option key={entry.id} value={entry.id}>
-              {stripControlChars(entry.id)}
+              {stripControlChars(entry.label)}
             </option>
           ))}
         </select>
       </label>
-
-      {mode === "import" ? (
-        <label className="field">
-          {t("play.character.cardPath")}
-          <input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder={t("play.character.cardPathPlaceholder")}
-            spellCheck={false}
-          />
-        </label>
-      ) : (
-        <label className="field">
-          {t("play.character.name")}
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t("play.character.namePlaceholder")}
-          />
-        </label>
-      )}
-
-      {mode === "describe" ? (
-        <label className="field">
-          {t("play.character.description")}
-          <textarea
-            rows={4}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder={t("play.character.descriptionPlaceholder")}
-          />
-        </label>
-      ) : null}
-
-      <button type="button" className="primary-button" disabled={!online || !ready} onClick={submit}>
+      <label className="field">
+        {t("play.character.name")}
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("play.character.namePlaceholder")}
+        />
+      </label>
+      <button type="button" className="primary-button" disabled={!online || pending} onClick={submit}>
         {t("play.character.create")}
       </button>
-      {sent ? <p className="studio-hint">{t("play.character.sent", { command: sent })}</p> : null}
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
     </div>
   )
 }
 
-/** One attribute row. Editing writes through `.st <name>=<value>`, which the server
- * validates against the pack's constraints and answers in the chat log — nothing is
- * assumed to have worked here; the next `state` frame is the truth.
- *
- * `label` is the display name (`attribute_labels`, protocol 2.5: APP → "外貌"); the
- * raw `name` stays the write key and the cell's tooltip, since it is what `.st` takes. */
-function AttributeRow({ name, label, value }: { name: string; label?: string; value: unknown }) {
+/** One sheet value. A whole number can be edited: the write goes through the `sheet`
+ * command, the server validates it, and the next `me` value is the truth — nothing is
+ * assumed to have worked here. The label is shown; the key is what is written. */
+function StatRow({
+  stat,
+  editable,
+  onWrite,
+}: {
+  stat: ViewStat
+  editable: boolean
+  onWrite: (key: string, value: number) => void
+}) {
   const { t } = useTranslation()
-  const online = useLegacyConnectionStore((s) => s.status === "online")
+  const online = useOnline()
   const [draft, setDraft] = useState<string | null>(null)
-  const key = stripControlChars(name)
-  // `typeof`, not truthiness: a plain-object lookup of a key like `constructor`
-  // would otherwise hand back an inherited function.
-  const shown = (typeof label === "string" ? stripControlChars(label).trim() : "") || key
+  const key = stripControlChars(stat.key)
+  const shown = stripControlChars(stat.label).trim() || key
   const nameCell = (
     <td className="play-attr-name" title={shown !== key ? key : undefined}>
       {shown}
     </td>
   )
-
-  if (!isEditable(value)) {
+  const value = stat.value
+  if (!editable || typeof value !== "number" || !Number.isFinite(value)) {
     return (
       <tr>
         {nameCell}
-        <td>{attrText(value)}</td>
+        <td>{stripControlChars(String(value))}</td>
       </tr>
     )
   }
@@ -209,8 +108,8 @@ function AttributeRow({ name, label, value }: { name: string; label?: string; va
   const commit = () => {
     const next = (draft ?? "").trim()
     setDraft(null)
-    if (!next || Number(next) === value || !Number.isFinite(Number(next))) return
-    send(sheetWrite(name, Number(next)))
+    if (!next || !Number.isFinite(Number(next)) || Number(next) === value) return
+    onWrite(stat.key, Number(next))
   }
 
   return (
@@ -261,87 +160,96 @@ function AttributeRow({ name, label, value }: { name: string; label?: string; va
 
 export default function CharacterScreen({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation()
-  const character = useSessionStore((s) => s.game?.character ?? null)
-  const game = useSessionStore((s) => s.game)
-  const online = useLegacyConnectionStore((s) => s.status === "online")
+  const character = useView("me")?.character ?? null
+  const online = useOnline()
+  const canWrite = useCommand("sheet", ["op", "writes"]) !== null
+  const canSheet = useCommand("sheet", ["op"]) !== null
+  const { run, feedback, dismiss, pending } = useCommandRunner()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const write = (key: string, value: number) => void run("sheet", sheetSetArgs(key, value))
 
   return (
     <ScreenShell title={t("play.menu.character")} onBack={onBack}>
       {character === null ? (
         <>
           <p className="placeholder">{t("play.character.none")}</p>
-          {/* The text above points at the module's roster; show it here too, with its
-              claim buttons, rather than only in the in-game side panel. */}
-          {game ? <PregenCard game={game} /> : null}
+          <ClaimableCard />
           <CreateCharacter />
+          <PackImportCard only="character" />
         </>
       ) : (
         <div className="play-character">
           <h3>
             {stripControlChars(character.name)}
-            <span className="desk-tag">{stripControlChars(character.system)}</span>
+            <span className="desk-tag">{stripControlChars(character.pack)}</span>
           </h3>
           <div className="play-character-meters">
             {character.resources.map((resource) => (
               <ResourceRow key={resource.id} resource={resource} />
             ))}
           </div>
-          {character.status_effects.length > 0 ? (
+          {character.status.length > 0 ? (
             <div className="chip-row">
-              {character.status_effects.map((effect) => (
+              {character.status.map((effect) => (
                 <span key={effect} className="chip">
                   {stripControlChars(effect)}
                 </span>
               ))}
             </div>
           ) : null}
-          <table className="play-table">
-            <tbody>
-              {Object.entries(character.attributes).map(([key, value]) => (
-                <AttributeRow key={key} name={key} label={character.attribute_labels?.[key]} value={value} />
-              ))}
-            </tbody>
-          </table>
-          <p className="studio-hint">{t("play.character.editHint")}</p>
-          <div className="chip-row">
-            <button
-              type="button"
-              className="ghost-button"
-              disabled={!online}
-              title={t("play.character.finalizeHint")}
-              onClick={() => send(".st finalize")}
-            >
-              {t("play.character.finalize")}
-            </button>
-            {confirmDelete ? (
-              <>
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={!online}
-                  onClick={() => {
-                    send(".st delete")
-                    setConfirmDelete(false)
-                  }}
-                >
-                  {t("play.character.deleteConfirm")}
-                </button>
-                <button type="button" className="ghost-button" onClick={() => setConfirmDelete(false)}>
-                  {t("play.character.deleteCancel")}
-                </button>
-              </>
-            ) : (
+          {[character.attributes, character.skills].map((stats, index) =>
+            stats.length > 0 ? (
+              <table key={index} className="play-table">
+                <tbody>
+                  {stats.map((stat) => (
+                    <StatRow key={stat.key} stat={stat} editable={canWrite} onWrite={write} />
+                  ))}
+                </tbody>
+              </table>
+            ) : null,
+          )}
+          {canWrite ? <p className="studio-hint">{t("play.character.editHint")}</p> : null}
+          {canSheet ? (
+            <div className="chip-row">
               <button
                 type="button"
                 className="ghost-button"
-                disabled={!online}
-                onClick={() => setConfirmDelete(true)}
+                disabled={!online || pending}
+                title={t("play.character.finalizeHint")}
+                onClick={() => void run("sheet", { op: "finalize" })}
               >
-                {t("play.character.delete")}
+                {t("play.character.finalize")}
               </button>
-            )}
-          </div>
+              {confirmDelete ? (
+                <>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={!online || pending}
+                    onClick={() => {
+                      void run("sheet", { op: "clear" })
+                      setConfirmDelete(false)
+                    }}
+                  >
+                    {t("play.character.deleteConfirm")}
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => setConfirmDelete(false)}>
+                    {t("play.character.deleteCancel")}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={!online}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  {t("play.character.delete")}
+                </button>
+              )}
+            </div>
+          ) : null}
+          <CommandFeedback feedback={feedback} onDismiss={dismiss} />
         </div>
       )}
     </ScreenShell>

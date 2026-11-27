@@ -1,50 +1,22 @@
-// Tier-1 panel body: resolve the template against the viewer's own variables
-// and render with the shared v1.7 block renderer. Choices send `panel_intent`
-// (kind "choice") instead of a plain input line — the server routes it as if
-// this player typed the option's input.
+// A panel's body: its blocks evaluated against the views it reads, with the protocol
+// package's `panelBlocks` — the ONE evaluation of panel templates every client shares
+// (bindings, `visible_when`, `repeat`; protocol 3.0 §10.6). A template panel draws its
+// blocks; a page panel draws its `fallback` (pages do not run in this client yet); a page
+// with no fallback says it needs a rich client. Choices run as commands.
 
 import { useMemo } from "react"
-import { useTranslation } from "react-i18next"
-import type { PanelTemplateBlock } from "@loreweaver/protocol"
-import { transportSend } from "../../../lib/transport"
-import { useLegacyConnectionStore } from "../../../store/legacyConnection"
-import { useSessionStore } from "../../../store/session"
-import { Block } from "../UiBlocks"
-import { resolvePanelBlocks } from "./templates"
+import { panelBlocks, type PanelEntry } from "loreweaver-protocol/v3"
+import { useSessionSnapshot } from "../../../store/connection"
+import UiBlocks from "../UiBlocks"
+import PanelFallback from "./PanelFallback"
 
-export default function Tier1Blocks({
-  panelId,
-  blocks,
-}: {
-  panelId: string
-  blocks: readonly PanelTemplateBlock[] | undefined
-}) {
-  const { i18n } = useTranslation()
-  const online = useLegacyConnectionStore((s) => s.status === "online")
-  const variables = useSessionStore((s) => s.game?.variables)
-  const locale = i18n.resolvedLanguage
-  const resolved = useMemo(
-    () => resolvePanelBlocks(blocks, variables ?? [], locale),
-    [blocks, variables, locale],
-  )
-  if (resolved.length === 0) return null
-  return (
-    <div className="ui-blocks">
-      {resolved.map((block, index) => (
-        <Block
-          key={index}
-          block={block}
-          online={online}
-          onChoose={(option) =>
-            void transportSend({
-              type: "panel_intent",
-              panel: panelId,
-              kind: "choice",
-              value: option.input,
-            }).catch(() => {})
-          }
-        />
-      ))}
-    </div>
-  )
+export default function Tier1Blocks({ panel }: { panel: PanelEntry }) {
+  const views = useSessionSnapshot()?.views
+  const blocks = useMemo(() => {
+    const values = new Map<string, unknown>()
+    for (const [name, held] of views ?? []) values.set(name, held.data)
+    return panelBlocks(panel, values)
+  }, [panel, views])
+  if (blocks === null) return <PanelFallback />
+  return <UiBlocks blocks={blocks} />
 }

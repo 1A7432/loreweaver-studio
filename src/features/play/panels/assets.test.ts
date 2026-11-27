@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }))
 
-const { PANEL_ENTRY_FILE, panelEntryUrl, tier2FootprintBytes } = await import("./assets")
+const { PANEL_ENTRY_FILE, panelEntryUrl, pageFootprintBytes } = await import("./assets")
 
 const TOKEN = "579ec5a705780432add19ae72d312abe"
 
@@ -37,20 +37,26 @@ describe("panelEntryUrl", () => {
   })
 })
 
-describe("tier2FootprintBytes", () => {
-  it("sums entry + declared assets across tier-2 panels only", () => {
-    const bytes = tier2FootprintBytes([
-      { id: "a/t1", title: { en: "t1" }, slot: "sidebar", tier: 1, blocks: [] },
+describe("pageFootprintBytes", () => {
+  it("sums the page HTML of page panels only (protocol 3.0 `panels` entries)", () => {
+    const bytes = pageFootprintBytes([
+      {
+        id: "a/t1",
+        title: "t1",
+        slot: "sidebar",
+        kind: "template",
+        views: [],
+        source: { kind: "pack", id: "a" },
+        blocks: [],
+      },
       {
         id: "a/t2",
-        title: { en: "t2" },
+        title: "t2",
         slot: "modal",
-        tier: 2,
-        entry: { hash: "h", size: 100 },
-        assets: [
-          { path: "app.js", hash: "h2", size: 20, mime: "text/javascript" },
-          { path: "style.css", hash: "h3", size: 5, mime: "text/css" },
-        ],
+        kind: "page",
+        views: [],
+        source: { kind: "pack", id: "a" },
+        page: { hash: "f".repeat(64), size: 125, mime: "text/html" },
         fallback: null,
       },
     ])

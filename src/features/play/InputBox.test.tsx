@@ -1,199 +1,82 @@
-import { act, render, screen, waitFor } from "@testing-library/react"
+// The input line: one `input` per line, and what its result says shown under the field.
+// The frames are protocol.md §13.1's (steps 4–6).
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { ServerFrame } from "@loreweaver/protocol"
+import { afterEach, describe, expect, it } from "vitest"
 import "../../i18n"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
-import { JOIN_REPLAY_TIMEOUT_MS, useSessionStore } from "../../store/session"
 import InputBox from "./InputBox"
+import { TestRoom } from "./room.testkit"
 
-vi.mock("../../lib/transport", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../lib/transport")>()
-  return { ...actual, transportSend: vi.fn().mockResolvedValue(undefined) }
+let room: TestRoom | null = null
+afterEach(() => {
+  room?.close()
+  room = null
 })
 
-import { transportSend } from "../../lib/transport"
+async function open() {
+  room = await TestRoom.open("player", { views: false })
+  return room
+}
+
+const field = () => screen.getByLabelText("Speak, act, or type a command…")
 
 describe("InputBox", () => {
-  beforeEach(() => {
-    vi.mocked(transportSend).mockClear()
-    vi.mocked(transportSend).mockResolvedValue(undefined)
-    useSessionStore.getState().clear()
-    useLegacyConnectionStore.setState({
-      status: "online",
-      welcome: {
-        type: "welcome",
-        protocol: "2.3",
-        room: "midnight-pier",
-        you: { id: "p1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver",
-      },
-    })
+  it("sends the typed line as one `input` and clears the field — no local echo", async () => {
+    const r = await open()
+    const user = userEvent.setup()
+    const { container } = render(<InputBox />)
+    // `[[` is how user-event types one `[`.
+    await user.type(field(), "  I light the lantern. [[[[1d6]]  {Enter}")
+    expect(r.lastRequest()).toMatchObject({ type: "input", text: "I light the lantern. [[1d6]]" })
+    expect(field()).toHaveValue("")
+    await r.answer({ ok: true })
+    // Speech says nothing back here: its event is the table's.
+    expect(container.querySelector(".command-feedback")).toBeNull()
   })
 
-  it("sends the typed text as an input frame and clears the field", async () => {
+  it("shows a command's answer for this person", async () => {
+    const r = await open()
     const user = userEvent.setup()
     render(<InputBox />)
-    const field = screen.getByRole("textbox")
-    await user.type(field, "look around{Enter}")
-    expect(transportSend).toHaveBeenCalledWith({ type: "input", text: "look around" })
-    expect(field).toHaveValue("")
+    await user.type(field(), ".help{Enter}")
+    await r.answer({ ok: true, text: "Commands: roll, check, sheet…" })
+    expect(screen.getByRole("status")).toHaveTextContent("Commands: roll, check, sheet…")
   })
 
-  it("echoes the line locally the moment it is sent", async () => {
+  it("shows a refusal's message as the server wrote it, not re-translated from its code", async () => {
+    const r = await open()
     const user = userEvent.setup()
     render(<InputBox />)
-    await user.type(screen.getByRole("textbox"), "I check the ledger.{Enter}")
-    const entries = useSessionStore.getState().entries
-    expect(entries).toHaveLength(1)
-    expect(entries[0]).toMatchObject({
-      kind: "pending",
-      pending: { speaker: "Nyx", text: "I check the ledger." },
-    })
+    await user.type(field(), ".undo{Enter}")
+    await r.answer({ ok: false, error: { code: "forbidden", message: "That is for the room admin." } })
+    expect(screen.getByRole("alert")).toHaveTextContent("That is for the room admin.")
+    await user.click(screen.getByRole("button", { name: "Dismiss" }))
+    expect(screen.queryByRole("alert")).toBeNull()
   })
 
-  it("marks the echo undelivered when the send itself fails", async () => {
-    const user = userEvent.setup()
-    vi.mocked(transportSend).mockRejectedValueOnce(new Error("offline"))
-    render(<InputBox />)
-    await user.type(screen.getByRole("textbox"), ".ra spot hidden{Enter}")
-    await waitFor(() => {
-      const entry = useSessionStore.getState().entries[0]
-      if (!(entry.kind === "pending" && entry.pending.failed)) throw new Error("not failed yet")
-    })
-    const entry = useSessionStore.getState().entries[0]
-    expect(entry).toMatchObject({ kind: "pending", pending: { text: ".ra spot hidden", failed: true } })
-  })
-
-  it("does not send blank input", async () => {
+  it("puts a line that never reached the room back in the field, and says so", async () => {
+    const r = await open()
     const user = userEvent.setup()
     render(<InputBox />)
-    await user.type(screen.getByRole("textbox"), "   {Enter}")
-    expect(transportSend).not.toHaveBeenCalled()
+    await user.type(field(), "I wait.{Enter}")
+    await r.drop()
+    expect(screen.getByRole("alert")).toHaveTextContent(/Nothing was sent/)
+    expect(field()).toHaveValue("I wait.")
   })
 
-  it("is disabled unless the connection is online", () => {
-    useLegacyConnectionStore.setState({ status: "reconnecting" })
+  it("does not send a blank line", async () => {
+    const r = await open()
+    const user = userEvent.setup()
     render(<InputBox />)
-    expect(screen.getByRole("textbox")).toBeDisabled()
+    await user.type(field(), "   {Enter}")
+    expect(r.requests().filter((frame) => frame.type === "input")).toEqual([])
   })
 
-  // A welcome puts the transport online at once, but the room's history is still
-  // arriving behind it and only the `state` frame ends that replay.
-  describe("while a join replay is still arriving", () => {
-    const WELCOME: ServerFrame = {
-      type: "welcome",
-      protocol: "2.4",
-      room: "midnight-pier",
-      you: { id: "p1", name: "Nyx", role: "player" },
-      locale: "en",
-      server: "loreweaver",
-    }
-    const STATE: ServerFrame = { type: "state", party: [], initiative: [], online: 1 }
-    let ids = 0
-    const ingest = (frame: ServerFrame) => act(() => useSessionStore.getState().ingest(frame))
-    const line = (speaker: "kp" | "player", text: string) =>
-      ingest({
-        type: "narrative",
-        id: `replay-${(ids += 1)}`,
-        speaker,
-        text,
-        format: speaker === "kp" ? "markdown" : "plain",
-        ...(speaker === "player" ? { name: "Nyx" } : {}),
-      })
-    const shown = () =>
-      useSessionStore.getState().entries.map((entry) => {
-        if (entry.kind === "narrative") return `${entry.frame.speaker}: ${entry.frame.text}`
-        if (entry.kind === "pending")
-          return `${entry.pending.failed ? "undelivered" : "pending"}: ${entry.pending.text}`
-        return entry.kind
-      })
-
-    afterEach(() => {
-      vi.useRealTimers()
-    })
-
-    it("holds the line on a first join and sends it below the whole history once the replay ends", async () => {
-      const user = userEvent.setup()
-      render(<InputBox />)
-      ingest(WELCOME)
-      line("kp", "The pier creaks under a grey dawn.")
-
-      const field = screen.getByRole("textbox")
-      await user.type(field, "I raise the lantern.{Enter}")
-      // Nothing went out, nothing was echoed, and the words are still there.
-      expect(transportSend).not.toHaveBeenCalled()
-      expect(field).toHaveValue("I raise the lantern.")
-      expect(screen.getByRole("status")).toHaveTextContent("Catching up")
-      expect(screen.getByRole("button")).toBeDisabled()
-
-      line("player", "I step onto the pier.")
-      line("kp", "A lantern gutters at the far end.")
-      ingest(STATE)
-
-      expect(screen.getByRole("button", { name: "Send" })).toBeEnabled()
-      await user.type(field, "{Enter}")
-      expect(transportSend).toHaveBeenCalledWith({ type: "input", text: "I raise the lantern." })
-      expect(shown()).toEqual([
-        "kp: The pier creaks under a grey dawn.",
-        "player: I step onto the pier.",
-        "kp: A lantern gutters at the far end.",
-        "pending: I raise the lantern.",
-      ])
-    })
-
-    it("does not end a reconnect's replay early, and an old replayed line never retires the new one", async () => {
-      const user = userEvent.setup()
-      render(<InputBox />)
-      // A first session: the player said "continue" once already, then typed a
-      // line the dying connection never delivered.
-      ingest(WELCOME)
-      line("kp", "The corridor splits in two.")
-      line("player", "continue")
-      line("kp", "You reach a crossroads.")
-      ingest(STATE)
-      act(() => {
-        useSessionStore.getState().echoLocalInput("I open the door.", "Nyx")
-      })
-
-      // The link drops; the redial's replay starts arriving.
-      ingest(WELCOME)
-      line("kp", "The corridor splits in two.")
-      await user.type(screen.getByRole("textbox"), "continue{Enter}")
-      expect(transportSend).not.toHaveBeenCalled()
-      expect(useSessionStore.getState().replay).not.toBeNull()
-
-      // The rest of the replay: its old "continue" must not touch anything new.
-      line("player", "continue")
-      line("kp", "You reach a crossroads.")
-      ingest(STATE)
-      await user.type(screen.getByRole("textbox"), "{Enter}")
-
-      expect(transportSend).toHaveBeenCalledWith({ type: "input", text: "continue" })
-      expect(shown()).toEqual([
-        "kp: The corridor splits in two.",
-        "player: continue",
-        "kp: You reach a crossroads.",
-        "undelivered: I open the door.",
-        "pending: continue",
-      ])
-    })
-
-    it("lets go of the input if the replay never ends", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true })
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-      render(<InputBox />)
-      ingest(WELCOME)
-      await user.type(screen.getByRole("textbox"), "Hello?")
-      expect(screen.getByRole("button")).toBeDisabled()
-
-      act(() => {
-        vi.advanceTimersByTime(JOIN_REPLAY_TIMEOUT_MS)
-      })
-      expect(useSessionStore.getState().replay).toBeNull()
-      await user.type(screen.getByRole("textbox"), "{Enter}")
-      expect(transportSend).toHaveBeenCalledWith({ type: "input", text: "Hello?" })
-    })
+  it("is disabled unless the session is online", async () => {
+    const r = await open()
+    await r.drop()
+    render(<InputBox />)
+    expect(field()).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled()
   })
 })

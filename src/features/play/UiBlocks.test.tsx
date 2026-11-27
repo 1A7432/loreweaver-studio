@@ -1,63 +1,74 @@
+// The blocks vocabulary of protocol 3.0 §8.3, and choices that run as commands.
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { UiFrame } from "@loreweaver/protocol"
+import { afterEach, describe, expect, it } from "vitest"
+import type { Block } from "loreweaver-protocol/v3"
 import "../../i18n"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
+import { TestRoom } from "./room.testkit"
 import UiBlocks from "./UiBlocks"
 
-vi.mock("../../lib/transport", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../lib/transport")>()
-  return { ...actual, transportSend: vi.fn().mockResolvedValue(undefined) }
+const BLOCKS: Block[] = [
+  { kind: "meter", label: "Tide", value: 7, min: 0, max: 10 },
+  { kind: "stat", label: "Lanterns", value: 9 },
+  { kind: "badge", label: "Flooding", tone: "danger" },
+  { kind: "text", text: "The water is rising.", style: "warning" },
+  { kind: "divider" },
+  {
+    kind: "choices",
+    prompt: "What now?",
+    options: [
+      { id: "wade", label: "Wade in", command: "roll", args: { expr: "1d100" } },
+      { id: "wait", label: "Wait", command: "duel/strike" },
+    ],
+  },
+]
+
+let room: TestRoom | null = null
+afterEach(() => {
+  room?.close()
+  room = null
 })
 
-import { transportSend } from "../../lib/transport"
-
-const HUD: UiFrame = {
-  type: "ui",
-  panel: "sidebar",
-  id: "hud",
-  blocks: [
-    { kind: "meter", label: "HP", value: 7, min: 0, max: 10 },
-    { kind: "stat", label: "Doom", value: 3 },
-    { kind: "badge", label: "omen", tone: "danger" },
-    { kind: "text", text: "a whisper", style: "quote" },
-    { kind: "divider" },
-    {
-      kind: "choices",
-      prompt: "Pick",
-      options: [{ id: "a", label: "Attack", input: ".ra fight" }],
-    },
-  ],
-}
-
 describe("UiBlocks", () => {
-  beforeEach(() => {
-    vi.mocked(transportSend).mockClear()
-    useLegacyConnectionStore.setState({ status: "online" })
-  })
-
-  it("renders every v1.7 block kind", () => {
-    const { container } = render(<UiBlocks frame={HUD} />)
-    expect(screen.getByText("HP")).toBeInTheDocument()
+  it("renders every simple block kind, and skips one this version does not know", () => {
+    const { container } = render(
+      <UiBlocks blocks={[...BLOCKS, { kind: "hologram", label: "?" } as unknown as Block]} />,
+    )
+    expect(screen.getByText("Tide")).toBeInTheDocument()
     expect(screen.getByText("7/10")).toBeInTheDocument()
-    expect(screen.getByText("Doom")).toBeInTheDocument()
-    expect(screen.getByText("omen")).toHaveClass("badge-danger")
-    expect(screen.getByText("a whisper")).toHaveClass("is-quote")
+    expect(screen.getByText("Lanterns")).toBeInTheDocument()
+    expect(screen.getByText("Flooding")).toHaveClass("badge-danger")
+    expect(screen.getByText("The water is rising.")).toHaveClass("is-warning")
     expect(container.querySelector(".ui-divider")).not.toBeNull()
-    expect(screen.getByText("Pick")).toBeInTheDocument()
+    expect(screen.getByText("What now?")).toBeInTheDocument()
+    expect(container).not.toHaveTextContent("?hologram")
   })
 
-  it("sends a choice's input verbatim as a normal input frame", async () => {
+  it("runs a choice as `command.run {id: command, args}`, as the member pressing it", async () => {
+    room = await TestRoom.open("player", { views: false })
     const user = userEvent.setup()
-    render(<UiBlocks frame={HUD} />)
-    await user.click(screen.getByRole("button", { name: "Attack" }))
-    expect(transportSend).toHaveBeenCalledWith({ type: "input", text: ".ra fight" })
+    render(<UiBlocks blocks={BLOCKS} />)
+    await user.click(screen.getByRole("button", { name: "Wade in" }))
+    await user.click(screen.getByRole("button", { name: "Wait" }))
+    expect(room.commands()).toEqual([
+      { id: "roll", args: { expr: "1d100" } },
+      { id: "duel/strike", args: {} },
+    ])
   })
 
-  it("disables choices while not online", () => {
-    useLegacyConnectionStore.setState({ status: "reconnecting" })
-    render(<UiBlocks frame={HUD} />)
-    expect(screen.getByRole("button", { name: "Attack" })).toBeDisabled()
+  it("shows a choice's refusal as the server wrote it", async () => {
+    room = await TestRoom.open("player", { views: false })
+    const user = userEvent.setup()
+    render(<UiBlocks blocks={BLOCKS} />)
+    await user.click(screen.getByRole("button", { name: "Wait" }))
+    await room.answer({ ok: false, error: { code: "module_unavailable", message: "The duel is over." } })
+    expect(screen.getByRole("alert")).toHaveTextContent("The duel is over.")
+  })
+
+  it("disables choices while not online", async () => {
+    room = await TestRoom.open("player", { views: false })
+    await room.drop()
+    render(<UiBlocks blocks={BLOCKS} />)
+    expect(screen.getByRole("button", { name: "Wade in" })).toBeDisabled()
   })
 })

@@ -16,16 +16,16 @@ import { useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { usePanelsStore } from "../../../store/panels"
 import { PanelBody } from "./PanelCard"
-import { pickText } from "./templates"
+import { panelTitle, usePanelList } from "./panelList"
 
 export default function PanelModalHost() {
-  const { t, i18n } = useTranslation()
-  const manifest = usePanelsStore((s) => s.manifest)
+  const { t } = useTranslation()
+  const panels = usePanelList()
   const modalOpen = usePanelsStore((s) => s.modalOpen)
   const closeModal = usePanelsStore((s) => s.closeModal)
-  const panel = modalOpen ? manifest.find((candidate) => candidate.id === modalOpen) : undefined
+  const panel = modalOpen ? panels.find((candidate) => candidate.id === modalOpen) : undefined
   const dialogRef = useRef<HTMLDivElement | null>(null)
-  // Keyed on the id, not the panel object: a manifest refresh re-creates the
+  // Keyed on the id, not the panel object: a `panels` refresh re-creates the
   // object, and a refresh must not yank focus out of a field the player is in.
   const openId = panel?.id
 
@@ -58,7 +58,7 @@ export default function PanelModalHost() {
   }, [panel, closeModal])
 
   if (!panel) return null
-  const title = pickText(panel.title, i18n.resolvedLanguage) ?? panel.id
+  const title = panelTitle(panel)
   return (
     <div className="panel-modal-backdrop" onClick={closeModal}>
       <div

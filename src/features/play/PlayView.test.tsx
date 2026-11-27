@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import i18n from "../../i18n"
 import { fatal, flush, welcome } from "../../lib/connection.testkit"
 import type { LinkEvent } from "../../lib/transport"
-import { useConnectionStore } from "../../store/connection"
+import { ROOM_VIEWS, useConnectionStore } from "../../store/connection"
 import { useLastTableStore } from "../../store/lastTable"
 import PlayView from "./PlayView"
 
@@ -64,6 +64,7 @@ function reset() {
   useLastTableStore.getState().forget()
   bridge.tauri = false
   bridge.linkConnect.mockClear()
+  bridge.linkSend.mockClear()
   bridge.linkDisconnect.mockClear()
 }
 
@@ -182,22 +183,25 @@ describe("PlayView: the connect form", () => {
 describe("PlayView: connected", () => {
   beforeEach(reset)
 
-  it("shows the room once welcomed: who, as what role, on which server — and says the screen is moving", async () => {
+  it("shows the room once welcomed: which table, who, as what role — and asks for the room's views", async () => {
     render(<PlayView />)
     await welcomed()
-    expect(screen.getByRole("heading", { name: "Room main" })).toBeInTheDocument()
-    expect(screen.getByText("Ada · Room admin")).toBeInTheDocument()
-    expect(screen.getByText("loreweaver 3.0.0-alpha.0 · protocol 3.0")).toBeInTheDocument()
-    expect(screen.getByText(/being moved to protocol 3\.0/)).toBeInTheDocument()
+    expect(screen.getByText(/Table “main”/)).toHaveTextContent("Ada · Room admin")
+    expect(screen.getByRole("menuitem", { name: /Enter game/ })).toBeInTheDocument()
     expect(screen.getByText("Online")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument()
+    // The views the room screen shows are wanted for the whole connection: asked for on the welcome.
+    const subscribe = bridge.linkSend.mock.calls
+      .map((call) => call[1] as { type: string; method?: string; params?: { names?: string[] } })
+      .find((frame) => frame.type === "call" && frame.method === "view.subscribe")
+    expect(subscribe?.params?.names).toEqual(ROOM_VIEWS)
   })
 
   it("keeps the room visible while reconnecting, with the attempt count", async () => {
     render(<PlayView />)
     await welcomed()
     await emit({ kind: "status", status: "closed", code: "connection_lost" })
-    expect(screen.getByRole("heading", { name: "Room main" })).toBeInTheDocument()
+    expect(screen.getByText(/Table “main”/)).toBeInTheDocument()
     expect(screen.getByText(/Reconnecting… \(attempt 1\)/)).toBeInTheDocument()
   })
 

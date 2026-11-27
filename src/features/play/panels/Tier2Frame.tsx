@@ -1,5 +1,10 @@
 // The Tier-2 iframe host (spec M15, "Tier-2 runtime").
 //
+// PARKED (protocol 3.0 move): not rendered. A 3.0 `page` panel shows its `fallback`
+// (`PanelCard.tsx`) until the desktop client defines the 3.0 page bridge; this host still
+// speaks the 2.x one (`UiManifestPanel`, `panel_intent`) and is fed no state — the 2.x
+// `state` frame it projected no longer exists. Kept compiling as that step's start.
+//
 // Isolation, in layers:
 //  1. `sandbox="allow-scripts"` and NOTHING else — the document runs in an
 //     opaque origin: no same-origin access, no popups, no top navigation,
@@ -15,12 +20,10 @@
 // Mount order matters: bridge listener → assets ensured (hash-verified pull)
 // → serve registration → THEN the iframe gets its src.
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { stripControlChars, type UiManifestPanel } from "@loreweaver/protocol"
 import { transportSend } from "../../../lib/transport"
-import { useSessionStore } from "../../../store/session"
-import { subscribePanelEvents } from "../../../store/panels"
 import { ensurePanelAssets, panelEntryUrl, panelServeRegister, panelServeUnregister } from "./assets"
 import {
   buildBootstrapJs,
@@ -28,10 +31,8 @@ import {
   collectPanelTheme,
   mintSecret,
   PanelBridge,
-  projectStateForPanel,
+  pickText,
 } from "./bridge"
-import { pickText } from "./templates"
-import PanelFallback from "./PanelFallback"
 
 // "serving" = assets are served and the iframe has its src, but the panel has
 // not completed the bridge handshake yet; "live" = it did. A panel that never
@@ -42,7 +43,7 @@ type Phase = "loading" | "serving" | "live" | "stalled" | "error"
 /** How long a panel gets to say `ready` before the host assumes it is dead. */
 const HANDSHAKE_TIMEOUT_MS = 6000
 
-export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
+export default function Tier2Frame({ panel, fallback }: { panel: UiManifestPanel; fallback?: ReactNode }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage ?? "en"
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -88,14 +89,11 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
       // iframe's own window, and the payload is this viewer's data anyway.
       postToPanel: (message) => iframeRef.current?.contentWindow?.postMessage(message, "*"),
       sendIntent: (frame) => void transportSend(frame).catch(() => {}),
-      getSnapshot: () => projectStateForPanel(useSessionStore.getState().game),
+      // Parked: no state feed (see the header).
+      getSnapshot: () => null,
     })
     const onMessage = (event: MessageEvent) => bridge.handleMessage(event)
     window.addEventListener("message", onMessage)
-    const unsubscribeState = useSessionStore.subscribe((state, previous) => {
-      if (state.game !== previous.game) bridge.pushState(projectStateForPanel(state.game))
-    })
-    const unsubscribeEvents = subscribePanelEvents(panel.id, (payload) => bridge.pushEvent(payload))
 
     setPhase("loading")
     setSrc(null)
@@ -129,8 +127,6 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
       cancelled = true
       clearTimeout(handshakeTimer)
       window.removeEventListener("message", onMessage)
-      unsubscribeState()
-      unsubscribeEvents()
       void panelServeUnregister(token).catch(() => {})
     }
     // A locale switch re-mounts the panel so its bootstrap answer stays true.
@@ -145,7 +141,7 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
             {t("panels.retry")}
           </button>
         </p>
-        <PanelFallback panel={panel} />
+        {fallback}
       </div>
     )
   }
@@ -181,7 +177,7 @@ export default function Tier2Frame({ panel }: { panel: UiManifestPanel }) {
       ) : null}
       {/* A stalled panel still owes the player its content: render the same
           blocks every other client sees, and let a late handshake win. */}
-      {phase === "stalled" ? <PanelFallback panel={panel} /> : null}
+      {phase === "stalled" ? fallback : null}
     </>
   )
 }

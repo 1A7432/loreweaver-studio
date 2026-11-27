@@ -1,19 +1,15 @@
-// Play mode (protocol 3.0): the connect screen, then the room.
-//
-// The room is, for now, one honest line: connected, to which server and room,
-// as whom — the play screens themselves (log, state, panels…) still read the
-// protocol 2.x stores and move to the 3.0 `Session` in later steps
-// (`OnlineView.tsx` holds them meanwhile, unrendered).
+// Play mode (protocol 3.0): the connect screen, then the room (`OnlineView`).
 
 import { useEffect, useId, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
 import { displayStatus } from "../../lib/connection"
 import { pickDirectory } from "../../lib/native"
 import { isTauri } from "../../lib/transport"
-import { useConnectionState, useConnectionStore, useSessionSnapshot } from "../../store/connection"
-import { quitTable, useHostLocalStore } from "../../store/hostLocal"
+import { useConnectionState, useConnectionStore } from "../../store/connection"
+import { useHostLocalStore } from "../../store/hostLocal"
 import { useLastTableStore } from "../../store/lastTable"
 import { describeFailure } from "./connectFailure"
+import OnlineView from "./OnlineView"
 import StatusPill from "./StatusPill"
 
 /** The TUI's green button: bring a local server up and log straight in as the
@@ -103,44 +99,6 @@ function HostLocalBlock() {
   )
 }
 
-/** The room, as far as protocol 3.0 is wired today: who is connected where. */
-function RoomScreen() {
-  const { t } = useTranslation()
-  const welcome = useSessionSnapshot()?.welcome ?? null
-  return (
-    <div className="play-view">
-      <section className="connect-card room-card">
-        <header className="connect-head">
-          <h2>{welcome ? t("play.room.title", { room: welcome.room.id }) : t("connect.title")}</h2>
-          <StatusPill />
-        </header>
-        {welcome ? (
-          <dl className="room-facts">
-            <dt>{t("play.room.you")}</dt>
-            <dd>
-              {t("play.room.member", { name: welcome.you.name, role: t(`connect.role.${welcome.you.role}`) })}
-            </dd>
-            <dt>{t("play.room.server")}</dt>
-            <dd>
-              {t("play.room.serverVersion", {
-                name: welcome.server.name,
-                version: welcome.server.version,
-                protocol: welcome.protocol,
-              })}
-            </dd>
-          </dl>
-        ) : null}
-        <p className="studio-hint">{t("play.room.moving")}</p>
-        <div className="connect-actions">
-          <button type="button" className="ghost-button" onClick={() => void quitTable()}>
-            {t("connect.disconnect")}
-          </button>
-        </div>
-      </section>
-    </div>
-  )
-}
-
 /** The access key is a credential: it never sits on screen in clear text
  * unless the operator asks (screenshots and recordings of this form are
  * routine). The toggle is a button beside the field, not inside its label, so
@@ -209,7 +167,7 @@ export default function PlayView() {
   // The room stays visible through reconnects; the form only returns once the
   // connection has ended (offline) or is dialing the very first time.
   if (status === "online" || status === "reconnecting") {
-    return <RoomScreen />
+    return <OnlineView />
   }
 
   // A dial in flight does not lock the form. Connecting again replaces it (the

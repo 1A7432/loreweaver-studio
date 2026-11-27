@@ -1,22 +1,29 @@
+// The game screen: the story on the left (log, Keeper activity, notices, the tray panels
+// and the input line), the desk on the right (sidebar panels and the state cards), the
+// overlay panel above both. It also keeps the session subscribed to the views the room's
+// panels read, for as long as it is open.
+
 import { useTranslation } from "react-i18next"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
+import { useSessionSnapshot } from "../../store/connection"
 import { quitTable } from "../../store/hostLocal"
-import { AudioUnlockNotice } from "./AudioDeck"
 import InputBox from "./InputBox"
 import NarrativeLog from "./NarrativeLog"
+import NoticeLines from "./NoticeLines"
 import { PanelSidebar, PanelTray } from "./panels/PanelDeck"
+import { usePanelList } from "./panels/panelList"
 import PanelMenu from "./panels/PanelMenu"
 import PanelModalHost from "./panels/PanelModalHost"
 import PanelNotice from "./panels/PanelNotice"
-import ReportNotice from "./ReportNotice"
+import { usePanelViews } from "./room"
 import StatePanel from "./StatePanel"
 import StatusPill from "./StatusPill"
-import VersionBadge from "./VersionBadge"
 import TurnStatus from "./TurnStatus"
+import VersionBadge from "./VersionBadge"
 
 export default function SessionView({ onMenu }: { onMenu?: () => void }) {
   const { t } = useTranslation()
-  const welcome = useLegacyConnectionStore((s) => s.welcome)
+  const welcome = useSessionSnapshot()?.welcome ?? null
+  usePanelViews(usePanelList())
 
   return (
     <div className="session">
@@ -27,7 +34,7 @@ export default function SessionView({ onMenu }: { onMenu?: () => void }) {
               {t("play.menuButton")}
             </button>
           ) : null}
-          <span className="session-room">{welcome ? `${welcome.room} · ${welcome.you.name}` : "…"}</span>
+          <span className="session-room">{welcome ? `${welcome.room.id} · ${welcome.you.name}` : "…"}</span>
           <PanelMenu />
           <StatusPill />
           <VersionBadge />
@@ -36,10 +43,9 @@ export default function SessionView({ onMenu }: { onMenu?: () => void }) {
           </button>
         </header>
         <PanelNotice />
-        <AudioUnlockNotice />
-        <ReportNotice />
         <TurnStatus />
         <NarrativeLog />
+        <NoticeLines />
         <PanelTray />
         <InputBox />
       </div>
