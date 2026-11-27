@@ -17,7 +17,7 @@ import { stripControlChars, type ViewStat } from "loreweaver-protocol/v3"
 import CommandFeedback from "../CommandFeedback"
 import ImportCard from "../ImportCard"
 import { useCommand, useCommandRunner, useOnline, useView } from "../room"
-import { ClaimableCard, PackImportCard, ResourceRow } from "../StatePanel"
+import { characterTag, ClaimableCard, PackImportCard, ResourceRow } from "../StatePanel"
 import ScreenShell from "./ScreenShell"
 import { sheetSetArgs } from "./sheetWrite"
 
@@ -260,8 +260,14 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
         <div className="play-character">
           <h3>
             {stripControlChars(character.name)}
-            <span className="desk-tag">{stripControlChars(character.pack)}</span>
+            {characterTag(character) ? <span className="desk-tag">{characterTag(character)}</span> : null}
           </h3>
+          {/* A module's character has no sheet of the engine's: nothing here edits it. */}
+          {character.module !== undefined ? (
+            <p className="studio-hint">
+              {t("play.character.keptByModule", { module: stripControlChars(character.module) })}
+            </p>
+          ) : null}
           <div className="play-character-meters">
             {character.resources.map((resource) => (
               <ResourceRow key={resource.id} resource={resource} />
@@ -287,8 +293,10 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
               </table>
             ) : null,
           )}
-          {canWrite ? <p className="studio-hint">{t("play.character.editHint")}</p> : null}
-          {canSheet ? (
+          {canWrite && character.module === undefined ? (
+            <p className="studio-hint">{t("play.character.editHint")}</p>
+          ) : null}
+          {canSheet && character.module === undefined ? (
             <div className="chip-row">
               <button
                 type="button"

@@ -24,6 +24,12 @@ import Meter, { type MeterTone } from "./Meter"
 import { useCommand, useCommandRunner, useOnline, useRole, useView } from "./room"
 import { addVarArgs, isWritablePath, setVarArgs, stepFor } from "./varCommands"
 
+/** What a character is kept by, for the tag beside its name: the module's id for a module's
+ * character (it has no rule system), else its rule system; "" when neither is named. */
+export function characterTag(character: { readonly pack: string; readonly module?: string }): string {
+  return stripControlChars(character.module ?? character.pack).trim()
+}
+
 /** The well-known vital ids keep their dedicated tones; anything else a rule system
  * invents takes the generic accent. */
 function resourceTone(id: string): MeterTone {
@@ -31,12 +37,14 @@ function resourceTone(id: string): MeterTone {
   return "accent"
 }
 
-/** One resource (`{id, label, value, max}`): a meter, or a plain value when it has no
- * positive maximum to fill against. The label is already in the viewer's language. */
+/** One resource (`{id, label, value, max?}`): a meter, or a plain value when it has no
+ * positive maximum to fill against (a module's resource may have none at all). The label is
+ * already in the viewer's language. */
 export function ResourceRow({ resource }: { resource: ViewResource }) {
   const label = stripControlChars(resource.label)
-  if (resource.max > 0) {
-    return <Meter label={label} value={resource.value} max={resource.max} tone={resourceTone(resource.id)} />
+  const max = resource.max ?? 0
+  if (max > 0) {
+    return <Meter label={label} value={resource.value} max={max} tone={resourceTone(resource.id)} />
   }
   return (
     <div className="var-row" data-kind="number">
@@ -65,7 +73,7 @@ function CharacterCard({ character }: { character: NonNullable<MeView["character
     <section className="desk-card" aria-label={t("session.character")}>
       <header className="desk-title">
         {stripControlChars(character.name)}
-        <span className="desk-tag">{stripControlChars(character.pack)}</span>
+        {characterTag(character) ? <span className="desk-tag">{characterTag(character)}</span> : null}
       </header>
       {character.resources.map((resource) => (
         <ResourceRow key={resource.id} resource={resource} />
@@ -353,7 +361,7 @@ function PartyCard({ party, mine }: { party: PartyView; mine: string | null }) {
                 {character.resources.map((resource) => (
                   <span key={resource.id} className="party-stat">
                     {stripControlChars(resource.label)} {resource.value}
-                    {resource.max > 0 ? `/${resource.max}` : ""}
+                    {resource.max !== undefined && resource.max > 0 ? `/${resource.max}` : ""}
                   </span>
                 ))}
                 {character.status.map((effect) => (

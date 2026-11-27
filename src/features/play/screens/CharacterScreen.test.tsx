@@ -101,6 +101,39 @@ describe("CharacterScreen — the sheet", () => {
     expect(row("Accounting")).toHaveTextContent("5")
   })
 
+  it("shows a module's character as the module gave it: its meters (one without a maximum), the module for a tag, nothing to edit", async () => {
+    const r = await TestRoom.open("player")
+    room = r
+    await r.view("me", {
+      ...fixtureView("player", "me"),
+      character: {
+        id: "colony:ana",
+        name: "Ana",
+        pack: "",
+        module: "colony",
+        resources: [
+          { id: "hp", label: "HP", value: 4, max: 5 },
+          { id: "food", label: "Food", value: 2 },
+        ],
+        status: [],
+        attributes: [],
+        skills: [],
+      },
+    })
+    render(<CharacterScreen onBack={() => {}} />)
+    await act(flush)
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Ana")
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("colony")
+    // The meter with a maximum, and the plain value of the one without.
+    expect(screen.getByText("HP")).toBeInTheDocument()
+    expect(screen.getByText("Food").parentElement).toHaveTextContent("Food2")
+    expect(screen.getByText(/kept by the module “colony”/)).toBeInTheDocument()
+    // No sheet of the engine's stands behind it: no edit hint, no re-derive, no delete.
+    expect(screen.queryByText(/Click a value to change it/)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Re-derive vitals" })).toBeNull()
+    expect(document.querySelector(".play-table")).toBeNull()
+  })
+
   it("writes one value through `sheet set` with the sheet's own key and the explicit `=`", async () => {
     const r = await seated()
     const user = userEvent.setup()

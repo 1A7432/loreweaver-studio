@@ -316,6 +316,7 @@
       "name": "名字",
       "namePlaceholder": "留空则由服务端起名",
       "create": "建立角色",
+      "keptByModule": "这个角色由模组「{{module}}」管理，没有可以在这里编辑的角色卡。要离开这个角色，用 .pc release。",
       "editHint": "点数值即可修改——每一次写入都由服务端按规则系统校验。",
       "finalize": "重新派生生命体征",
       "finalizeHint": "把当前 HP / MP / 理智按现在的属性重置回上限。",

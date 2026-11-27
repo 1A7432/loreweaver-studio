@@ -316,6 +316,7 @@
       "name": "Name",
       "namePlaceholder": "Leave empty to let the server name them",
       "create": "Create character",
+      "keptByModule": "This character is kept by the module “{{module}}”: it has no sheet to edit here. Leave it with .pc release.",
       "editHint": "Click a value to change it — the server validates every write against the rule system.",
       "finalize": "Re-derive vitals",
       "finalizeHint": "Sets current HP / MP / SAN back to their maxima for the current characteristics.",
