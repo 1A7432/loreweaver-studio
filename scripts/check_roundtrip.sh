@@ -25,7 +25,9 @@
 #                 (scripts/check_live_connect.sh); the room admin installs the pack of a.
 #                 (`pack install`), subscribes `panels`, and GETs the page panel's HTML by
 #                 the hash the view gives: the file's sha256, and exactly the bytes Studio
-#                 wrote;
+#                 wrote; then a room save over 8 MiB goes out and back in through the app's
+#                 own save code (src-tauri/tests/save_live.rs), the room compared before and
+#                 after;
 #   g. host       "Host locally & play" without a GUI: the app's own host-local code
 #                 (src-tauri/tests/host_local_live.rs) finds the engine checkout with the
 #                 app's probe, starts the real server three times over one data directory

@@ -7,6 +7,7 @@ mod llm;
 mod media;
 mod panel_serve;
 mod report;
+pub mod save;
 mod transport_bridge;
 
 use tauri_plugin_window_state::StateFlags;
@@ -64,6 +65,9 @@ pub fn run() {
             report::report_fetch,
             report::report_save,
             report::report_open,
+            save::save_prepare,
+            save::save_upload,
+            save::save_fetch,
             panel_serve::panel_serve_register,
             panel_serve::panel_serve_unregister
         ])

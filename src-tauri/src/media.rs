@@ -1,5 +1,6 @@
 //! Uploading a file to the room: a picture or a sound to share, a sound for the audio
-//! library, or a card file to import.
+//! library, or a card file to import. (A room save goes up through `save.rs`, under the
+//! save's own limit; it reuses the read and receipt checks below.)
 //!
 //! The upload flow is `docs/protocol.md`'s (§11.2–11.4), split at the one seam
 //! that matters: the CONTROL half (`call media.offer`, answered `{upload_id}`)
@@ -128,7 +129,7 @@ fn over_cap(name: &str, len: u64, cap: u64, grew: bool) -> Failure {
 
 /// Stat, refuse a non-regular or over-cap path, then read. After the read,
 /// refuse again if the file grew past `cap` between `metadata` and `read`.
-async fn read_capped_file_with(path: &str, cap: u64) -> Result<Vec<u8>, Failure> {
+pub(crate) async fn read_capped_file_with(path: &str, cap: u64) -> Result<Vec<u8>, Failure> {
     let name = file_name(path);
     let meta = tokio::fs::metadata(path)
         .await
@@ -221,7 +222,12 @@ pub async fn media_upload(
 }
 
 /// The server stored what was sent: its receipt names the same hash and size.
-fn receipt_matches(hash: &str, size: u64, sent_hash: &str, sent_size: u64) -> Result<(), Failure> {
+pub(crate) fn receipt_matches(
+    hash: &str,
+    size: u64,
+    sent_hash: &str,
+    sent_size: u64,
+) -> Result<(), Failure> {
     if hash == sent_hash && size == sent_size {
         Ok(())
     } else {

@@ -537,6 +537,57 @@ fn refusal(code: &str) -> Value {
 }
 
 #[tokio::test]
+async fn a_fetch_names_its_own_ceiling_and_the_default_stays_the_blob_cap() {
+    // A room save is the one file larger than `MAX_BLOB_BYTES`: its fetch names a ceiling of
+    // its own (`fetch_within`). Over the named ceiling is refused from the header alone; the
+    // default ceiling of `fetch` is still `MAX_BLOB_BYTES`.
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let conn = accept_with_hello(&endpoint).await;
+        let conn = conn.conn;
+        // 1. Four bytes to a fetch that takes three: refused before the body.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&get_ok(HASH, 4)))
+            .await
+            .unwrap();
+        let _ = send.finish();
+        // 2. The same four bytes to a fetch that takes four.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&get_ok(HASH, 4)))
+            .await
+            .unwrap();
+        send.write_all(b"room").await.unwrap();
+        send.finish().unwrap();
+        // 3. Over the blob cap, to a plain fetch.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&get_ok(HASH, MAX_BLOB_BYTES + 1)))
+            .await
+            .unwrap();
+        let _ = send.finish();
+        conn.closed().await;
+    });
+
+    let (handle, mut rx) = up(&ticket).await;
+    let err = handle
+        .fetch_within(HASH.to_owned(), 3)
+        .await
+        .expect_err("over the named ceiling");
+    assert_eq!(err.code(), "too_large", "{err}");
+    let fetched = handle
+        .fetch_within(HASH.to_owned(), 4)
+        .await
+        .expect("within the named ceiling");
+    assert_eq!(fetched.bytes, b"room");
+    let err = handle
+        .fetch(HASH.to_owned())
+        .await
+        .expect_err("over the blob cap");
+    assert_eq!(err.code(), "too_large", "{err}");
+    close(&handle, &mut rx).await;
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn get_succeeds_and_each_bad_answer_has_its_own_failure() {
     let body: &[u8] = b"panel entry bytes";
     let (endpoint, ticket) = bind_server().await;

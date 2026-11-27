@@ -71,6 +71,13 @@ Two modes, one app:
   run in a sandboxed frame with no network, through the page bridge —
   [docs/PAGE-BRIDGE.md](docs/PAGE-BRIDGE.md)), media, audio, the session report and the admin
   screens (access keys, models, content and packs, the room), and hosting a server locally.
+  A room save (the room admin's **Save to a file…** / **Load a save file…**, up to 256 MB) travels
+  on the byte channel, never in a frame, and its bytes never enter the WebView: the Rust side
+  fetches the file the export names, checks its hash and size, and writes it only to the path
+  picked in the save dialog — through a temporary file renamed into place, readable by you alone
+  (mode 0600 on macOS and Linux), never in a cache; restoring reads the picked file natively,
+  offers it with `purpose: "save"`, sends it, and runs `save {op: "import", file}`. A save holds
+  every secret of the room and no pictures or sounds.
 - **Studio**: a local-first authoring bench:
   - **Forge** — typed module variables and worldbook entries, exported as a native
     `*.lorecard.json` or a SillyTavern card (JSON or PNG). Hook scripts and a pregenerated
@@ -162,7 +169,11 @@ own code writes, and fails on any mismatch:
 - **f. live connect** — a real 3.0 server (`serve --local`) dialled through the real Rust link
   (`scripts/check_live_connect.sh`); the room admin installs the pack of a. (`pack install`),
   subscribes `panels`, and fetches the page panel's HTML over the byte channel by the hash the
-  view gives: it must be the sha256 of, and byte for byte, the file Studio wrote;
+  view gives: it must be the sha256 of, and byte for byte, the file Studio wrote. Then a room
+  save larger than one control-stream line (8 MiB) goes out of the server and back in through
+  the app's own save code (`src-tauri/tests/save_live.rs`): the export fetched and written
+  (mode 0600), a grown save offered with `purpose: "save"`, sent and imported, and the room
+  exported again, put back and exported once more — the same content before and after;
 - **g. host locally** — the app's own host-local code (`src-tauri/tests/host_local_live.rs`)
   finds the engine checkout with the app's probe and starts the real server three times over
   one data directory (its first key, the key the app kept, a key made after the app lost it),

@@ -9,6 +9,11 @@
 # whatever the client believes. Only a real server catches an ALPN, framing or
 # byte-channel drift between the two repositories.
 #
+# Then the room admin moves a room save larger than one control-stream line (8 MiB) out of the
+# server and back in through the app's own save code (src-tauri/tests/save_live.rs: the export
+# fetched and written, a grown save offered with `purpose: "save"`, PUT and imported, and the room
+# compared before and after). It replaces the room: the server is a throwaway one.
+#
 # With LIVE_PAGE_PACK (a built .lwpack), LIVE_PAGE_PANEL (one of its page panels,
 # <pack>/<panel>) and LIVE_PAGE_HTML (the page file Studio wrote), the session goes on: the
 # room admin installs the pack, subscribes `panels`, and GETs the page by the hash the view
@@ -81,7 +86,7 @@ trap 'exit 143' TERM
 
 mkdir -p "$SANDBOX/cwd" "$SANDBOX/data"
 
-say "1/3 start the 3.0 server (serve --local) in a sandbox"
+say "1/4 start the 3.0 server (serve --local) in a sandbox"
 (
   cd "$SANDBOX/cwd"
   # Drop the operator's own server settings: anything left exported would
@@ -114,7 +119,7 @@ TICKET="$(field ticket)" || fail "the ready line carries no ticket: $READY"
 KEY="$(field key)" || fail "the ready line carries no first admin key (is the data directory fresh?): $READY"
 echo "ok: server pid $SERVER_PID, ticket ${TICKET:0:24}…"
 
-say "2/3 dial it through the real link crate: hello, welcome, ping, a refused GET"
+say "2/4 dial it through the real link crate: hello, welcome, ping, a refused GET"
 PAGE_ENV=()
 if [ -n "${LIVE_PAGE_PACK:-}" ]; then
   [ -f "$LIVE_PAGE_PACK" ] || fail "LIVE_PAGE_PACK is not a file: $LIVE_PAGE_PACK"
@@ -146,7 +151,23 @@ if [ -n "${LIVE_PAGE_PACK:-}" ]; then
   grep -q "as the studio wrote it" "$CARGO_LOG" || fail "the page stage did not run"
 fi
 
-say "3/3 the server survived the session"
+say "3/4 a room save over a control-stream line, out and back in through the app's own save code"
+SAVE_LOG="$SANDBOX/save.log"
+(
+  cd "$STUDIO_ROOT"
+  # The save files the test writes land in the sandbox, removed on every exit.
+  mkdir -p "$SANDBOX/tmp"
+  TMPDIR="$SANDBOX/tmp" \
+  LOREWEAVER_LIVE_TICKET="$TICKET" \
+  LOREWEAVER_LIVE_KEY="$KEY" \
+  LOREWEAVER_LIVE_NETWORK=local \
+    cargo test -p loreweaver-studio --test save_live -- --ignored --nocapture 2>&1 | tee "$SAVE_LOG"
+)
+grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$SAVE_LOG" \
+  || fail "the save test did not run, or failed"
+grep -q "went out and back in through the app's code" "$SAVE_LOG" || fail "the save stage did not run"
+
+say "4/4 the server survived the session"
 kill -0 "$SERVER_PID" 2>/dev/null || fail "the server died during the session"
 
 say "live-connect gate: PASS"

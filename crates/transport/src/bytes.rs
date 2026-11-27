@@ -10,8 +10,8 @@
 //! ```
 //!
 //! Every read is bounded: the reply header by [`MAX_BYTE_HEADER_BYTES`], a GET
-//! body by the size its header declared (itself capped by
-//! [`crate::MAX_BLOB_BYTES`]), and a stream that sends one byte more than it
+//! body by the size its header declared (itself capped by the ceiling the
+//! caller named — [`crate::MAX_BLOB_BYTES`] unless it is a room save), and a stream that sends one byte more than it
 //! promised is an error. A read that waits longer than the stall bound for
 //! anything at all gives up as `stalled`. The bytes are not hashed here: the
 //! caller verifies them where it stores them (`src-tauri`'s verified caches).
@@ -25,7 +25,7 @@ use iroh::endpoint::{RecvStream, SendStream};
 use serde_json::{json, Value};
 
 use crate::codec::encode_line;
-use crate::limits::accepted_blob_size;
+use crate::limits::accepted_size;
 
 /// Byte streams one connection may have open at once (the control stream not
 /// counted). More are queued in order, never refused.
@@ -236,11 +236,13 @@ fn stop_quietly(recv: &mut RecvStream) {
 }
 
 /// GET `hash` on a fresh stream: the request, the header, then exactly the
-/// declared bytes and the end of the stream.
+/// declared bytes and the end of the stream. A header declaring more than
+/// `max` bytes is refused before the body is read.
 pub async fn get(
     send: &mut SendStream,
     recv: &mut RecvStream,
     hash: &str,
+    max: u64,
     stall: Duration,
 ) -> Result<FetchedFile, ByteError> {
     let result = async {
@@ -255,7 +257,7 @@ pub async fn get(
                 "the reply names another file".to_owned(),
             ));
         }
-        let size = accepted_blob_size(file.size).map_err(ByteError::TooLarge)?;
+        let size = accepted_size(file.size, max).map_err(ByteError::TooLarge)?;
         if rest.len() > size {
             return Err(ByteError::TooMuch);
         }

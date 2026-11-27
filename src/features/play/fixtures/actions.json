@@ -531,7 +531,7 @@
           "id": "save",
           "source": "engine",
           "title": "Save",
-          "description": "Export the whole room as a bundle, or replace the room with one.",
+          "description": "Export the whole room as a file for admins to fetch, or replace the room with a save file you uploaded.",
           "params": {
             "type": "object",
             "properties": {
@@ -539,10 +539,10 @@
                 "type": "string",
                 "enum": ["export", "import"]
               },
-              "bundle": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
+              "file": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
               }
             },
             "required": ["op"],
@@ -552,7 +552,7 @@
           "available": true,
           "text": {
             "forms": ["save"],
-            "usage": ".save [export] | .save import <bundle>"
+            "usage": ".save [export] | .save import <hash of an uploaded save file>"
           },
           "danger": true
         },
@@ -2125,8 +2125,24 @@
     },
     "saveExport": {
       "ok": true,
-      "text": "Exported the room: 0 documents, 0 log entries.",
-      "dataKeys": ["format", "version", "turn", "documents", "state", "modules", "events"]
+      "text": "Exported the room: 0 documents, 0 log entries, as save-table-20231115-061320.json.",
+      "data": {
+        "documents": 0,
+        "events": 0,
+        "media": {
+          "hash": "b11dd330dfb36238c6602614d08480906a092baae6a94a23ac2bab110096c7ec",
+          "mime": "application/json",
+          "size": 100,
+          "name": "save-table-20231115-061320.json"
+        }
+      }
+    },
+    "saveImportNotUploaded": {
+      "ok": false,
+      "error": {
+        "code": "save_not_uploaded",
+        "message": "You have not uploaded a save file with that hash. Upload the save first."
+      }
     },
     "gencharOk": {
       "ok": true,

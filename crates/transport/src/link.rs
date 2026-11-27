@@ -30,6 +30,7 @@ use tokio::sync::{mpsc, oneshot, Semaphore};
 
 use crate::bytes::{self, ByteError, ByteFile, FetchedFile, BYTE_STALL, MAX_BYTE_STREAMS};
 use crate::codec::{encode_line, LineDecoder};
+use crate::limits::MAX_BLOB_BYTES;
 
 /// ALPN both ends negotiate. It carries the protocol MAJOR (`docs/protocol.md`
 /// §2.1), so a 2.x server refuses the connection instead of misreading frames.
@@ -167,6 +168,8 @@ enum Command {
     },
     Fetch {
         hash: String,
+        /// The most bytes this fetch accepts (the header is refused above it).
+        max: u64,
         reply: oneshot::Sender<Result<FetchedFile, ByteError>>,
     },
     Put {
@@ -202,9 +205,16 @@ impl LinkHandle {
     /// GET one file by its content hash on a byte stream of its own. At most
     /// [`MAX_BYTE_STREAMS`] byte operations run at once; the rest wait in order.
     pub async fn fetch(&self, hash: String) -> Result<FetchedFile, ByteError> {
+        self.fetch_within(hash, MAX_BLOB_BYTES).await
+    }
+
+    /// [`Self::fetch`] with the ceiling named by the caller: a room save may be
+    /// larger than any other file ([`crate::MAX_SAVE_BYTES`]), and is the one
+    /// fetch that asks for more than [`MAX_BLOB_BYTES`].
+    pub async fn fetch_within(&self, hash: String, max: u64) -> Result<FetchedFile, ByteError> {
         let (reply, rx) = oneshot::channel();
         self.cmd
-            .send(Command::Fetch { hash, reply })
+            .send(Command::Fetch { hash, max, reply })
             .map_err(|_| ByteError::NotConnected)?;
         rx.await.map_err(|_| ByteError::NotConnected)?
     }
@@ -448,7 +458,7 @@ async fn carry(
                         }
                     }
                 }
-                Some(Command::Fetch { hash, reply }) => {
+                Some(Command::Fetch { hash, max, reply }) => {
                     if !bytes::is_content_hash(&hash) {
                         let _ = reply.send(Err(ByteError::BadHash));
                         continue;
@@ -459,7 +469,7 @@ async fn carry(
                             let _slot = gate.acquire_owned().await.map_err(|_| ByteError::NotConnected)?;
                             let (mut send, mut recv) =
                                 conn.open_bi().await.map_err(|_| ByteError::NotConnected)?;
-                            bytes::get(&mut send, &mut recv, &hash, timeouts.stall).await
+                            bytes::get(&mut send, &mut recv, &hash, max, timeouts.stall).await
                         };
                         let result = tokio::time::timeout(timeouts.byte_op, operation)
                             .await
@@ -600,6 +610,7 @@ mod tests {
         assert!(!refuse(
             Command::Fetch {
                 hash: "a".repeat(64),
+                max: MAX_BLOB_BYTES,
                 reply
             },
             NOT_UP

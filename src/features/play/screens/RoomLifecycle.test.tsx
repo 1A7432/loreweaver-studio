@@ -1,39 +1,52 @@
 // The room's lifecycle: a save file out and in (an import ends every connection — said before
 // it is sent), a reset armed then confirmed within the server's window, and an undo — each
 // asked for before it acts. Results are the engine's own (`fixtures/actions.json`).
+//
+// A save travels on the byte channel: the export's answer names a file, which the native side
+// fetches and writes (`save_fetch`); a restore is prepared and sent natively (`save_prepare`,
+// `save_upload`) around a `media.offer {purpose: "save"}`. Here the native side is a double that
+// records what it was asked; the page itself never holds the save's bytes.
 
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import "../../../i18n"
 
-const files = vi.hoisted(() => ({ saveSecretTextFile: vi.fn(), pickJsonFile: vi.fn() }))
-vi.mock("../../../lib/files", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../lib/files")>()),
-  saveSecretTextFile: files.saveSecretTextFile,
-}))
-vi.mock("../../../lib/native", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../lib/native")>()),
-  pickJsonFile: files.pickJsonFile,
-}))
+const native = vi.hoisted(() => ({ invoke: vi.fn(), save: vi.fn(), open: vi.fn() }))
+vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke, convertFileSrc: (path: string) => path }))
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: native.save, open: native.open }))
 
 import { flush } from "../../../lib/connection.testkit"
-import { ACTION_FIXTURE, TestRoom, resultBody } from "../room.testkit"
+import { MAX_SAVE_BYTES } from "../../../lib/roomSave"
+import { ACTION_FIXTURE, TestRoom, actionResult, resultBody } from "../room.testkit"
 import RoomLifecycle, { RESET_CONFIRM_MS } from "./RoomLifecycle"
 
-/** A bundle of the shape the engine's export answered (its top-level fields; the contents are
- * opaque to this client and pass through untouched). */
-const BUNDLE = Object.fromEntries(
-  ACTION_FIXTURE.results.saveExport.dataKeys.map((key, index) => [key, index]),
-)
+/** The file the engine's export named (`fixtures/actions.json`). */
+const EXPORTED = ACTION_FIXTURE.results.saveExport.data.media
+/** A save file picked to restore, as the native side describes it. */
+const PICKED = {
+  name: "night.json",
+  mime: "application/json",
+  size: 12_582_912,
+  sha256: "9c56cc51b374c3ba189210d5b6d4bf57790d351c96c47c02190ecf1e430635ab",
+}
+const UPLOAD_ID = "c4b3a291-8f7e-4d6c-9b5a-4f3e2d1c0b9a"
+/** The offer's answer when the room already holds those bytes. */
+const EXISTING = {
+  existing: { hash: PICKED.sha256, size: PICKED.size, mime: PICKED.mime, name: PICKED.name, from: "m-root" },
+}
 
 let room: TestRoom | null = null
+const shell = window as unknown as { __TAURI_INTERNALS__?: unknown }
 beforeEach(() => {
-  files.saveSecretTextFile.mockReset().mockResolvedValue("saved")
-  files.pickJsonFile.mockReset()
+  native.invoke.mockReset()
+  native.save.mockReset().mockResolvedValue("/saves/night.json")
+  native.open.mockReset().mockResolvedValue("/saves/night.json")
+  shell.__TAURI_INTERNALS__ = {}
 })
 afterEach(() => {
   vi.useRealTimers()
+  delete shell.__TAURI_INTERNALS__
   room?.close()
   room = null
 })
@@ -45,47 +58,161 @@ async function open() {
   return room
 }
 
+function exportAnswer(media: Record<string, unknown> = EXPORTED) {
+  const body = resultBody("saveExport") as { ok: true; text: string; data: Record<string, unknown> }
+  return { ...body, data: { ...body.data, media } }
+}
+
 describe("RoomLifecycle", () => {
-  it("writes an export to a file the admin picks, and nowhere else", async () => {
+  it("asks where first, then fetches the file the export names and writes it there", async () => {
     const r = await open()
+    native.invoke.mockResolvedValue(EXPORTED.size)
     await userEvent.setup().click(screen.getByRole("button", { name: "Save to a file…" }))
+    expect(native.save).toHaveBeenCalledWith({
+      defaultPath: expect.stringMatching(/^loreweaver-main-.*\.json$/),
+      filters: [{ name: "Save files", extensions: ["json"] }],
+    })
     expect(r.commands()).toEqual([{ id: "save", args: { op: "export" } }])
-    const bundle = BUNDLE
-    await r.answer({ ok: true, text: ACTION_FIXTURE.results.saveExport.text, data: bundle })
+    await r.answer(exportAnswer())
     await act(async () => flush(10))
-    expect(files.saveSecretTextFile).toHaveBeenCalledWith(
-      expect.stringMatching(/^loreweaver-main-.*\.json$/),
-      JSON.stringify(bundle, null, 2),
-    )
-    expect(screen.getByText("Saved.")).toBeInTheDocument()
+    expect(native.invoke).toHaveBeenCalledTimes(1)
+    expect(native.invoke).toHaveBeenCalledWith("save_fetch", {
+      hash: EXPORTED.hash,
+      size: EXPORTED.size,
+      path: "/saves/night.json",
+    })
+    expect(screen.getByText("Saved (100 B).")).toBeInTheDocument()
+    // The server's own answer, as it wrote it.
+    expect(screen.getByText(ACTION_FIXTURE.results.saveExport.text)).toBeInTheDocument()
   })
 
-  it("says an import ends everyone's connection before it sends it", async () => {
+  it("exports nothing when the admin cancels the dialog, and nothing outside the app", async () => {
     const r = await open()
-    const bundle = BUNDLE
-    files.pickJsonFile.mockResolvedValue({
-      name: "night.json",
-      bytes: new TextEncoder().encode(JSON.stringify(bundle)),
-      path: "/x/night.json",
+    native.save.mockResolvedValue(null)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Save to a file…" }))
+    expect(r.commands()).toEqual([])
+    delete shell.__TAURI_INTERNALS__
+    await user.click(screen.getByRole("button", { name: "Save to a file…" }))
+    expect(r.commands()).toEqual([])
+    expect(screen.getByRole("alert")).toHaveTextContent("Saving a file needs the desktop app.")
+    expect(native.invoke).not.toHaveBeenCalled()
+  })
+
+  it("refuses, in its own words, a save larger than it fetches", async () => {
+    const r = await open()
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save to a file…" }))
+    await r.answer(exportAnswer({ ...EXPORTED, size: MAX_SAVE_BYTES + 1 }))
+    await act(async () => flush(10))
+    expect(native.invoke).not.toHaveBeenCalled()
+    expect(screen.getByRole("alert")).toHaveTextContent("A save file may be at most 256 MB.")
+  })
+
+  it("shows a refused export and a refused fetch in the server's words, a bad file in its own", async () => {
+    const r = await open()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Save to a file…" }))
+    await r.answer({ ok: false, error: { code: "no_media", message: "This server keeps no files." } })
+    await act(async () => flush(10))
+    expect(native.invoke).not.toHaveBeenCalled()
+    expect(screen.getByRole("alert")).toHaveTextContent("This server keeps no files.")
+
+    native.invoke.mockRejectedValue({
+      code: "media_not_found",
+      message: "No such file in this room.",
+      server: true,
+    })
+    await user.click(screen.getByRole("button", { name: "Save to a file…" }))
+    await r.answer(exportAnswer())
+    await act(async () => flush(10))
+    expect(screen.getByText("No such file in this room.")).toBeInTheDocument()
+
+    native.invoke.mockRejectedValue({ code: "hash_mismatch", message: "detail", server: false })
+    await user.click(screen.getByRole("button", { name: "Save to a file…" }))
+    await r.answer(exportAnswer())
+    await act(async () => flush(10))
+    expect(screen.getByText("The file did not match its checksum.")).toBeInTheDocument()
+  })
+
+  it("restores: says an import ends everyone's connection, then offers, sends and imports by hash", async () => {
+    const r = await open()
+    native.invoke.mockImplementation(async (command: string) => {
+      if (command === "save_prepare") return PICKED
+      if (command === "save_upload")
+        return { hash: PICKED.sha256, size: PICKED.size, mime: PICKED.mime, name: PICKED.name }
+      throw new Error(command)
     })
     const user = userEvent.setup()
     await user.click(screen.getByRole("button", { name: "Load a save file…" }))
+    expect(native.invoke).toHaveBeenCalledWith("save_prepare", { path: "/saves/night.json" })
+    expect(screen.getByRole("alert")).toHaveTextContent("Load night.json (12.0 MB)?")
     expect(screen.getByRole("alert")).toHaveTextContent("disconnects everyone in it — you too")
+    expect(r.requests().filter((frame) => frame.type === "call" && frame.method === "media.offer")).toEqual(
+      [],
+    )
     expect(r.commands()).toEqual([])
     await user.click(screen.getByRole("button", { name: "Replace the room" }))
-    expect(r.commands()).toEqual([{ id: "save", args: { op: "import", bundle } }])
+    await r.feed()
+    expect(r.lastRequest()).toMatchObject({ method: "media.offer", params: { ...PICKED, purpose: "save" } })
+    await r.answer({ ok: true, data: { upload_id: UPLOAD_ID } })
+    await act(async () => flush(10))
+    expect(native.invoke).toHaveBeenCalledWith("save_upload", {
+      path: "/saves/night.json",
+      uploadId: UPLOAD_ID,
+      expectedSha256: PICKED.sha256,
+    })
+    expect(r.commands()).toEqual([{ id: "save", args: { op: "import", file: PICKED.sha256 } }])
   })
 
-  it("refuses a file that is not a save file without sending anything", async () => {
+  it("sends nothing when the server already holds the save, and imports it", async () => {
     const r = await open()
-    files.pickJsonFile.mockResolvedValue({
-      name: "list.json",
-      bytes: new TextEncoder().encode("[1,2]"),
-      path: "/x/list.json",
-    })
-    await userEvent.setup().click(screen.getByRole("button", { name: "Load a save file…" }))
+    native.invoke.mockResolvedValue(PICKED)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Load a save file…" }))
+    await user.click(screen.getByRole("button", { name: "Replace the room" }))
+    await r.feed()
+    await r.answer({ ok: true, data: EXISTING })
+    await act(async () => flush(10))
+    expect(native.invoke).not.toHaveBeenCalledWith("save_upload", expect.anything())
+    expect(r.commands()).toEqual([{ id: "save", args: { op: "import", file: PICKED.sha256 } }])
+  })
+
+  it("refuses a file that is not a save file, or is too large, without sending anything", async () => {
+    const r = await open()
+    native.open.mockResolvedValue("/x/list.json")
+    native.invoke.mockRejectedValue({ code: "not_a_save", message: "detail", server: false })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Load a save file…" }))
     expect(screen.getByRole("alert")).toHaveTextContent("list.json is not a save file.")
+    native.invoke.mockRejectedValue({ code: "too_large", message: "detail", server: false })
+    await user.click(screen.getByRole("button", { name: "Load a save file…" }))
+    expect(screen.getByRole("alert")).toHaveTextContent("A save file may be at most 256 MB.")
+    expect(
+      r.requests().filter((frame) => frame.type === "call" && frame.method !== "view.subscribe"),
+    ).toEqual([])
+  })
+
+  it("shows a refused offer and a refused import in the server's words", async () => {
+    const r = await open()
+    native.invoke.mockResolvedValue(PICKED)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Load a save file…" }))
+    await user.click(screen.getByRole("button", { name: "Replace the room" }))
+    await r.feed()
+    await r.answer({ ok: false, error: { code: "media_disabled", message: "Uploads are off in this room." } })
+    await act(async () => flush(10))
+    expect(screen.getByRole("alert")).toHaveTextContent("Uploads are off in this room.")
     expect(r.commands()).toEqual([])
+
+    await user.click(screen.getByRole("button", { name: "Load a save file…" }))
+    await user.click(screen.getByRole("button", { name: "Replace the room" }))
+    await r.feed()
+    await r.answer({ ok: true, data: EXISTING })
+    await act(async () => flush(10))
+    await r.answer(resultBody("saveImportNotUploaded"))
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      (actionResult("saveImportNotUploaded") as { error: { message: string } }).error.message,
+    )
   })
 
   it("arms a reset, then confirms it within the window; the server's words both times", async () => {

@@ -15,4 +15,4 @@ pub mod link;
 
 /// Client-side defensive ceiling for one media blob. Re-exported so
 /// `src-tauri` (`media.rs`) cannot drift from the transport GET path.
-pub use limits::MAX_BLOB_BYTES;
+pub use limits::{MAX_BLOB_BYTES, MAX_SAVE_BYTES};

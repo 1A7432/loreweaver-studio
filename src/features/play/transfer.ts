@@ -21,6 +21,8 @@ const WORDED = new Set([
   "timeout",
   "hash_mismatch",
   "not_html",
+  "not_a_save",
+  "size_mismatch",
 ])
 
 /** What a person reads for a failed upload, fetch or file read. */
