@@ -117,6 +117,16 @@ describe("the host-locally block", () => {
     )
   })
 
+  it("a folder holding a Loreweaver 2 database has its own words, from the start and from the key step", async () => {
+    failed({ code: "refused", refusal: "other_database", problems: [], detail: null })
+    const { unmount } = render(<PlayView />)
+    expect(screen.getByRole("alert")).toHaveTextContent("game database from Loreweaver 2")
+    unmount()
+    failed({ code: "mint_failed", refusal: "other_database", stderr: [] })
+    render(<PlayView />)
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose another server folder")
+  })
+
   it("a folder another server holds has its own words, in both languages", async () => {
     failed({ code: "refused", refusal: "data_dir_in_use", problems: [], detail: null })
     const { unmount } = render(<PlayView />)

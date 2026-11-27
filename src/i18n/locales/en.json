@@ -89,6 +89,7 @@
         "diedCode": "The local server stopped (code {{code}}). Its last lines:",
         "key_refused": "The server turned down the admin key this app kept for it, so the key is forgotten. Host again and a new one will be made.",
         "data_dir_in_use": "Another server is already running on this server folder (perhaps one started by the terminal client or another copy of this app). Stop it, or pick another folder.",
+        "other_database": "This folder holds a game database from Loreweaver 2, which Loreweaver 3 cannot read. Nothing in it was changed. Choose another server folder and host again; the old folder stays as it is for Loreweaver 2.",
         "startup_failed": "The local server could not start:"
       }
     },

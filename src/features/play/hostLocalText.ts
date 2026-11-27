@@ -39,6 +39,10 @@ export function describeHostProblem(problem: HostProblem, t: TFunction): HostPro
       if (problem.refusal === "data_dir_in_use") {
         return { text: t("connect.hostLocal.problem.data_dir_in_use"), lines: [] }
       }
+      // The folder holds a Loreweaver 2 database (same file name): only another folder helps.
+      if (problem.refusal === "other_database") {
+        return { text: t("connect.hostLocal.problem.other_database"), lines: [] }
+      }
       if (problem.refusal === "startup_failed") {
         return {
           text: t("connect.hostLocal.problem.startup_failed"),
@@ -60,6 +64,10 @@ export function describeHostProblem(problem: HostProblem, t: TFunction): HostPro
       // `key` refuses while a server holds the folder: the same situation as `data_dir_in_use`.
       if (problem.refusal === "server_running") {
         return { text: t("connect.hostLocal.problem.data_dir_in_use"), lines: [] }
+      }
+      // `key` is refused first when the folder's database is not this server's.
+      if (problem.refusal === "other_database") {
+        return { text: t("connect.hostLocal.problem.other_database"), lines: [] }
       }
       return {
         text: t("connect.hostLocal.problem.mint_failed", { code: problem.refusal ?? "?" }),
