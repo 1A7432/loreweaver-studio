@@ -1161,8 +1161,10 @@ pub async fn host_local_start(
     .await
 }
 
+// An async command that borrows state must return a `Result`; stopping cannot fail, and the
+// error type is a `String` only because a unit error is a lint in newer toolchains.
 #[tauri::command]
-pub async fn host_local_stop(state: tauri::State<'_, HostLocalState>) -> Result<bool, ()> {
+pub async fn host_local_stop(state: tauri::State<'_, HostLocalState>) -> Result<bool, String> {
     Ok(state.0.stop().await)
 }
 
