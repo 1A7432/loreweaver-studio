@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # v3: the move to protocol 3.0 lives on its own branch until it is released.
+    branches: [main, v3]
   pull_request:
 
 # Every pushed SHA must finish its own run (milestone gating); queue, don't cancel.
