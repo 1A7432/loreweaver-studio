@@ -1,9 +1,8 @@
 // The advisory pack lint's data model: what it reads, and what it says.
 //
 // ADVISORY, always. The engine CLI is the only authority on whether a pack
-// builds — `core/pack.py` re-validates everything at build time and refuses
-// what it must. This lint catches the other class of defect: packs that build
-// perfectly and then do nothing, or do it only for the keeper. Nothing here
+// builds — its builder re-validates everything and refuses what it must. This lint catches the other class of defect: packs that build
+// perfectly and then do nothing, or do it only for the room admin. Nothing here
 // blocks a build; a finding is a sentence pointing at one thing.
 
 export type PackLintSeverity = "warn" | "info"
@@ -15,14 +14,14 @@ export type PackLintRuleId =
   | "loreNeverActivates"
   /** A bilingual field with one side filled and the other empty. */
   | "bilingualGap"
-  /** A player-facing panel bound to a keeper-only variable: it renders blank. */
+  /** A player-facing panel bound to a variable hidden from players: it renders blank. */
   | "panelBindsHiddenVariable"
   /** A panel bound to a variable this pack never declares. */
   | "panelBindsUnknownVariable"
-  /** Hook / update-rule code touching a variable id nothing declares. */
+  /** A panels 1.x field the migration could not translate. */
+  | "panelLegacy"
+  /** Lore naming a variable id nothing declares. */
   | "codeUnknownVariable"
-  /** The wizard's draft stub, shipped as-is. */
-  | "stubMarker"
   /** Pack metadata a reader needs and the manifest allows to be thin. */
   | "packMetadataThin"
   /** An asset referenced by a panel or the kit that the pack does not ship. */
@@ -33,11 +32,8 @@ export type PackLintRuleId =
   | "episodeNoNotes"
   /** An earlier episode's content naming something a later one introduces. */
   | "episodeForwardReference"
-  /** A hook handler reading a key its event's payload does not carry — always
-   * undefined at run time, and silent about it. */
-  | "hookUnknownEventField"
 
-export type PackLintTargetKind = "variable" | "lore" | "panel" | "code" | "pack" | "asset" | "episode"
+export type PackLintTargetKind = "variable" | "lore" | "panel" | "pack" | "asset" | "episode"
 
 export interface PackLintTarget {
   kind: PackLintTargetKind
@@ -78,12 +74,6 @@ export interface LintLoreEntry {
   enabled: boolean
 }
 
-export interface LintCodeBlock {
-  /** Where the code came from: `hooks`, a skill slug, an update-rule name. */
-  origin: string
-  source: string
-}
-
 export interface LintPackMeta {
   id: string
   nameEn: string
@@ -115,7 +105,6 @@ export interface PackLintSource {
   lore: LintLoreEntry[]
   /** Raw `ui/panels.yaml`; null when the pack ships no panels. */
   panelsYaml: string | null
-  code: LintCodeBlock[]
   /** Serialized installments, and the ordinal the next build stops at. Empty
    * episodes means an ordinary one-shot pack and the episode rules go quiet. */
   episodes: LintEpisode[]
@@ -145,7 +134,6 @@ export function emptyLintSource(): PackLintSource {
     variables: [],
     lore: [],
     panelsYaml: null,
-    code: [],
     episodes: [],
     buildUpTo: 0,
     shippedFiles: [],

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { lintPack, lintSummary, STUB_MARKER } from "./packLint"
+import { lintPack, lintSummary } from "./packLint"
 import { emptyLintSource, type PackLintSource } from "./model"
 
 function source(patch: Partial<PackLintSource> = {}): PackLintSource {
@@ -12,6 +12,14 @@ function ruleIds(findings: ReturnType<typeof lintPack>): string[] {
 
 const FEAR = { id: "fear", labelEn: "Fear", labelZh: "恐惧", visibility: "player" as const }
 const TRUTH = { id: "truth", labelEn: "Truth", labelZh: "真相", visibility: "keeper" as const }
+
+/** A panels 3.0 file: one panel that reads the pack's variables through the `variables` view. */
+function panelsFile(body: string, head = ""): string {
+  return `panels:\n  - id: hud\n    slot: sidebar\n${head}    views: {vars: variables}\n    blocks:\n${body}`
+}
+
+const FEAR_METER =
+  "      - {kind: meter, label: {en: Fear, zh: 恐惧}, value: {$view: vars.module.fear.value}, min: 0, max: 10}\n"
 
 const LORE = {
   id: "e1",
@@ -28,8 +36,7 @@ describe("variableUnused", () => {
     const mentions = [
       { lore: [{ ...LORE, content: "Your {{var:fear}} rises." }] },
       { lore: [{ ...LORE, content: "…", condition: "fear > 3" }] },
-      { code: [{ origin: "hooks", source: "setvar('fear', 1)" }] },
-      { panelsYaml: "panels:\n  - id: hud\n    blocks:\n      - {kind: meter, value: {$var: fear}}\n" },
+      { panelsYaml: panelsFile(FEAR_METER) },
     ]
     for (const patch of mentions) {
       expect(ruleIds(lintPack(source({ variables: [FEAR], ...patch })))).not.toContain("variableUnused")
@@ -50,20 +57,33 @@ describe("variableUnused", () => {
   it("does not mistake a longer id for a mention of a shorter one", () => {
     // `fear_of_dark` contains `fear`, but naming one is not naming the other.
     const findings = lintPack(
-      source({ variables: [FEAR], code: [{ origin: "hooks", source: "getvar('fear_of_dark')" }] }),
+      source({ variables: [FEAR], lore: [{ ...LORE, content: "The {{var:fear_of_dark}} rises." }] }),
     )
     expect(ruleIds(findings)).toContain("variableUnused")
   })
 
-  it("counts a repeat prefix as using every variable under it", () => {
+  it("counts a repeat over the variable tree as using every variable under its prefix", () => {
+    const findings = lintPack(
+      source({
+        variables: [{ ...FEAR, id: "clue_01" }],
+        panelsYaml: panelsFile(
+          "      - repeat: {each: vars.tree, as: leaf, prefix: clue_, block: {kind: badge, label: {$view: leaf.label}}}\n",
+        ),
+      }),
+    )
+    expect(ruleIds(findings)).not.toContain("variableUnused")
+  })
+
+  it("does not count a repeat over anything but the variable tree", () => {
     const findings = lintPack(
       source({
         variables: [{ ...FEAR, id: "clue_01" }],
         panelsYaml:
-          "panels:\n  - id: board\n    blocks:\n      - {repeat: {prefix: clue_, block: {kind: badge, label: {$leaf: label}}}}\n",
+          "panels:\n  - id: board\n    slot: sidebar\n    views: {me: me, vars: variables}\n    blocks:\n" +
+          "      - repeat: {each: me.character.resources, as: r, prefix: clue_, block: {kind: badge, label: {$view: r.label}}}\n",
       }),
     )
-    expect(ruleIds(findings)).not.toContain("variableUnused")
+    expect(ruleIds(findings)).toContain("variableUnused")
   })
 })
 
@@ -102,10 +122,10 @@ describe("bilingualGap", () => {
   })
 
   it("reads a plain-string panel label as an en-only one", () => {
-    // `core/panels.py`: a plain string IS the en side of a localized field.
+    // A plain string IS the en side of a localized field (panels.md §5).
     const findings = lintPack(
       source({
-        panelsYaml: "panels:\n  - id: hud\n    title: HUD\n    blocks: []\n",
+        panelsYaml: "panels:\n  - id: hud\n    title: HUD\n    slot: sidebar\n    blocks: []\n",
       }),
     )
     expect(findings.filter((f) => f.ruleId === "bilingualGap")).toHaveLength(1)
@@ -131,16 +151,18 @@ describe("bilingualGap", () => {
 })
 
 describe("panel bindings", () => {
-  const PLAYER_PANEL = (body: string) => `panels:\n  - id: hud\n    audience: player\n${body}`
+  const PLAYER_PANEL = (body: string) => panelsFile(body, "    audience: player\n")
 
   it("reports a player panel bound to a keeper-only variable", () => {
-    // The trap the exposure model creates: hidden variables are dropped before
-    // the client evaluates anything, so the block silently renders nothing for
-    // every player — while looking right to the author, who is the keeper.
+    // The trap the exposure model creates: a hidden variable is absent from a
+    // player's `variables` view, so the block silently renders nothing for
+    // every player — while looking right to the author, who is the room admin.
     const findings = lintPack(
       source({
         variables: [TRUTH],
-        panelsYaml: PLAYER_PANEL("    blocks:\n      - {kind: meter, value: {$var: truth}}\n"),
+        panelsYaml: PLAYER_PANEL(
+          "      - {kind: meter, label: {en: T, zh: T}, value: {$view: vars.module.truth.value}, min: 0, max: 3}\n",
+        ),
       }),
     )
     expect(findings.filter((f) => f.ruleId === "panelBindsHiddenVariable")).toHaveLength(1)
@@ -157,19 +179,21 @@ describe("panel bindings", () => {
       source({
         variables: [TRUTH],
         panelsYaml: PLAYER_PANEL(
-          '    blocks:\n      - {kind: badge, label: {en: X, zh: X}, visible_when: "truth === 2"}\n',
+          '      - {kind: badge, label: {en: X, zh: X}, visible_when: "vars.module.truth.value == 2"}\n',
         ),
       }),
     )
     expect(findings.filter((f) => f.key === "panelConditionHiddenVariable")).toHaveLength(1)
   })
 
-  it("leaves a keeper panel alone — it never reaches a player", () => {
+  it("leaves an admin panel alone — it never reaches a player", () => {
     const findings = lintPack(
       source({
         variables: [TRUTH],
-        panelsYaml:
-          "panels:\n  - id: kp\n    audience: keeper\n    blocks:\n      - {kind: meter, value: {$var: truth}}\n",
+        panelsYaml: panelsFile(
+          "      - {kind: meter, label: {en: T, zh: T}, value: {$view: vars.module.truth.value}, min: 0, max: 3}\n",
+          "    audience: admin\n",
+        ),
       }),
     )
     expect(ruleIds(findings)).not.toContain("panelBindsHiddenVariable")
@@ -179,20 +203,36 @@ describe("panel bindings", () => {
     const findings = lintPack(
       source({
         variables: [FEAR],
-        panelsYaml: PLAYER_PANEL("    blocks:\n      - {kind: meter, value: {$var: dread}}\n"),
+        panelsYaml: PLAYER_PANEL(
+          "      - {kind: meter, label: {en: D, zh: D}, value: {$view: vars.module.dread.value}, min: 0, max: 3}\n",
+        ),
       }),
     )
     expect(findings.filter((f) => f.ruleId === "panelBindsUnknownVariable")).toHaveLength(1)
   })
 
-  it("resolves a dotted path against its root variable", () => {
-    const findings = lintPack(
+  it("reads the pack's variables through a `variables` view handle and no other", () => {
+    // `me.module.dread` is the `me` view's own business, not a pack variable;
+    // a renamed handle bound to `variables` is read just the same.
+    const other = lintPack(
       source({
-        variables: [{ ...FEAR, id: "mvu" }],
-        panelsYaml: PLAYER_PANEL("    blocks:\n      - {kind: text, text: {$var: mvu.状态.压力}}\n"),
+        variables: [FEAR],
+        panelsYaml:
+          "panels:\n  - id: hud\n    slot: sidebar\n    views: {me: me}\n    blocks:\n" +
+          "      - {kind: text, text: {$view: me.module.dread.value}}\n",
       }),
     )
-    expect(ruleIds(findings)).not.toContain("panelBindsUnknownVariable")
+    expect(ruleIds(other)).not.toContain("panelBindsUnknownVariable")
+
+    const renamed = lintPack(
+      source({
+        variables: [FEAR],
+        panelsYaml:
+          "panels:\n  - id: hud\n    slot: sidebar\n    views: {state: variables}\n    blocks:\n" +
+          "      - {kind: text, text: {$view: state.module.dread.value}}\n",
+      }),
+    )
+    expect(renamed.filter((f) => f.ruleId === "panelBindsUnknownVariable")).toHaveLength(1)
   })
 
   it("never reads a quoted literal in a condition as a variable", () => {
@@ -200,7 +240,7 @@ describe("panel bindings", () => {
       source({
         variables: [FEAR],
         panelsYaml: PLAYER_PANEL(
-          "    blocks:\n      - {kind: badge, label: {en: X, zh: X}, visible_when: \"fear === 'high'\"}\n",
+          "      - {kind: badge, label: {en: X, zh: X}, visible_when: \"vars.module.fear.value == 'vars.module.dread.value'\"}\n",
         ),
       }),
     )
@@ -208,38 +248,62 @@ describe("panel bindings", () => {
   })
 })
 
-describe("code rules", () => {
-  it("reports the wizard's draft stub shipped as-is", () => {
-    const findings = lintPack(
-      source({ code: [{ origin: "hooks", source: `on('reply_ready', () => {\n  ${STUB_MARKER}\n})` }] }),
-    )
-    expect(findings.filter((f) => f.ruleId === "stubMarker")).toHaveLength(1)
-    expect(findings[0].target).toEqual({ kind: "code", id: "hooks" })
-  })
+describe("panelLegacy", () => {
+  const legacyFields = (findings: ReturnType<typeof lintPack>) =>
+    findings.filter((f) => f.ruleId === "panelLegacy").map((f) => f.params.fields)
 
-  it("reports getvar/setvar/incvar and variables.<path> on unknown ids", () => {
+  it("reports panels 1.x bindings the migration left for the author", () => {
     const findings = lintPack(
       source({
         variables: [FEAR],
-        code: [
-          {
-            origin: "hooks",
-            source: "setvar('dread', 1); incvar(\"panic\", 2); const x = variables.unknown_one",
-          },
-        ],
+        panelsYaml:
+          "panels:\n  - id: hud\n    slot: sidebar\n    blocks:\n" +
+          "      - {kind: meter, label: {en: Fear, zh: 恐惧}, value: {$var: fear}}\n" +
+          "      - repeat: {prefix: clue_, block: {kind: badge, label: {$leaf: label}}}\n",
       }),
     )
-    const ids = findings.filter((f) => f.ruleId === "codeUnknownVariable").map((f) => f.params.id)
-    expect(ids).toEqual(["dread", "panic", "unknown_one"])
+    // One finding per panel, naming every legacy field it still carries.
+    expect(findings.filter((f) => f.ruleId === "panelLegacy")).toHaveLength(1)
+    expect(findings.find((f) => f.ruleId === "panelLegacy")).toMatchObject({
+      severity: "warn",
+      params: { panel: "hud" },
+      target: { kind: "panel", id: "hud" },
+    })
+    expect(legacyFields(findings)).toEqual(["$var, $leaf"])
   })
 
-  it("says nothing about code when the pack declares no variables at all", () => {
-    // Nothing to compare against; every id would be "unknown" and the panel
-    // would be pure noise.
-    const findings = lintPack(source({ code: [{ origin: "hooks", source: "setvar('dread', 1)" }] }))
-    expect(ruleIds(findings)).not.toContain("codeUnknownVariable")
+  it("reports a choice's `input` and a page's `assets`", () => {
+    const findings = lintPack(
+      source({
+        panelsYaml:
+          "panels:\n  - id: hud\n    slot: modal\n    assets: [ui/a.png]\n    blocks:\n" +
+          "      - {kind: choices, options: [{id: a, label: A, command: help, input: text}]}\n",
+      }),
+    )
+    expect(legacyFields(findings)).toEqual(["assets, input"])
   })
 
+  it("reports `audience: keeper` and reads that panel as an admin one", () => {
+    const findings = lintPack(
+      source({
+        variables: [TRUTH],
+        panelsYaml: panelsFile(
+          "      - {kind: meter, label: {en: T, zh: T}, value: {$view: vars.module.truth.value}, min: 0, max: 3}\n",
+          "    audience: keeper\n",
+        ),
+      }),
+    )
+    expect(legacyFields(findings)).toEqual(["audience: keeper"])
+    expect(ruleIds(findings)).not.toContain("panelBindsHiddenVariable")
+  })
+
+  it("says nothing about a panels 3.0 file", () => {
+    const findings = lintPack(source({ variables: [FEAR], panelsYaml: panelsFile(FEAR_METER) }))
+    expect(ruleIds(findings)).not.toContain("panelLegacy")
+  })
+})
+
+describe("lore variable rules", () => {
   it("reports an unknown variable named by a lore macro or condition", () => {
     const findings = lintPack(
       source({
@@ -247,95 +311,28 @@ describe("code rules", () => {
         lore: [{ ...LORE, content: "{{getvar::dread}}", condition: "panic > 1" }],
       }),
     )
-    const ids = findings.filter((f) => f.ruleId === "codeUnknownVariable").map((f) => f.params.id)
-    expect(ids).toEqual(["dread", "panic"])
+    const found = findings.filter((f) => f.ruleId === "codeUnknownVariable")
+    expect(found.map((f) => f.params.id)).toEqual(["dread", "panic"])
+    expect(found[0].key).toBe("loreUnknownVariable")
   })
 
-  describe("hook event fields", () => {
-    const hook = (src: string) => lintPack(source({ code: [{ origin: "hooks", source: src }] }))
-    const fields = (findings: ReturnType<typeof lintPack>) =>
-      findings.filter((f) => f.ruleId === "hookUnknownEventField").map((f) => f.params.field)
+  it("resolves a dotted path against its root variable", () => {
+    const findings = lintPack(
+      source({
+        variables: [{ ...FEAR, id: "mvu" }],
+        lore: [{ ...LORE, content: "{{var:mvu}}", condition: "mvu.状态.压力 > 1" }],
+      }),
+    )
+    expect(ruleIds(findings)).not.toContain("codeUnknownVariable")
+  })
 
-    it("catches a dead `event.text` guard", () => {
-      // `reply_ready` fires `{reply}`, so this guard is undefined on every real
-      // table and the whole handler quietly does nothing — the shape the
-      // wizard itself once emitted, and the reason this rule exists.
-      const findings = hook(
-        "on('reply_ready', (event) => {\n" +
-          "  const said = (p) => String(event && event.text ? event.text : '').includes(p)\n" +
-          "  if (said('玩家帮忙')) incvar('好感度', 5)\n" +
-          "})",
-      )
-      expect(fields(findings)).toEqual(["text"])
-      expect(findings.find((f) => f.ruleId === "hookUnknownEventField")?.target).toEqual({
-        kind: "code",
-        id: "hooks",
-      })
-    })
-
-    it("says nothing about a handler reading the real field", () => {
-      expect(fields(hook("on('reply_ready', (e) => { narrate(e.reply.toUpperCase()) })"))).toEqual([])
-      expect(
-        fields(hook("on('turn_start', function (event) { inject(event.user_message + event.actor) })")),
-      ).toEqual([])
-      expect(fields(hook("on('dice_rolled', e => { log(e.rolls.length) })"))).toEqual([])
-      expect(fields(hook("on('variables_changed', (e) => e.writes.forEach(w => log(w.path))))"))).toEqual([])
-    })
-
-    it("attributes a bad read to the handler it is in, not the file", () => {
-      const findings = hook(
-        "on('reply_ready', (e) => { log(e.reply) })\n" + "on('turn_start', (e) => { log(e.reply) })",
-      )
-      // Only the second is wrong: `turn_start` carries no `reply`.
-      expect(fields(findings)).toEqual(["reply"])
-      expect(findings.find((f) => f.ruleId === "hookUnknownEventField")?.params.event).toBe("turn_start")
-    })
-
-    it("reports each bad field once, however often it is read", () => {
-      expect(fields(hook("on('reply_ready', (e) => { log(e.text); log(e.text); log(e.text) })"))).toEqual([
-        "text",
-      ])
-    })
-
-    it("stays quiet on an event whose payload it has not verified", () => {
-      // The table is read off `core/hooks.py` and the `fire()` sites. An event
-      // missing from it gets no coverage rather than a guessed finding — and
-      // the specimen has to be an event the engine really does not fire, or
-      // this test would be asserting the table is incomplete.
-      expect(fields(hook("on('no_such_event', (e) => { log(e.whatever) })"))).toEqual([])
-    })
-
-    it("covers tool_use, where a wrong key silently permits every tool", () => {
-      // `agent/loop.py:974` fires `{tool, arguments}` and DENIES the call on
-      // the handler's say-so. A guard reading the wrong key does not misfire;
-      // it never fires, and the gate permits everything while looking armed.
-      expect(fields(hook("on('tool_use', (e) => { if (e.name === 'roll') deny('no') })"))).toEqual(["name"])
-      expect(fields(hook("on('tool_use', (e) => { log(e.tool, e.arguments) })"))).toEqual([])
-    })
-
-    it("reads code, not prose about code", () => {
-      // A comment naming the wrong key is the author already knowing; a string
-      // holding one is data. Flagging either would be arguing with them.
-      expect(
-        fields(hook("on('reply_ready', (e) => {\n  // e.text was the old key\n  log(e.reply)\n})")),
-      ).toEqual([])
-      expect(fields(hook("on('reply_ready', (e) => { log('e.text', e.reply) })"))).toEqual([])
-      expect(fields(hook("on('reply_ready', (e) => { /* e.text */ log(e.reply) })"))).toEqual([])
-    })
-
-    it("does not mistake a method call for a payload field", () => {
-      // `toString` is on every object; it was never a field the engine owed.
-      expect(fields(hook("on('reply_ready', (e) => { log(e.toString()) })"))).toEqual([])
-      expect(fields(hook("on('reply_ready', (e) => { log(e.reply.trim()) })"))).toEqual([])
-    })
-
-    it("reads an async handler like any other", () => {
-      expect(fields(hook("on('reply_ready', async (e) => { await log(e.text) })"))).toEqual(["text"])
-    })
-
-    it("ignores a handler that never names its event", () => {
-      expect(fields(hook("on('reply_ready', () => { incvar('好感度', 1) })"))).toEqual([])
-    })
+  it("says nothing when the pack declares no variables at all", () => {
+    // Nothing to compare against; every id would be "unknown" and the panel
+    // would be pure noise.
+    const findings = lintPack(
+      source({ lore: [{ ...LORE, content: "{{getvar::dread}}", condition: "panic > 1" }] }),
+    )
+    expect(ruleIds(findings)).not.toContain("codeUnknownVariable")
   })
 })
 
@@ -360,7 +357,7 @@ describe("pack metadata and assets", () => {
       source({
         shippedFiles: ["ui/handouts/page.png"],
         panelsYaml:
-          "panels:\n  - id: board\n    blocks:\n      - {kind: image, src: ui/handouts/page.png}\n      - {kind: image, src: assets/missing.png}\n",
+          "panels:\n  - id: board\n    slot: modal\n    blocks:\n      - {kind: image, src: ui/handouts/page.png}\n      - {kind: image, src: assets/missing.png}\n",
       }),
     )
     const missing = findings.filter((f) => f.ruleId === "assetMissing")
@@ -371,7 +368,8 @@ describe("pack metadata and assets", () => {
   it("says nothing about assets when there is no file list to check against", () => {
     const findings = lintPack(
       source({
-        panelsYaml: "panels:\n  - id: board\n    blocks:\n      - {kind: image, src: assets/x.png}\n",
+        panelsYaml:
+          "panels:\n  - id: board\n    slot: modal\n    blocks:\n      - {kind: image, src: assets/x.png}\n",
       }),
     )
     expect(ruleIds(findings)).not.toContain("assetMissing")
@@ -398,7 +396,8 @@ describe("lintSummary", () => {
         variables: [FEAR, TRUTH],
         lore: [{ ...LORE, content: "The {{var:fear}} rises; {{var:truth}} waits." }],
         panelsYaml:
-          "panels:\n  - id: hud\n    audience: player\n    title: {en: HUD, zh: 状态板}\n    blocks:\n      - {kind: meter, label: {en: Fear, zh: 恐惧}, value: {$var: fear}}\n",
+          "panels:\n  - id: hud\n    audience: player\n    title: {en: HUD, zh: 状态板}\n    slot: sidebar\n    views: {vars: variables}\n    blocks:\n" +
+          FEAR_METER,
       }),
     )
     expect(findings).toEqual([])

@@ -1,0 +1,132 @@
+{
+  "ok": true,
+  "out": "/out/corridor-apartment-1.0.0.lwpack",
+  "sha256": "f8e1fed03f3400b1e3b604f0a38c14d2afd8bd78dddcf544677b8f4ede96d783",
+  "bytes": 8231,
+  "trust": {
+    "id": "corridor-apartment",
+    "version": "1.0.0",
+    "name": {
+      "en": "Corridor Apartment",
+      "zh": "回廊公寓"
+    },
+    "description": {
+      "en": "An apartment that grows a fifth floor on rainy nights.",
+      "zh": "一栋只在雨夜出现第五层的公寓。"
+    },
+    "authors": ["Loreweaver Studio"],
+    "license": "CC-BY-4.0",
+    "engine": {
+      "protocol": "3.0",
+      "server": null
+    },
+    "runsCode": true,
+    "modules": [
+      {
+        "id": "corridor",
+        "entry": "modules/corridor.js",
+        "bytes": 797,
+        "sha256": "856d027e92113c6f03296c6286a6c463fc2a9d9b1fedc867f27f13299a5dd83e"
+      }
+    ],
+    "ruleSystems": [
+      {
+        "id": "corridor-rules",
+        "extends": "coc7"
+      }
+    ],
+    "skills": [
+      {
+        "id": "corridor-procedures",
+        "name": "Corridor Procedures",
+        "tools": [],
+        "mature": false
+      }
+    ],
+    "cards": [
+      {
+        "path": "cards/corridor-apartment.lorecard.json",
+        "kind": "world",
+        "name": "回廊公寓",
+        "machinery": {
+          "variableDeclarations": 0,
+          "templates": 0,
+          "secretEntries": 1,
+          "moduleVariables": 2,
+          "hooks": 0
+        }
+      },
+      {
+        "path": "cards/lin-wan.st.json",
+        "kind": "character",
+        "name": "林晚",
+        "machinery": {
+          "variableDeclarations": 0,
+          "templates": 0,
+          "secretEntries": 0,
+          "moduleVariables": 0,
+          "hooks": 0
+        }
+      },
+      {
+        "path": "cards/administrator.st.json",
+        "kind": "world",
+        "name": "管理员",
+        "machinery": {
+          "variableDeclarations": 1,
+          "templates": 1,
+          "secretEntries": 0,
+          "moduleVariables": 0,
+          "hooks": 1
+        }
+      },
+      {
+        "path": "cards/lin-wan.png",
+        "kind": "character",
+        "name": "林晚",
+        "machinery": {
+          "variableDeclarations": 0,
+          "templates": 0,
+          "secretEntries": 0,
+          "moduleVariables": 0,
+          "hooks": 0
+        }
+      }
+    ],
+    "panels": [
+      {
+        "id": "handouts",
+        "kind": "template",
+        "audience": "all",
+        "views": ["me", "corridor/tide", "variables"],
+        "page": null
+      },
+      {
+        "id": "case-board",
+        "kind": "page",
+        "audience": "admin",
+        "views": ["corridor/tide"],
+        "page": {
+          "path": "ui/case-board/index.html",
+          "bytes": 273,
+          "sha256": "37c9bcf7a50f390352b849bbf6ac5c27b51edc984098c1afe0bdf4f955508ca4"
+        }
+      }
+    ],
+    "presentation": {
+      "subjects": 1,
+      "cues": 1,
+      "generation": "allow"
+    },
+    "assets": {
+      "count": 4,
+      "bytes": 637
+    },
+    "files": {
+      "count": 15,
+      "bytes": 14483
+    },
+    "ignored": []
+  },
+  "ignored": []
+}

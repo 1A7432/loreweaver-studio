@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { newLoreEntry, newPregen, newProject, newVariable } from "../features/studio/model"
+import { newLoreEntry, newProject, newVariable } from "../features/studio/model"
 import { usePackStore } from "./pack"
 import { useStudioStore } from "./studio"
 import { currentUndo, UNDO_WINDOW_MS, useUndoStore } from "./undo"
@@ -72,32 +72,27 @@ describe("forge deletes are undoable", () => {
     expect(useStudioStore.getState().activeUid).toBe(b.uid)
   })
 
-  it("restores a variable, a lore entry and a pregen in place", () => {
+  it("restores a variable and a lore entry in place", () => {
     const project = newProject("P")
     const [v1, v2] = [newVariable(), newVariable()]
     v1.id = "fear"
     v2.id = "truth"
     project.variables = [v1, v2]
     project.lorebook = [{ ...newLoreEntry(), title: "Rain" }]
-    project.pregens = [{ ...newPregen(), name: "Hana" }]
     useStudioStore.setState({ projects: [project], activeUid: project.uid })
 
     useStudioStore.getState().removeVariable(v1.uid)
     useStudioStore.getState().removeLoreEntry(project.lorebook[0].uid)
-    useStudioStore.getState().removePregen(project.pregens[0].uid)
     const stripped = useStudioStore.getState().projects[0]
     expect(stripped.variables.map((v) => v.id)).toEqual(["truth"])
     expect(stripped.lorebook).toHaveLength(0)
-    expect(stripped.pregens).toHaveLength(0)
 
-    useUndoStore.getState().undo()
     useUndoStore.getState().undo()
     useUndoStore.getState().undo()
     const restored = useStudioStore.getState().projects[0]
     // Original ORDER, not appended at the end.
     expect(restored.variables.map((v) => v.id)).toEqual(["fear", "truth"])
     expect(restored.lorebook[0].title).toBe("Rain")
-    expect(restored.pregens[0].name).toBe("Hana")
   })
 
   it("writes the undo back into the project it came from, not the active one", () => {
@@ -155,6 +150,19 @@ describe("pack deletes are undoable", () => {
     expect(usePackStore.getState().presentation!.audio[0].id).toBe("rain")
   })
 
+  it("restores a removed module at its original index", () => {
+    usePackStore.getState().addModule()
+    usePackStore.getState().addModule()
+    usePackStore.getState().addModule()
+    const modules = usePackStore.getState().modules
+    expect(modules.map((m) => m.id)).toEqual(["main", "module_2", "module_3"])
+    usePackStore.getState().removeModule(modules[1].uid)
+    expect(usePackStore.getState().modules.map((m) => m.id)).toEqual(["main", "module_3"])
+
+    useUndoStore.getState().undo()
+    expect(usePackStore.getState().modules.map((m) => m.id)).toEqual(["main", "module_2", "module_3"])
+  })
+
   it("restores a removed panel file", () => {
     usePackStore.getState().setPanelsYaml("panels: []")
     usePackStore.getState().addPanelFiles([file("view.html", "<p>a</p>"), file("aux.css", "b{}")], "board")
@@ -166,5 +174,49 @@ describe("pack deletes are undoable", () => {
       "ui/board/view.html",
       "ui/board/aux.css",
     ])
+  })
+})
+
+describe("the stored studio projects migrate to 3.0", () => {
+  // Version 1 of the persisted studio store: hook scripts and the pregenerated
+  // cast left the project, and a project saved before that sheds both on load.
+  const migrate = (stored: unknown, version = 0) =>
+    useStudioStore.persist.getOptions().migrate?.(stored, version) as {
+      projects: Record<string, unknown>[]
+      activeUid: string | null
+    }
+
+  it("is version 1", () => {
+    expect(useStudioStore.persist.getOptions().version).toBe(1)
+  })
+
+  it("drops `hooks` and `pregens` and keeps everything else", () => {
+    const project = newProject("白鹭")
+    project.description = "东京，2029。"
+    project.variables = [{ ...newVariable(), id: "fear" }]
+    project.lorebook = [{ ...newLoreEntry(), title: "Rain" }]
+    const stored = {
+      projects: [
+        {
+          ...project,
+          hooks: "on('turn_start', () => {})",
+          pregens: [{ uid: "p1", name: "林晚", concept: "", notes: "", skillsText: "侦查 60" }],
+        },
+      ],
+      activeUid: project.uid,
+    }
+
+    const migrated = migrate(stored)
+    expect(migrated.activeUid).toBe(project.uid)
+    expect(migrated.projects).toHaveLength(1)
+    const [back] = migrated.projects
+    expect(back).not.toHaveProperty("hooks")
+    expect(back).not.toHaveProperty("pregens")
+    expect(back).toEqual(project)
+  })
+
+  it("survives an empty or malformed store", () => {
+    expect(migrate(undefined)).toEqual({ projects: [], activeUid: null })
+    expect(migrate({ projects: "nope", activeUid: 7 })).toEqual({ projects: [], activeUid: null })
   })
 })

@@ -22,13 +22,14 @@ vi.mock("../../../lib/native", async (importOriginal) => {
  * store change exactly like the wizard does. */
 function Harness() {
   const state = usePackStore()
-  const issues = packValidationIssues(
-    state.items,
-    state.metadata,
-    state.panels,
-    state.manualSkills,
-    state.presentation,
-  ).filter((issue) => issue.key.startsWith("packPresentation") || issue.params?.from === "presentation")
+  const issues = packValidationIssues({
+    items: state.items,
+    metadata: state.metadata,
+    panels: state.panels,
+    manualSkills: state.manualSkills,
+    modules: state.modules,
+    presentation: state.presentation,
+  }).filter((issue) => issue.key.startsWith("packPresentation") || issue.params?.from === "presentation")
   return <PresentationStage issues={issues} />
 }
 

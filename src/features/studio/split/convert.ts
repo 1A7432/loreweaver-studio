@@ -111,6 +111,5 @@ export function splitToProject(
   project.tags = character.tags.join(", ")
   project.lorebook = character.characterBook.map(stEntryToForgeLore)
   project.variables = drafts.filter((draft) => draft.include).map((draft) => draft.variable)
-  project.hooks = split.hooks.join("\n\n")
   return project
 }

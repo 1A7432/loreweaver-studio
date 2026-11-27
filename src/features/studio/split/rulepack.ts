@@ -64,9 +64,9 @@ export interface RulepackReading {
     commands: number
     hasResolution: boolean
     hasSheet: boolean
-    /** Rules-script file names this YAML declares — `core/pack.py`'s
-     * `_rulepack_script_files`, same two places, same bare-name rule. Each one
-     * must ship beside the YAML or the pack does not build. */
+    /** Rules-script names this YAML declares (`resolution.script`,
+     * `subsystems.*.script`). The rules-script lane is not part of 3.0: a rule
+     * pack that declares one is refused at build. */
     scripts: string[]
   }
 }
@@ -82,8 +82,7 @@ const EMPTY_SUMMARY: RulepackReading["summary"] = {
   scripts: [],
 }
 
-/** `core/pack.py::_rulepack_script_files` — the two places a rulepack may name
- * a rules script, and the bare-name rule both are held to. */
+/** The two places a rule pack may name a rules script. 3.0 refuses either. */
 function declaredScripts(data: Record<string, unknown>): { names: string[]; bad: string[] } {
   const raw: string[] = []
   if (isRecord(data.resolution) && typeof data.resolution.script === "string") {
@@ -220,9 +219,11 @@ export function readRulepack(yamlText: string): RulepackReading {
     }
   }
 
+  // The rules-script lane is not part of 3.0 (`docs/lwf/formats/pack.md` §4): the
+  // engine refuses a rule pack that declares a script, so this is not advisory.
   const scripts = declaredScripts(data)
-  for (const name of scripts.bad) {
-    issues.push({ key: "rulepackScriptBareName", params: { file: name } })
+  for (const name of [...scripts.names, ...scripts.bad]) {
+    issues.push({ key: "rulepackScriptRefused", params: { file: name || "?" } })
   }
 
   // A pack that is neither a patch nor a system says nothing to the engine.

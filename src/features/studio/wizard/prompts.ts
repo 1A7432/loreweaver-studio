@@ -84,7 +84,7 @@ initvar_yaml = a YAML block mapping of initial state, grouped under the characte
 scalar leaves may use the two-element form [value, "description with range like [0,100]"] —
 descriptions with ranges/options become typed bounds. Track only state the STORY reads back
 (meters, stages, flags); no bookkeeping for its own sake. update_rules = plain-language rules,
-one per line, for when and how each variable moves (the engine turns them into hooks later).`,
+one per line, for when and how each variable moves (they ride the card as guidance for the Keeper).`,
 }
 
 const STAGE_SHOTS: Partial<Record<StageId, string>> = {

@@ -1,39 +1,32 @@
-// Reading `ui/panels.yaml` for the lint: which panels exist, who sees them,
-// and which variables and assets each one reaches for.
+// Reading `ui/panels.yaml` (panels 3.0) for the lint: which panels exist, who sees them, and
+// which of the pack's variables, pictures and labels each one reaches for.
 //
-// Mirror of the engine's `core/panels.py` (the schema authority) and the
-// portable condition grammar in `@loreweaver/protocol`'s `condexpr.ts` /
-// `core/condexpr.py`:
-//   - any scalar field may be `{$var: "<id>"}` — substituted client-side from
-//     that viewer's own `state.variables`; a binding that does not resolve
-//     DROPS the block;
-//   - `{repeat: {prefix, block}}` renders one instance per VISIBLE variable
-//     whose id starts with `prefix`, with `{$leaf: id|label|value}` inside;
-//   - a block may carry `visible_when: "<condition>"`, evaluated client-side
-//     over the same filtered variables — undecidable means hidden;
-//   - `audience` is `all` | `player` | `keeper`, resolved server-side;
-//   - an `image` / `map_pin` block names its picture by pack-relative `src`;
-//   - a localized string is an `{en, zh}` map, or a plain string read as `en`.
-// The lint needs the references, not the values, so this is a reader — never
-// an evaluator, and never a second validator (the engine build owns that).
+// In 3.0 a panel reads VIEWS (`docs/lwf/formats/panels.md` in the engine repository). The
+// pack's own variables reach a panel through the `variables` view: a panel that declares
+// `views: {vars: variables}` reads `vars.module.<id>.value` (a declared variable) or walks
+// `vars.tree` with a `repeat` (the variable tree, filtered by a key `prefix`). A variable
+// hidden from players is simply absent from a player's view, so a binding to it renders
+// nothing for them — the trap the lint warns about.
+//
+// A reader, never an evaluator and never a second validator: the checks are `panelsCheck.ts`
+// and the engine's build. What this adds is what builds fine and then does nothing — and the
+// panels 1.x fields an old draft still carries, which the migration left for the author.
 
 import { parse as parseYaml } from "yaml"
+import { conditionReferences } from "../pack/panelsCheck"
 
-export type PanelAudience = "all" | "player" | "keeper"
+export type PanelAudience = "all" | "player" | "admin"
 
-/** Where a variable was named. The two sites differ in what going wrong means:
- * a dead binding drops the block, a dead condition hides it. */
+/** Where a variable was named: a dead binding drops the block, a dead condition hides it. */
 export type PanelVarSite = "binding" | "visibleWhen"
 
 export interface PanelVarRef {
-  /** The path as written; `mvu.内部.真凶` keeps its dots. */
+  /** The variable's id (`vars.module.<id>`). */
   path: string
   site: PanelVarSite
 }
 
-/** A localized field, flattened. `zh: ""` with a non-empty `en` is the gap the
- * bilingual rule is looking for — including the plain-string shorthand, which
- * IS an en-only label. */
+/** A localized field, flattened. `zh: ""` with a non-empty `en` is a bilingual gap. */
 export interface PanelLabel {
   field: string
   en: string
@@ -44,16 +37,16 @@ export interface LintPanel {
   id: string
   audience: PanelAudience
   vars: PanelVarRef[]
-  /** Variable-id prefixes a `repeat` block iterates over. */
+  /** Key prefixes a `repeat` over the variable tree keeps. */
   repeatPrefixes: string[]
-  /** Pack-relative `src` paths of picture-bearing blocks. */
+  /** Pack paths of picture-bearing blocks. */
   images: string[]
   labels: PanelLabel[]
+  /** Panels 1.x fields still present (`$var`, `$leaf`, a choice's `input`, a page's
+   * `assets`, `audience: keeper`): the engine refuses each (`replaced_2x`). */
+  legacy: string[]
 }
 
-/** Fields whose string value a human reads, so a plain (en-only) string in one
- * is a missing zh rather than a slug. Mirrors the localized fields in
- * `core/panels.py` / `core/hooks.py`. */
 const LOCALIZED_FIELDS = new Set([
   "label",
   "title",
@@ -68,52 +61,45 @@ const LOCALIZED_FIELDS = new Set([
   "source",
   "from",
   "to",
+  "prompt",
 ])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Mirror of `condexpr.ts`'s tokenizer: an identifier starts with a letter
- * (CJK included) or `_` and continues with letters/digits/`_`; `.` joins them
- * into a dotted path. Keywords are literals, not references.
- *
- * This SCANS rather than parses because the lint wants every name in the
- * expression, including the ones a real evaluation would short-circuit past. */
-const IDENT_PATH_RE = /[\p{L}_][\p{L}\p{N}_]*(?:\.[\p{L}_][\p{L}\p{N}_]*)*/gu
-const CONDITION_KEYWORDS = new Set(["true", "false", "null", "undefined", "none", "and", "or", "not"])
-
-export function conditionVarPaths(condition: string): string[] {
-  // Strings are literals; a quoted value must never read as a reference.
-  const withoutStrings = condition.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, " ")
-  const paths: string[] = []
-  for (const match of withoutStrings.matchAll(IDENT_PATH_RE)) {
-    const path = match[0]
-    if (CONDITION_KEYWORDS.has(path.toLowerCase())) continue
-    if (!paths.includes(path)) paths.push(path)
-  }
-  return paths
+/** The variable a path reads through a `variables` view handle, or null. */
+function variableOf(path: string, handles: ReadonlySet<string>): string | null {
+  const [head, section, id] = path.split(".")
+  return handles.has(head) && section === "module" && id ? id : null
 }
 
-function walk(node: unknown, panel: LintPanel, field: string): void {
+/** Every reference a condition names (string literals skipped). */
+export function conditionVarPaths(condition: string): string[] {
+  return conditionReferences(condition)
+}
+
+function walk(node: unknown, panel: LintPanel, field: string, handles: ReadonlySet<string>): void {
   if (typeof node === "string") {
     if (LOCALIZED_FIELDS.has(field) && node.trim()) panel.labels.push({ field, en: node, zh: "" })
     return
   }
   if (Array.isArray(node)) {
-    for (const item of node) walk(item, panel, field)
+    for (const item of node) walk(item, panel, field, handles)
     return
   }
   if (!isRecord(node)) return
 
   const keys = Object.keys(node)
-  if (keys.length === 1 && typeof node.$var === "string") {
-    panel.vars.push({ path: node.$var, site: "binding" })
+  if (keys.length === 1 && typeof node.$view === "string") {
+    const id = variableOf(node.$view, handles)
+    if (id !== null) panel.vars.push({ path: id, site: "binding" })
     return
   }
-  // `{$leaf: …}` names a field of the repeat's current variable, never a
-  // variable of its own — nothing to check.
-  if (keys.length === 1 && node.$leaf !== undefined) return
+  for (const legacy of ["$var", "$leaf", "input"]) {
+    if (legacy in node && !panel.legacy.includes(legacy)) panel.legacy.push(legacy)
+  }
+  if ("$var" in node || "$leaf" in node) return
 
   if (keys.length > 0 && keys.every((key) => key === "en" || key === "zh")) {
     panel.labels.push({
@@ -125,24 +111,26 @@ function walk(node: unknown, panel: LintPanel, field: string): void {
   }
 
   if (typeof node.visible_when === "string") {
-    for (const path of conditionVarPaths(node.visible_when)) {
-      panel.vars.push({ path, site: "visibleWhen" })
+    for (const reference of conditionReferences(node.visible_when)) {
+      const id = variableOf(reference, handles)
+      if (id !== null) panel.vars.push({ path: id, site: "visibleWhen" })
     }
   }
   if (typeof node.src === "string") panel.images.push(node.src)
   if (isRecord(node.repeat) && typeof node.repeat.prefix === "string") {
-    panel.repeatPrefixes.push(node.repeat.prefix)
+    const each = typeof node.repeat.each === "string" ? node.repeat.each : ""
+    const [head, section] = each.split(".")
+    if (handles.has(head) && section === "tree") panel.repeatPrefixes.push(node.repeat.prefix)
   }
 
   for (const [key, value] of Object.entries(node)) {
     if (key === "visible_when" || key === "src") continue
-    walk(value, panel, key)
+    walk(value, panel, key, handles)
   }
 }
 
-/** Read every panel out of `ui/panels.yaml`. Unparseable YAML yields an empty
- * list: a broken panels file is the engine build's report to make, and a lint
- * that shouts about syntax the author is mid-typing is a lint they turn off. */
+/** Read every panel out of `ui/panels.yaml`. Unparseable YAML yields an empty list: a broken
+ * panels file is the checks' report to make. */
 export function readPanels(yamlText: string): LintPanel[] {
   let parsed: unknown
   try {
@@ -155,23 +143,28 @@ export function readPanels(yamlText: string): LintPanel[] {
   const panels: LintPanel[] = []
   for (const [index, raw] of root.entries()) {
     if (!isRecord(raw)) continue
+    const views = isRecord(raw.views) ? raw.views : {}
+    const handles = new Set(
+      Object.entries(views)
+        .filter(([, view]) => view === "variables")
+        .map(([handle]) => handle),
+    )
     const audience = raw.audience
     const panel: LintPanel = {
       id: typeof raw.id === "string" && raw.id.trim() ? raw.id : `#${index + 1}`,
-      audience: audience === "player" || audience === "keeper" ? audience : "all",
+      audience:
+        audience === "player" || audience === "admin" ? audience : audience === "keeper" ? "admin" : "all",
       vars: [],
       repeatPrefixes: [],
       images: [],
       labels: [],
+      legacy: [],
     }
-    if (typeof raw.visible_when === "string") {
-      for (const path of conditionVarPaths(raw.visible_when)) {
-        panel.vars.push({ path, site: "visibleWhen" })
-      }
-    }
+    if (audience === "keeper") panel.legacy.push("audience: keeper")
+    if ("assets" in raw) panel.legacy.push("assets")
     for (const [key, value] of Object.entries(raw)) {
-      if (key === "id" || key === "audience" || key === "slot" || key === "visible_when") continue
-      walk(value, panel, key)
+      if (["id", "audience", "slot", "views", "entry", "assets"].includes(key)) continue
+      walk(value, panel, key, handles)
     }
     panels.push(panel)
   }

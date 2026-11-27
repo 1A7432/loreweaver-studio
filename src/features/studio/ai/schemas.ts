@@ -146,7 +146,6 @@ export function draftToProject(raw: unknown): DraftResult {
   project.mesExample = asText(raw.mes_example)
   project.creatorNotes = asText(raw.creator_notes)
   project.tags = listOfStrings(raw.tags).join(", ")
-  project.hooks = asText(raw.hooks)
 
   const variables = Array.isArray(raw.variables) ? raw.variables : []
   project.variables = variables.map((entry, index) => draftVariable(entry, index, problems))

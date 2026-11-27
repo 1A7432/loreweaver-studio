@@ -15,19 +15,6 @@ Field rules (validated by code, retried on failure):
   secret, constant, priority, probability, position}. keys: trigger keyword array.
   selective_logic: and_any|and_all|not_any|not_all. condition: an expression over variable ids
   (e.g. "suspicion >= 5"), or "". secret: keeper-only lore. position: ""|"before"|"after".
-- "hooks": one JavaScript source string or "". Sandboxed room hooks. APIs: inject(text),
-  narrate(text), rewriteReply(text), emitUI(blocks), getvar/setvar/incvar, variables, _.
-  All six events, with their payloads exactly (a wrong key reads undefined at run time
-  and fails silently — the handler simply never does anything):
-  turn_start {user_message, actor} · reply_ready {reply} · dice_rolled {rolls:[{tool,result}]}
-  · variables_changed {writes:[{path, op}]}, op one of set|insert|delete|add|move
-  · clock_advanced {from, to, delta} · tool_use {tool, arguments}.
-  A write names WHAT changed and HOW, never the new value, and there is no reliable way
-  to read that value from inside the handler: the sandbox snapshot is taken once per turn,
-  so getvar sees the turn-START value plus your own earlier setvar writes (unclamped — the
-  engine validates on the way out, so getvar can differ from what is stored). Engine and
-  MVU writes made mid-turn are not visible, and delete/move have no new value at all.
-  Write hooks that act on the CHANGE, not on a value read back after it.
 - Top-level prose fields: name, description, personality, scenario, first_mes, mes_example,
   creator_notes, tags (array).
 Write prose in the language the user used; labels always bilingual.`
@@ -38,9 +25,7 @@ Task: draft a WORLD card (a module) from the user's description. Focus on:
 - worldbook entries that establish places, factions, secrets (mark keeper-only truths secret:true),
   with sensible trigger keys and a few condition-gated reveals;
 - typed variables for the module's moving state (tension meters, stage enums, hidden flags as
-  visibility:keeper), with bounds and bilingual labels;
-- a small hooks skeleton ONLY when the module clearly benefits (e.g. a meter surfaced via emitUI
-  on variables_changed); otherwise "".
+  visibility:keeper), with bounds and bilingual labels.
 Character prose fields may stay short — the module, not a persona, is the point.`
 
 export const CHARACTER_CARD_SYSTEM = `${SHARED_RULES}
@@ -50,7 +35,7 @@ Task: draft a CHARACTER card (a persona) from the user's description. Focus on:
 - first_mes: a strong opening scene in their voice; mes_example: 1-2 exchange examples;
 - scenario: where they stand relative to the player;
 - a FEW personal lore entries (memories, relationships) — no module machinery;
-- variables/hooks: usually empty for a persona; add at most 1-2 personal trackers if truly core.`
+- variables: usually empty for a persona; add at most 1-2 personal trackers if truly core.`
 
 export const PACK_METADATA_SYSTEM = `
 You draft .lwpack metadata for Loreweaver Studio. Reply with EXACTLY ONE JSON object:
@@ -60,7 +45,7 @@ You draft .lwpack metadata for Loreweaver Studio. Reply with EXACTLY ONE JSON ob
 - name/description: faithful bilingual metadata for the pack listing (description ≤ 2 sentences);
 - authors: from the card's creator field when present, else [];
 - license: keep the user's stated license, else "" (the wizard asks the author);
-- card_notes: install-time notes shown to the keeper, en and zh. START from the technical notes
+- card_notes: notes shown to the room admin with the card, en and zh. START from the technical notes
   the user message provides (exposure commands, claimable cast), then add one usage sentence.
 The card kind (character/world) is decided by code from structural detection — never output it.`
 

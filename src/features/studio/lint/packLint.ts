@@ -3,52 +3,19 @@
 // Why it exists: the engine CLI already refuses packs that cannot BUILD. What
 // nothing catches is the pack that builds perfectly and then does nothing —
 // a lore entry with no trigger, a variable nobody reads, and above all a panel
-// bound to a keeper-only variable, which renders blank for every player while
-// looking right to the author (who is the keeper). That last one is the trap
+// bound to a variable hidden from players, which renders blank for every player
+// while looking right to the author (who sees it as the room admin). That last one is the trap
 // the exposure model creates, and it is the reason this file exists.
 //
 // Every finding is advisory. Nothing here blocks a build; the engine stays the
 // authority, and the author outranks the lint.
 
-import type { LintCodeBlock, PackLintFinding, PackLintSource } from "./model"
+import type { PackLintFinding, PackLintSource } from "./model"
 import { conditionVarPaths, readPanels, type LintPanel } from "./panels"
-
-/** Hook bodies that are placeholders, shipped as-is.
- *
- * The first is what the wizard emits today when the variables stage produced no
- * usable rule (`wizard/updateRules.ts::NO_RULES_MARKER`); the second is the
- * `// TODO` body every wizard run emitted before that stage learned to compile
- * real `setvar`/`incvar` calls, and packs authored then still carry it. Either
- * way the meaning is the same: this hook does nothing. */
-export const STUB_MARKERS = [
-  "// No update rules were entered, so there is nothing to apply yet.",
-  "// TODO: apply the rules above with setvar/incvar",
-]
-
-/** @deprecated Use {@link STUB_MARKERS}; kept so a single-marker import still
- * resolves to the current one. */
-export const STUB_MARKER = STUB_MARKERS[0]
-
-/** Variable reads/writes in hook code. Mirrors the bridge `docs/plugins.md`
- * documents: `getvar()` / `setvar()` / `incvar()` plus the `variables.<path>`
- * and `stat_data.<path>` objects. */
-const CODE_VAR_CALL_RE = /\b(?:get|set|inc)var\s*\(\s*(['"`])([^'"`]+)\1/g
-const CODE_VAR_PATH_RE = /\b(?:variables|stat_data)\.([\p{L}_][\p{L}\p{N}_]*(?:\.[\p{L}_][\p{L}\p{N}_]*)*)/gu
 
 /** ST + native worldbook macros (`core/ejs_lite.py`: `_MACRO_GETVAR_RE`,
  * `_MACRO_VAR_RE`). */
 const TEXT_MACRO_RE = /\{\{\s*(?:getvar::|var:)\s*([^{}]+?)\s*\}\}/g
-
-function codeVarPaths(source: string): string[] {
-  const paths: string[] = []
-  const push = (path: string) => {
-    const trimmed = path.trim()
-    if (trimmed && !paths.includes(trimmed)) paths.push(trimmed)
-  }
-  for (const match of source.matchAll(CODE_VAR_CALL_RE)) push(match[2])
-  for (const match of source.matchAll(CODE_VAR_PATH_RE)) push(match[1])
-  return paths
-}
 
 function textVarNames(text: string): string[] {
   return [...text.matchAll(TEXT_MACRO_RE)].map((match) => match[1].trim())
@@ -58,8 +25,8 @@ function textVarNames(text: string): string[] {
  *
  * The unused-variable rule is deliberately the loosest check in the file: a
  * variable id spelled anywhere in lore, panels or code counts as a reference,
- * because the ways to name one are open-ended (macros, EJS, conditions, code,
- * prose that a hook parses). Under-reporting is the right failure mode — a
+ * because the ways to name one are open-ended (macros, EJS, conditions, panel
+ * paths, prose). Under-reporting is the right failure mode — a
  * false "this is dead" teaches authors to ignore the lint. */
 function mentionsIdentifier(haystack: string, id: string): boolean {
   if (!id) return false
@@ -103,15 +70,14 @@ function lintVariablesUnused(source: PackLintSource, panels: LintPanel[], findin
   // One haystack of everything a variable could be named in.
   const parts: string[] = [source.panelsYaml ?? ""]
   for (const entry of source.lore) parts.push(entry.title, entry.content, entry.keys, entry.condition)
-  for (const block of source.code) parts.push(block.source)
   const haystack = parts.join("\n")
   const repeatPrefixes = panels.flatMap((panel) => panel.repeatPrefixes).filter(Boolean)
 
   for (const variable of source.variables) {
     if (!variable.id) continue
     if (mentionsIdentifier(haystack, variable.id)) continue
-    // A `repeat` block renders one instance per variable under its prefix, so
-    // those variables are used without ever being spelled out.
+    // A `repeat` over the variable tree renders one instance per leaf under its
+    // prefix, so those variables are used without ever being spelled out.
     if (repeatPrefixes.some((prefix) => variable.id.startsWith(prefix))) continue
     findings.push(
       finding(
@@ -206,9 +172,9 @@ function lintPanelBindings(source: PackLintSource, panels: LintPanel[], findings
     source.variables.filter((variable) => variable.visibility === "keeper").map((v) => v.id),
   )
   for (const panel of panels) {
-    // A keeper panel never reaches a player, so a keeper-only variable in it
-    // is exactly right — the rule is about panels players actually see.
-    const playerFacing = panel.audience !== "keeper"
+    // An admin panel never reaches a player, so a hidden variable in it is
+    // exactly right — the rule is about panels players actually see.
+    const playerFacing = panel.audience !== "admin"
     const seen = new Set<string>()
     for (const ref of panel.vars) {
       const key = `${ref.site}:${ref.path}`
@@ -228,7 +194,7 @@ function lintPanelBindings(source: PackLintSource, panels: LintPanel[], findings
       }
       const root = declared.has(ref.path) ? ref.path : ref.path.split(".")[0]
       if (!playerFacing || !keeperOnly.has(root)) continue
-      // Hidden variables are dropped before the client ever sees them, so a
+      // A hidden variable is absent from every player's `variables` view, so a
       // binding renders nothing and a condition never decides true — either
       // way the block silently vanishes for every player. And a condition
       // leaks the variable's NAME on top: the string ships with the pack.
@@ -245,139 +211,20 @@ function lintPanelBindings(source: PackLintSource, panels: LintPanel[], findings
   }
 }
 
-/** What each hook event's payload actually carries — all six of them.
- *
- * `core/hooks.py:9-13` declares five and the `fire()` calls in `agent/loop.py`
- * pass exactly these dicts; `tool_use` fires from `agent/loop.py:974` with
- * `{tool, arguments}`. All read, none inferred. An event NOT listed here is
- * never checked, so an engine that grows one cannot produce a false finding
- * here; it just gets no coverage until this table catches up. */
-const EVENT_PAYLOAD_KEYS: Record<string, readonly string[]> = {
-  turn_start: ["user_message", "actor"],
-  reply_ready: ["reply"],
-  dice_rolled: ["rolls"],
-  variables_changed: ["writes"],
-  clock_advanced: ["from", "to", "delta"],
-  // The highest-stakes one: this handler's return DENIES a tool call. A guard
-  // reading the wrong key here does not misfire, it never fires — and the
-  // author sees a permission gate that silently permits everything.
-  tool_use: ["tool", "arguments"],
-}
-
-/** `on('<event>', <handler>)` with the handler's own parameter name. Covers the
- * shapes hooks are written in: `(e) => …`, `e => …`, `async (e) => …`,
- * `function (e) {…}`. A handler that takes no parameter reads nothing off the
- * event and is skipped. */
-const ON_HANDLER_RE =
-  /\bon\s*\(\s*(['"`])([a-z_]+)\1\s*,\s*(?:async\s*)?(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*(?:=>|\{)/g
-
-/** Blank a span while keeping its length, so every offset downstream still
- * lines up with the original source. */
-function blank(match: string): string {
-  return match.replace(/[^\n]/g, " ")
-}
-
-/** Comments removed. Applied before anything else is looked for: a comment
- * naming the wrong key ("// e.text is the wrong one") is the author already
- * knowing, and a rule that flagged it would be arguing with them. */
-function withoutComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, blank)
-}
-
-/** String literals removed too. Only for the field-read scan — the handler
- * scan needs the event name, which IS a string literal. */
-function withoutStrings(source: string): string {
-  return source.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, blank)
-}
-
-/** Reads of `<param>.<key>` — the only way a handler can touch its payload.
- * A member CALL is not a payload read: `event.toString()` is a method on every
- * object, not a field the engine was supposed to deliver. */
-function eventFieldReads(segment: string, param: string): string[] {
-  const re = new RegExp(`\\b${param}\\s*\\.\\s*([A-Za-z_$][\\w$]*)\\s*(\\()?`, "g")
-  return [...segment.matchAll(re)].filter((match) => match[2] === undefined).map((match) => match[1])
-}
-
-/** Hook handlers reading a field their event does not deliver.
- *
- * The failure this catches is silence, not an error: JavaScript answers
- * `undefined`, the guard is false forever, and the handler does nothing while
- * looking correct. Nothing else in the toolchain says a word about it — the
- * pack builds, the hook loads, the sandbox runs it, and no variable moves.
- *
- * What it deliberately does NOT resolve, since it is a regex over source and an
- * advisory finding is only worth having if it is nearly always right:
- *   - a nested callback reusing the handler's parameter name (`rolls.forEach(e
- *     => e.tool)`) is read as the handler's own, so a field valid on the inner
- *     object can be reported against the outer one;
- *   - destructured (`({reply}) => …`) and aliased (`const ev = event`) handlers
- *     are not scanned at all — they are silently uncovered, never mis-flagged.
- * Both fail toward saying nothing, except the first, which is why the parameter
- * scope stops at the next `on(` rather than running to the end of the file. */
-function lintHookEventFields(source: PackLintSource, findings: PackLintFinding[]): void {
-  for (const block of source.code) {
-    const code = withoutComments(block.source)
-    for (const match of [...code.matchAll(ON_HANDLER_RE)]) {
-      const known = EVENT_PAYLOAD_KEYS[match[2]]
-      if (known === undefined) continue
-      const param = match[3]
-      // Scope to this handler: everything up to the next `on(` registration, or
-      // the end. Coarse, but a hook file is small and a later handler's reads
-      // would only be attributed to the wrong (still-real) finding.
-      const start = match.index + match[0].length
-      const nextOn = code.slice(start).search(/\bon\s*\(\s*['"`]/)
-      const segment = nextOn < 0 ? code.slice(start) : code.slice(start, start + nextOn)
-
-      const seen = new Set<string>()
-      for (const field of eventFieldReads(withoutStrings(segment), param)) {
-        if (known.includes(field) || seen.has(field)) continue
-        seen.add(field)
-        findings.push(
-          finding(
-            "hookUnknownEventField",
-            "warn",
-            "hookUnknownEventField",
-            { origin: block.origin, event: match[2], field, known: known.join(", ") },
-            { kind: "code", id: block.origin },
-          ),
-        )
-      }
-    }
-  }
-}
-
-function lintCode(source: PackLintSource, findings: PackLintFinding[]): void {
-  const declared = new Set(source.variables.map((variable) => variable.id))
-  for (const block of source.code) {
-    if (STUB_MARKERS.some((marker) => block.source.includes(marker))) {
-      findings.push(
-        finding(
-          "stubMarker",
-          "warn",
-          "stubMarker",
-          { origin: block.origin },
-          {
-            kind: "code",
-            id: block.origin,
-          },
-        ),
-      )
-    }
-    if (declared.size === 0) continue
-    const seen = new Set<string>()
-    for (const path of codeVarPaths(block.source)) {
-      if (seen.has(path) || pathIsDeclared(path, declared)) continue
-      seen.add(path)
-      findings.push(
-        finding(
-          "codeUnknownVariable",
-          "warn",
-          "codeUnknownVariable",
-          { origin: block.origin, id: path },
-          { kind: "code", id: block.origin },
-        ),
-      )
-    }
+/** Panels 1.x fields an old draft still carries: the migration converts what maps
+ * mechanically and leaves the rest for the author, and the engine refuses each one. */
+function lintPanelLegacy(panels: LintPanel[], findings: PackLintFinding[]): void {
+  for (const panel of panels) {
+    if (panel.legacy.length === 0) continue
+    findings.push(
+      finding(
+        "panelLegacy",
+        "warn",
+        "panelLegacy",
+        { panel: panel.id, fields: panel.legacy.join(", ") },
+        { kind: "panel", id: panel.id },
+      ),
+    )
   }
 }
 
@@ -541,8 +388,7 @@ export function lintPack(source: PackLintSource): PackLintFinding[] {
   lintLore(source, findings)
   lintBilingual(source, panels, findings)
   lintPanelBindings(source, panels, findings)
-  lintCode(source, findings)
-  lintHookEventFields(source, findings)
+  lintPanelLegacy(panels, findings)
   lintLoreMacros(source, findings)
   lintPackMetadata(source, findings)
   lintAssets(source, panels, findings)
@@ -560,5 +406,3 @@ export function lintSummary(findings: PackLintFinding[]): { warn: number; info: 
   }
   return { warn, info }
 }
-
-export type { LintCodeBlock }

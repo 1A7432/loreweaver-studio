@@ -1,223 +1,42 @@
-# Upstream asks from the studio's split-era forge
+# Open asks of the engine
 
-Sibling of [PROTOCOL_NOTES.md](PROTOCOL_NOTES.md) (which stays wire-protocol-only): every
-engine/tooling interface the card-split + AI-forge + auto-pack work wanted but did not
-find. Studio-side we did NOT work around any of these with hacks — the features ship
-without them and get better when they land.
+What the authoring studio needs, or tripped over, in the engine's 3.0 command line and formats.
+Every 2.x-era item that used to be here was settled upstream or no longer applies to 3.0; they
+are in git history.
 
-**2026-08-08 re-audit against the landed M14–M19 line** (engine specs
-`docs/specs/M16`–`M19`; audit evidence in git history): items 1–8.5 are fully settled
-— landed upstream AND consumed here during the studio's 2.x catch-up (protocol
-2.1.0, lorecard v1 exporter, pack manifest v2, panels 2.1, presentation kit,
-round-trip gate). They are closed out below in one block. Items 9–11 remain open,
-refreshed with post-consolidation evidence. Two NEW asks (12, 13) came out of the
-catch-up itself.
-
-## Settled (kept for the record; no action left on either side)
-
-1. **Machine-readable `--pack --json`** — consumed: the pack wizard builds through
-   `python -m app --pack --json` and renders the trust card natively from the JSON
-   trust object (phase ③).
-2. **`--version` probe** — landed upstream. The studio's `probe_engine_cli` does not
-   call it yet (candidate display could); that is a studio-side nicety, not an
-   upstream ask.
-3. **`ModuleVariable.hidden?: boolean`** — typed since 1.9.0, still typed at 2.1.0;
-   the local casts are gone (`StatePanel.tsx` reads it directly; the templates
-   filter uses the typed field).
-4. **M14 native-bundle importer** — consumed, and now load-bearing: the studio emits
-   lorecard **format v1** (the frozen M16 shape) and nothing else, and as of the
-   2026-08-08 audit no longer READS v0 either — one format, the same one the
-   engine parses.
-5. **Pregen roster on the wire** — `state.pregens` rides the tier-2 bridge
-   (`PanelStateSnapshot.pregens`); the forge authors the cast as lorecard v1
-   `pregens[]`. Rendering a claim UI in play mode remains a studio-side idea, not an
-   upstream ask.
-6. **Pack-relative `.import`** — engine-side; nothing for the studio to consume.
-7. **`StateVariable` phantom type** — `ModuleVariable` everywhere.
-   8.5. **Native bundles as first-class pack cards — including the residual nuance**:
-   upstream DECIDED typed `variables` specs alone force `kind: world`
-   (`core/pack.py:644-652`, `docs/plugins.md:580`, commit `7036df6`); the studio
-   mirrors it (`countVariableSpecs` folds spec counts into pack-bench detection).
-
-> **2026-08-15 — items 9–12 all landed upstream, mid-overhaul.** The engine lane
-> shipped `96c7228` (`.var set/add`), `fbcd08c` (`contents.presets`), `fd6613a`
-> (presentation kit **v2**) and `884fe51` (world-card prose → keeper module brief)
-> while the 2026-08 studio overhaul series was in flight. Item 12 is
-> **consumed** here already — kit v2 is a hard break (`KIT_VERSION = 2`, v1 files
-> rejected outright), so the studio emits v2 and gained the promised template/palette
-> UI in the same commit; the round-trip gate exercises both. Items 9–11 are landed but
-> not yet consumed studio-side; each notes what remains here.
-
-## Closed on both sides (kept for the record)
-
-9. ~~**Keeper-style prompt presets as pack assets**~~ — **LANDED upstream `fbcd08c`
-   and CONSUMED here (2026-08-15).** `contents.presets` rides the pack source model,
-   the manifest and the tree; the pack bench ships a preset straight from the studio's
-   own library (`presetToStJson` reassembles the imported document losslessly, sampling
-   knobs included, preview overrides excluded); validation mirrors the engine's
-   structural refusals plus the sanitized-id collision that would otherwise overwrite
-   silently in the shared store; the round-trip fixture builds one through the engine's
-   real preset parser. Original ask, kept for context — HALF landed and unchanged by the
-   consolidation: `core/preset.py` parser + `core/preset_store.py` + the keeper
-   `.preset` surface + the bounded v0 style-fold in `agent/prompt_builder.py:360-383`
-   all exist. Still missing: a `contents.presets` pack-asset convention (install →
-   `data_dir/presets/`, and `.preset import` understanding the pack-relative
-   `packId/path` resolver from item 6 — **that half landed too**: `cmd_preset`
-   (`gateway/commands.py:1178`) now resolves a pack-relative ref through
-   `resolve_installed_path` before falling back to a literal server path
-   (`:1212–1215`). The finer marker→section mapping, the last half that was open
-   when this was written, landed the same day too: `core.preset.style_bands`
-   splits a preset four ways (see the 2026-08-15 landings below), so nothing in
-   this item is outstanding.
-
-10. **A world card's PROSE has nowhere to go.** **LANDED upstream `884fe51`** — the
-    prose now seeds a keeper-only module brief at import. Studio-side: nothing is
-    required, but the forge could stop warning authors that world-card prose is inert.
-    Original ask below. Still true post-M17/M18:
-    `import_world_card` (`agent/kp_tools_charcard.py:288-418`) uses prose only for
-    the persona check and the pregen-sheet build; `description` / `personality` /
-    `scenario` / openings seed no document. Lorecard v1 made it no better —
-    `opening` / `alternate_openings` map onto the same `CharacterCard` fields and
-    `Lorecard.alternate_greetings` has no consumer outside tests. The ask stands:
-    seed a module brief from the world card's prose at import (or document the
-    constant-entry rule loudly in `docs/cards.md` + the card-forge templates).
-
-11. ~~**`.var` has no keeper-side write.**~~ **LANDED upstream `96c7228` and CONSUMED
-    here (2026-08-15).** Keeper-gated `.var set` / `.var add`, over `core.modvars`
-    validation. The studio's state panel gained the write control (off by default,
-    routed through the ordinary command path so the permission gate, the spec
-    validation and the state push are the engine's own).
-    Original ask below. It read `list|expose|hide` only when this was written
-    (`cmd_var` is at `gateway/commands.py:2033-2128` today, and its docstring
-    now names set/add); the validated primitives
-    (`core/modvars.set_modvar`/`adjust_modvar`) exist and are called from agent-side
-    code, only the command surface is missing. Narrowed by M15: `panel_intent`
-    already routes panel input through the real command engine, so the ask is now
-    exactly one keeper-gated `.var set <id> <value>` / `.var add <id> <delta>` (or a
-    panel-writable var op) over `core.modvars` validation.
-
-## New asks from the 2.x catch-up
-
-12. ~~**The M19 presentation schema never shipped the spec's template list + palette.**~~
-    **RESOLVED upstream `fd6613a`, consumed here the same day.** The engine extended the
-    kit schema rather than striking the promise, and took the clean break: kit version
-    2, a `templates` allowlist (empty = every shape), `style.palette` (≤8 entries, ≤80
-    chars), and v1 files are rejected — no dual-schema reader. The studio emits v2 only,
-    the kit wizard gained the 模板/配色 UI, `validatePackDraft` mirrors the new caps, and
-    `gen_roundtrip_pack.ts` exercises both fields through the engine's real parser. The
-    original ask, for the record:
-    `docs/specs/M19-stage-director.md` promises the kit carries "allowed template
-    list + palette", but `core/presentation.py` is strict — unknown keys are build
-    errors — and defines only `version` / `generation` / `style.{keywords,banned}` /
-    `subjects` / `audio`. The studio's kit wizard therefore has no 模板配色 UI (style
-    keywords carry palette/medium today). Decide upstream: either extend the kit
-    schema (versioned bump) or strike the promise from the spec; the studio ships
-    whichever lands.
-
-13. ~~**Pack asset MIME was guessed by the build machine's mimetypes db.**~~ **FIXED
-    upstream, same day.** `core/pack.py` had used `mimetypes.guess_type`, which on a
-    stock python returns `audio/x-wav` / `audio/x-flac` / `audio/mp4a-latm` /
-    `audio/x-aac` — none in `AUDIO_MIMES` — so four of the six documented audio
-    formats were unbuildable and the result depended on where you built. The engine
-    now owns an extension→MIME table (`_ASSET_MIME_BY_SUFFIX`), pinned per extension
-    by `tests/core/test_pack_asset_mime.py`. The wizard's audio hint is back to the
-    full documented list.
-
-14. ~~**A player can never learn the room's upload policy.**~~ **LANDED upstream
-    `c925164` (2026-08-15), consumed automatically.** The toggle now BROADCASTS
-    `media_enabled` to the room, and a joining member is greeted with the policy
-    during replay when uploads are OFF (the non-default state; no frame on join
-    means the default: enabled). Same frame, same shape — the studio's existing
-    `media_enabled` ingestion picks both up with zero changes; the refusal-latch
-    stays as a harmless fallback. Original ask below. `media_enabled` is
-    UNICAST to the keeper who toggled it (`net/session.py:661`,
-    `_handle_media_set_enabled` → `member.send_frame`), and `welcome_frame` does not
-    carry the flag. So every other member's client holds `uploadsEnabled: null` for
-    the whole session, no matter how many times the switch is flipped: a player who
-    joined before the toggle never hears about it, and one who joins after has
-    nothing to read it from. The only moment the server states the policy to a
-    player is the `media_disabled` refusal AFTER they picked a file, hashed it and
-    offered it.
-
-    The studio does what it can from this side — the refusal now latches the flag
-    locally and disables the button — but that is a client guessing from an error,
-    and it is wrong for the first upload of every session. The ask is one of:
-    broadcast `media_enabled` to the room on change (it is room state, not a
-    per-member setting), or carry the current value in `welcome`. Either makes the
-    control honest before the first attempt instead of after it.
-
-## Engine-side landings, 2026-08-15 (the overhaul's parallel engine lane)
-
-Every open item above closed upstream today, plus the promised author-DX work. What
-the studio must react to (R) or may now surface (S):
-
-- **Item 9 CLOSED** — `contents.presets` is a real pack kind: ST completion-preset
-  `.json`, validated at build with the engine's preset parser, installed into the
-  shared `data_dir/presets/` store (sanitized filename stem; id collisions fail the
-  build). `.preset import` also resolves pack-relative refs now. (R: pack bench may
-  offer a presets section; trust mirror below.) **Second half also CLOSED same day**:
-  the fold honors preset geometry via a four-band split (`core.preset.style_bands`) —
-  text before any marker → the stable style layer; `worldInfoBefore/After` text
-  brackets the world-lore section; post-`chatHistory` text lands late in the per-turn
-  state message (faithful post-history, owner-decided; the other five ST anchors only
-  advance the split — no fake 8-way mapping). Marker-less presets fold exactly as
-  before. (S: the preset manager could preview which band each block lands in.)
-- **Item 10 CLOSED** — `.import … world` seeds a keeper-only `module_brief` document
-  from the card's prose (description/scenario/openings…), read back via the new
-  keeper-only `module_brief` tool. No studio action.
-- **Item 11 CLOSED** — `.var set <id> <value>` / `.var add <id> <delta>` exist,
-  keeper-gated, over `core.modvars` validation, with a state push on change. (S: a
-  keeper panel could offer tracker writes through the command path.)
-- **Item 12 CLOSED — BREAKING** — presentation kit **schema v2** (owner: no
-  backcompat; v1 files are REJECTED). New: `templates:` allowlist over
-  `image/title_card/letter/clipping/text` (intersection across packs) and
-  `style.palette:` (≤8 strings ≤80 chars, union across packs, rides every imagegen
-  prompt). (R: bump `buildPresentationYaml`/`validatePresentationDraft` and the
-  round-trip fixture to `version: 2`; S: the kit wizard's 模板配色 UI is now real —
-  mirror `core/presentation.py`.)
-- **Trust card grew two fields** — `presets: int` and `prep_scripts: int` (R: extend
-  the `PackTrust` mirror in `buildResult.ts` and the trust display; both also ride
-  `--pack --json`).
-- **Prep scripts are shippable + documented** — `contents.prep` (`.js`, ≤20 000
-  chars, statically checked at build), invoked by reference via
-  `run_prep_plan(script_ref="<packId>/prep/x.js")` with free preview; author docs at
-  `docs/plugins.md` §C.3. (S: unblocks the OVERHAUL Batch 3.2 editor — the feature
-  flag can turn on.)
-- **Dev rooms LANDED** — keeper `.dev mount <src-dir>` live-reloads a pack source
-  tree into a room (lore replaces by provenance, values survive, skills/rulepacks/
-  panels reload; watcher polls saves). Confined under `TRPG_DEV__SOURCE_ROOT`, off
-  unless set. (S: the OVERHAUL §3a "mount source dir" mode is now real — host-local
-  can set the env var when spawning and `.dev mount` instead of install+import;
-  `docs/authoring.md` §8 has the flow.)
-- **Worldbook provenance** — `import_entries` now stamps each lore document's
-  `meta.source`; a re-import surface can replace exactly what a file wrote last
-  time. `{{random}}/{{pick}}` turn-seeding is documented for authors
-  (`docs/cards.md`).
-
-## Engine landings, 2026-08-15 evening (k3 pipeline playtest dispositions)
-
-- **(R) Empty-final discard is now a stated client obligation** — docs/protocol.md:
-  a closing `narrative` whose text is empty DISCARDS its draft (abandoned tool
-  round / dead turn) and must be removed, never rendered. The k3 run observed
-  empty kp bubbles on the player wire; verify NarrativeLog complies (drop empty
-  finals, matched-draft or not).
-
-## Engine landings, 2026-08-17 (streaming fix + player pack imports)
-
-- **(DONE 2026-08-17) `loreweaver-protocol` 2.2.0 landed.** The ≤2.1.1
-  validator table had NO `narrative_delta` entry — `isServerFrame` silently
-  dropped every streaming frame, so the studio's delta handling in
-  `src/store/session.ts` was dead code on every live table (fixed in 2.1.2);
-  v2.2 adds `list_pack_cards`/`pack_cards` (the pack import picker's data
-  lane). Dependency bumped, lockfile refreshed, the temporary local v2.2 type
-  shim folded back into package imports. Streaming and the picker are live.
-- **(S) Player pack-relative PC imports are open** — `.import <packId>/cards/x>
-pc` works for players (confined to `data_dir/packs/`), `.import list` prints
-  refs, and the Studio picker rides the v2.2 frames.
-- **(S) World import may pin the room system** — a world card from a pack that
-  ships exactly one rulepack pins `room_state["room_system"]`; state/panels may
-  want to surface the room's effective system.
-- (context) Keeper re-imports now replace lore by provenance (serialized-module
-  contract real at last); `.panels enable` admits kit-only packs; `.var list`
-  shows typed trackers; the Scribe runs on the CLI channel too. Nothing studio-
-  side consumes these directly.
+1. **One stream for a command's answer.** `loreweaver pack` / `install` print their JSON object
+   on stdout when they succeed and on stderr when they refuse (`server/src/cli/main.ts`:
+   `(code === 0 ? console.log : console.error)(out)`). A tool has to read both and pick the last
+   JSON line of stderr. Printing the object on stdout always (the exit code already says which)
+   would remove the guesswork.
+2. **`--version` is the one command that does not answer in JSON**, and it names the server
+   version only. A tool comparing a pack's `engine.protocol` with what the engine speaks has no
+   way to ask for the protocol version. `{"ok":true,"version":"3.0.0","protocol":"3.0"}` would do.
+3. **The builder is silent about source files the manifest does not name.** It reads only named
+   files, so a page's stray `ui/app.js` or an unreferenced picture simply is not in the archive,
+   and nothing says so (`ignored` reports a skill's `hooks.js` only). Studio flags such files
+   itself; listing them in the build's `ignored` would let every author see it.
+4. **Two shapes of `ignored`.** The build JSON's top-level `ignored` is a list of paths; the trust
+   card's `ignored` is a list of `{path, reason}`. One shape would be simpler to show.
+5. **The panels reader is not shared.** Clients share `instantiate` / `panelBlocks` from the
+   protocol package, but an authoring tool has to re-implement the panels file's checks
+   (`server/src/core/panels/format.ts`) — Studio mirrors them in
+   `src/features/studio/pack/panelsCheck.ts`, and the round-trip gate compares the two. Exporting
+   the pure reader (and a parse-only condition compiler that returns references; the package
+   exports only `evaluate`) from the protocol package would leave one implementation.
+6. **Card-kind detection is not shared either.** A pack is refused when a card's declared kind
+   disagrees with `splitCard` (`card_kind_mismatch`), so an authoring tool must predict that
+   detection exactly. Studio's mirror (`split/cardSplit.ts`) counts EJS spans in the prose fields
+   and entry contents; the engine also counts them in the name, tags, alternate greetings and
+   entry titles and keys. A shared, pure `splitCard` would close the gap.
+7. **No offline list of command ids.** A panel's choice names a command id. The only list Studio
+   has is the engine's `commands` view fixture (eight commands), not the engine's full set
+   (`pack`, `skill`, `panels`, `rule`, `rules.*`, …). A static export of the engine's command ids
+   (and their parameter schemas) would let an editor offer them all.
+8. **Byte vs character caps.** `parseManifest` compares `charCount(text)` with
+   `MAX_MANIFEST_BYTES`, while `parsePanels` and `readPack` compare bytes — a CJK-heavy manifest
+   between 256 Ki characters and 256 KiB passes one check and fails the other.
+9. **Pregens.** The lorecard reader still parses a `pregens` section and a world import reports it
+   as unsupported. If 3.0 will not seat pregenerated characters, saying so in `cards.md` (and
+   refusing or ignoring the section uniformly) would settle what authors should write. Studio
+   stopped writing it.

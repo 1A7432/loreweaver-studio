@@ -8,7 +8,6 @@ import { looksLikeLorecard, lorecardToProject } from "./split/lorecard"
 import { describeImportFailure } from "./importErrors"
 import AiPanel from "./ai/AiPanel"
 import AiSettingsDialog from "./ai/AiSettingsDialog"
-import PresetManagerDialog from "./ai/PresetManagerDialog"
 import { aiReady, useAiStore } from "./ai/provider"
 import CardTab from "./CardTab"
 import ExportFlavorPicker from "./ExportFlavor"
@@ -20,19 +19,17 @@ import {
   type ExportFlavor,
 } from "./exporters"
 import { embedCardIntoPng } from "./pngCard"
-import HooksTab from "./HooksTab"
 import LintPanel, { LintBadge } from "./lint/LintPanel"
 import { lintPack } from "./lint/packLint"
 import { lintSourceFromProject } from "./lint/sources"
 import { validateProject } from "./model"
 import PackWizard from "./pack/PackWizard"
-import PregensTab from "./PregensTab"
 import SplitView from "./split/SplitView"
 import VariablesTab from "./VariablesTab"
 import WizardView from "./wizard/WizardView"
 import WorldbookTab from "./WorldbookTab"
 
-const TABS: StudioTab[] = ["card", "variables", "worldbook", "pregens", "hooks"]
+const TABS: StudioTab[] = ["card", "variables", "worldbook"]
 const VIEWS: StudioViewName[] = ["forge", "wizard", "split", "pack"]
 
 export default function StudioView() {
@@ -51,7 +48,6 @@ export default function StudioView() {
   const [notice, setNotice] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [presetsOpen, setPresetsOpen] = useState(false)
   const [lintOpen, setLintOpen] = useState(false)
   // Default unchanged: the forge toolbar has always shipped the
   // secrets-stripped, safe-to-circulate card. It just never said so.
@@ -141,9 +137,6 @@ export default function StudioView() {
           title={aiReady(aiSettings) ? undefined : t("studio.ai.needsSetup")}
         >
           {t("studio.ai.open")}
-        </button>
-        <button type="button" className="ghost-button" onClick={() => setPresetsOpen(true)}>
-          {t("studio.ai.presets.open")}
         </button>
         <button type="button" className="ghost-button" onClick={() => setSettingsOpen(true)}>
           {t("studio.ai.settings")}
@@ -255,10 +248,6 @@ export default function StudioView() {
                 {tab === "worldbook" ? (
                   <WorldbookTab project={project} issues={validation?.lorebook ?? new Map()} />
                 ) : null}
-                {tab === "pregens" ? (
-                  <PregensTab project={project} issues={validation?.pregens ?? new Map()} />
-                ) : null}
-                {tab === "hooks" ? <HooksTab project={project} /> : null}
               </div>
             </>
           ) : (
@@ -270,14 +259,9 @@ export default function StudioView() {
       ) : null}
 
       {aiOpen ? (
-        <AiPanel
-          onClose={() => setAiOpen(false)}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenPresets={() => setPresetsOpen(true)}
-        />
+        <AiPanel onClose={() => setAiOpen(false)} onOpenSettings={() => setSettingsOpen(true)} />
       ) : null}
       {settingsOpen ? <AiSettingsDialog onClose={() => setSettingsOpen(false)} /> : null}
-      {presetsOpen ? <PresetManagerDialog onClose={() => setPresetsOpen(false)} /> : null}
     </div>
   )
 }

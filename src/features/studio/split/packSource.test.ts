@@ -5,13 +5,18 @@ import {
   buildPackSourcePlan,
   buildPresentationYaml,
   buildSkillMd,
-  readPrepScript,
+  moduleIdMentioned,
   safeFileName,
-  sanitizePresetId,
   validatePackDraft,
   type PackPresentationDraft,
   type WorldPackDraft,
 } from "./packSource"
+
+// Unit tests assert on the TEXT Studio writes. That the engine accepts it is proven by the
+// round-trip gate (`scripts/check_roundtrip.sh`), which builds and installs a pack written by
+// this same `buildPackSourcePlan` with the real 3.0 engine.
+
+const PNG = "iVBORw0KGgo="
 
 function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
   return {
@@ -27,16 +32,15 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
       {
         fileName: "deep-pier.st.json",
         jsonText: "{}",
+        kind: "world",
         notesEn: "Run `.var expose 理` after import.",
         notesZh: "导入后运行 `.var expose 理`。",
       },
     ],
-    lorebooks: [],
     skills: [],
     rulepacks: [],
+    modules: [],
     assets: [],
-    prep: [],
-    presets: [],
     episodes: [],
     panels: null,
     presentation: null,
@@ -44,429 +48,355 @@ function draft(overrides: Partial<WorldPackDraft> = {}): WorldPackDraft {
   }
 }
 
+const MODULE_SOURCE = `import { defineModule } from "loreweaver/module";
+export default defineModule({ id: "tide", views: { level: { schema: { type: "integer" }, for: () => 1 } } });
+`
+
 const PANELS_YAML = `panels:
   - id: hud
     title: {en: HUD, zh: 状态板}
     slot: sidebar
+    views: {me: me, tide: tide/level}
     blocks:
-      - {kind: meter, label: {en: Fear, zh: 恐慌}, value: {$var: fear}, min: 0, max: 10}
+      - {kind: meter, label: {en: Tide, zh: 潮位}, value: {$view: tide}, min: 0, max: 10}
+      - {kind: image, src: ui/map.png}
+      - repeat:
+          each: me.character.resources
+          block: {kind: stat, label: {$view: item.label}, value: {$view: item.value}}
   - id: case-board
     title: {en: Case Board, zh: 案情板}
     slot: modal
-    audience: all
-    entry: ui/case-board/index.html
-    assets:
-      - ui/case-board/index.html
-      - ui/case-board/app.js
+    audience: admin
+    views: {tide: tide/level}
+    entry: ui/case-board.html
     fallback:
-      - {kind: text, text: {en: "Rich client only.", zh: "请在富客户端查看。"}}
+      - {kind: text, text: {$view: tide}, visible_when: "tide > 3"}
 `
 
 function panelsDraft(yaml = PANELS_YAML) {
   return {
     yamlText: yaml,
     files: [
-      { path: "ui/case-board/index.html", contents: "<main></main>" },
-      { path: "ui/case-board/app.js", contents: "console.log(1)" },
+      { path: "ui/map.png", base64: PNG },
+      { path: "ui/case-board.html", contents: "<!doctype html><main></main>" },
     ],
   }
 }
 
+function keys(value: WorldPackDraft): string[] {
+  return validatePackDraft(value).map((issue) => issue.key)
+}
+
 describe("validatePackDraft", () => {
-  it("passes a well-formed world draft", () => {
+  it("passes a well-formed draft", () => {
     expect(validatePackDraft(draft())).toEqual([])
   })
 
   it("enforces slug / semver / required metadata", () => {
-    const issues = validatePackDraft(
-      draft({ id: "Bad_ID", version: "1.0", nameEn: "", nameZh: "", license: "", authors: [""] }),
+    const issues = keys(
+      draft({ id: "Bad Id", version: "1.0", nameEn: "", nameZh: "", license: " ", authors: [" "] }),
     )
-    const keys = issues.map((issue) => issue.key)
-    expect(keys).toContain("packIdInvalid")
-    expect(keys).toContain("packVersionInvalid")
-    expect(keys).toContain("packNameRequired")
-    expect(keys).toContain("packLicenseRequired")
-    expect(keys).toContain("packAuthorsRequired")
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        "packIdInvalid",
+        "packVersionInvalid",
+        "packNameRequired",
+        "packLicenseRequired",
+        "packAuthorsRequired",
+      ]),
+    )
   })
 
-  it("rejects skill slugs and rulepack ids that are not slugs", () => {
+  it("holds skill ids, rule-system ids and card file names to the engine's rules", () => {
+    expect(
+      keys(draft({ skills: [{ slug: "ends-", nameEn: "", descriptionEn: "", descriptionZh: "" }] })),
+    ).toContain("packSkillSlugInvalid")
+    expect(keys(draft({ rulepacks: [{ id: "Bad_Rules", yamlText: "extends: coc7" }] }))).toContain(
+      "packRulepackIdInvalid",
+    )
+    expect(
+      keys(
+        draft({
+          cards: [{ fileName: "notes.txt", jsonText: "{}", kind: "character", notesEn: "", notesZh: "" }],
+        }),
+      ),
+    ).toContain("packCardFileName")
+  })
+
+  it("refuses a rule pack that names a rules script: 3.0 has no rules-script lane", () => {
+    const yamlText = "names: [x]\nresolution:\n  roll: 1d20\n  script: grade.js\n"
+    expect(keys(draft({ rulepacks: [{ id: "scripted", yamlText }] }))).toContain("packRulepackScript")
+  })
+
+  it("refuses an asset that is neither a picture nor a sound", () => {
+    expect(keys(draft({ assets: [{ fileName: "notes.json", base64: "e30=" }] }))).toContain("packAssetType")
+    expect(keys(draft({ assets: [{ fileName: "bell.ogg", base64: "T2dnUw==" }] }))).not.toContain(
+      "packAssetType",
+    )
+  })
+
+  it("finds two names that are one file on a case-insensitive filesystem", () => {
     const issues = validatePackDraft(
       draft({
-        skills: [{ slug: "Bad Slug", nameEn: "", descriptionEn: "", descriptionZh: "", hooks: [] }],
-        rulepacks: [{ id: "No_good", yamlText: "extends: coc7" }],
+        assets: [
+          { fileName: "Map.png", base64: PNG },
+          { fileName: "map.png", base64: PNG },
+        ],
       }),
     )
-    const keys = issues.map((issue) => issue.key)
-    expect(keys).toContain("packSkillSlugInvalid")
-    expect(keys).toContain("packRulepackIdInvalid")
+    expect(issues.map((issue) => issue.key)).toContain("packDuplicatePath")
   })
 })
 
 describe("buildManifestYaml", () => {
-  it("emits the v2 author shape: localized fields, notes mapping, no trust/files/kind", () => {
+  it("writes manifest 3: the version, the engine minimum and `kind` on every card", () => {
     const manifest = parse(buildManifestYaml(draft())) as Record<string, unknown>
-    expect(manifest.id).toBe("deep-pier")
+    expect(manifest.manifest_version).toBe(3)
+    expect(manifest.engine).toEqual({ protocol: "3.0" })
     expect(manifest.name).toEqual({ en: "Deep Pier", zh: "深渊码头" })
-    // Generated at pack time or detection-stamped: never hand-written.
-    expect(manifest.trust).toBeUndefined()
-    expect(manifest.files).toBeUndefined()
-    expect(manifest.manifest_version).toBeUndefined()
-    // Minimum-version block, mirroring the flagship reference pack.
-    expect(manifest.engine).toEqual({ protocol: "2.0" })
-    const contents = manifest.contents as Record<string, unknown>
-    // Manifest v2: authors never declare `kind` — a noted card carries
-    // exactly {path, notes}; the build stamps the detected kind.
-    expect(contents.cards).toEqual([
-      {
-        path: "cards/deep-pier.st.json",
-        notes: {
-          en: "Run `.var expose 理` after import.",
-          zh: "导入后运行 `.var expose 理`。",
+    expect(manifest.contents).toEqual({
+      cards: [
+        {
+          path: "cards/deep-pier.st.json",
+          kind: "world",
+          notes: { en: "Run `.var expose 理` after import.", zh: "导入后运行 `.var expose 理`。" },
         },
-      },
-    ])
+      ],
+    })
+    // Nothing a 2.x builder generated, and no kind 3.0 refuses.
+    for (const key of ["trust", "files", "lorebooks", "presets", "prep"]) {
+      expect(manifest).not.toHaveProperty(key)
+      expect(manifest.contents).not.toHaveProperty(key)
+    }
   })
 
-  it("dumps a card with no notes as a bare path string", () => {
+  it("writes a card with no notes as {path, kind}", () => {
     const manifest = parse(
       buildManifestYaml(
         draft({
-          cards: [
-            {
-              fileName: "npc.json",
-              jsonText: "{}",
-              notesEn: "",
-              notesZh: "",
-            },
-          ],
+          cards: [{ fileName: "hana.png", base64: PNG, kind: "character", notesEn: "", notesZh: "" }],
         }),
       ),
-    ) as Record<string, { cards: unknown[] }>
-    expect(manifest.contents.cards).toEqual(["cards/npc.json"])
+    ) as { contents: { cards: unknown } }
+    expect(manifest.contents.cards).toEqual([{ path: "cards/hana.png", kind: "character" }])
+  })
+
+  it("declares each module by id with its source entry under src/", () => {
+    const withModule = draft({
+      modules: [{ uid: "m", id: "tide", fileName: "tide.ts", source: MODULE_SOURCE }],
+    })
+    expect(validatePackDraft(withModule)).toEqual([])
+    const manifest = parse(buildManifestYaml(withModule)) as { modules: unknown }
+    expect(manifest.modules).toEqual([{ id: "tide", entry: "src/tide.ts" }])
+  })
+
+  it("leaves out an empty contents block", () => {
+    const manifest = parse(buildManifestYaml(draft({ cards: [] }))) as Record<string, unknown>
+    expect(manifest).not.toHaveProperty("contents")
+  })
+})
+
+describe("modules", () => {
+  function moduleKeys(module: { id: string; fileName: string; source: string }): string[] {
+    return keys(draft({ modules: [{ uid: "m", ...module }] }))
+  }
+
+  it("holds the id, the entry file and the source to the engine's rules", () => {
+    expect(moduleKeys({ id: "Tide", fileName: "tide.ts", source: MODULE_SOURCE })).toContain(
+      "packModuleIdInvalid",
+    )
+    expect(moduleKeys({ id: "tide", fileName: "tide.py", source: MODULE_SOURCE })).toContain(
+      "packModuleFileName",
+    )
+    expect(moduleKeys({ id: "tide", fileName: "lib/tide.ts", source: MODULE_SOURCE })).toContain(
+      "packModuleFileName",
+    )
+    expect(moduleKeys({ id: "tide", fileName: "tide.ts", source: "  " })).toContain("packModuleEmpty")
+    expect(moduleKeys({ id: "tide", fileName: "tide.mjs", source: MODULE_SOURCE })).toEqual([])
+  })
+
+  it("refuses two modules of one id, and more than sixteen", () => {
+    const twice = draft({
+      modules: [
+        { uid: "a", id: "tide", fileName: "a.ts", source: MODULE_SOURCE },
+        { uid: "b", id: "tide", fileName: "b.ts", source: MODULE_SOURCE },
+      ],
+    })
+    expect(keys(twice)).toContain("packModuleIdDuplicate")
+    const many = draft({
+      modules: Array.from({ length: 17 }, (_, index) => ({
+        uid: `m${index}`,
+        id: `m${index}`,
+        fileName: `m${index}.ts`,
+        source: MODULE_SOURCE,
+      })),
+    })
+    expect(keys(many)).toContain("packModulesTooMany")
+  })
+
+  it("writes the source under src/, newline-terminated", () => {
+    const plan = buildPackSourcePlan(
+      draft({ modules: [{ uid: "m", id: "tide", fileName: "tide.ts", source: "export default 1" }] }),
+    )
+    expect(plan.files).toContainEqual({ path: "src/tide.ts", contents: "export default 1\n" })
+  })
+
+  it("notices a source that does not pass its id to defineModule", () => {
+    expect(moduleIdMentioned(MODULE_SOURCE, "tide")).toBe(true)
+    expect(moduleIdMentioned(MODULE_SOURCE, "clock")).toBe(false)
+    expect(moduleIdMentioned("defineModule({ id: 'clock' })", "clock")).toBe(true)
+    // An id the author is still typing is never a regex error.
+    expect(moduleIdMentioned(MODULE_SOURCE, "(")).toBe(false)
   })
 })
 
 describe("buildSkillMd / buildPackSourcePlan", () => {
-  it("emits SKILL.md frontmatter that parse_skill_text accepts (fenced YAML mapping)", () => {
-    const md = buildSkillMd({
-      slug: "pier-hooks",
-      nameEn: "Pier Hooks",
-      descriptionEn: "Extracted from the card.",
-      descriptionZh: "从卡中抽取。",
-      hooks: ["on('turn_start', f)"],
+  it("emits SKILL.md front matter the engine's skill reader takes", () => {
+    const text = buildSkillMd({
+      slug: "harbor",
+      nameEn: "Harbor",
+      descriptionEn: "Run the harbor.",
+      descriptionZh: "",
     })
-    expect(md.startsWith("---\n")).toBe(true)
-    const [, frontmatter] = md.split("---\n")
-    const parsed = parse(frontmatter) as Record<string, unknown>
-    expect(parsed.name).toBe("Pier Hooks")
-    expect(parsed.metadata).toEqual({ scope: "room" })
+    expect(text.startsWith("---\n")).toBe(true)
+    const front = parse(text.split("---\n")[1]) as Record<string, unknown>
+    expect(front).toEqual({ name: "Harbor", description: "Run the harbor.", metadata: { scope: "room" } })
   })
 
-  it("lays out the full source tree with hooks joined into one hooks.js", () => {
+  it("ships a hand-written SKILL.md verbatim and flags one without front matter", () => {
+    const custom = "---\nname: X\ndescription: y\n---\n\nBody"
+    expect(
+      buildSkillMd({ slug: "x", nameEn: "", descriptionEn: "", descriptionZh: "", skillMd: custom }),
+    ).toBe(`${custom}\n`)
+    expect(
+      keys(
+        draft({
+          skills: [{ slug: "x", nameEn: "", descriptionEn: "", descriptionZh: "", skillMd: "Body only" }],
+        }),
+      ),
+    ).toContain("packSkillMdNoFrontmatter")
+  })
+
+  it("lays out the tree: one SKILL.md per skill and nothing beside it", () => {
     const plan = buildPackSourcePlan(
       draft({
-        skills: [
-          {
-            slug: "pier-hooks",
-            nameEn: "Pier Hooks",
-            descriptionEn: "d",
-            descriptionZh: "",
-            hooks: ["one()", "two()"],
-          },
-        ],
-        rulepacks: [{ id: "coc7-pier", yamlText: "extends: coc7\n" }],
-        lorebooks: [{ fileName: "extra.json", jsonText: "{}" }],
+        skills: [{ slug: "harbor", nameEn: "Harbor", descriptionEn: "d", descriptionZh: "" }],
+        rulepacks: [{ id: "harbor-rules", yamlText: "extends: coc7\n" }],
       }),
     )
-    expect(plan.dirName).toBe("deep-pier")
     const paths = plan.files.map((file) => file.path)
     expect(paths).toEqual([
       "pack.yaml",
       "cards/deep-pier.st.json",
-      "lorebooks/extra.json",
-      "skills/pier-hooks/SKILL.md",
-      "skills/pier-hooks/hooks.js",
-      "rulepacks/coc7-pier.yaml",
+      "skills/harbor/SKILL.md",
+      "rulepacks/harbor-rules.yaml",
     ])
-    const hooksJs = plan.files.find((file) => file.path.endsWith("hooks.js"))
-    expect(hooksJs?.contents).toContain("// --- hook 1 ---")
-    expect(hooksJs?.contents).toContain("two()")
+    expect(paths.some((path) => path.endsWith("hooks.js"))).toBe(false)
   })
 
-  it("declares assets by path only and ships their bytes as binaries", () => {
-    const plan = buildPackSourcePlan(draft({ assets: [{ fileName: "map.png", base64: "aGk=" }] }))
-    const manifest = parse(plan.files[0].contents) as { assets?: unknown }
-    // Integrity fields are the engine's to fill at build time.
-    expect(manifest.assets).toEqual([{ path: "assets/map.png" }])
-    expect(plan.binaries).toContainEqual({ path: "assets/map.png", base64: "aGk=" })
-  })
-
-  it("routes PNG cards through the binary list", () => {
+  it("routes PNG cards and assets through the binary list", () => {
     const plan = buildPackSourcePlan(
       draft({
-        cards: [
-          {
-            fileName: "heavy.png",
-            base64: "aGk=",
-            notesEn: "",
-            notesZh: "",
-          },
-        ],
+        cards: [{ fileName: "hana.png", base64: PNG, kind: "character", notesEn: "", notesZh: "" }],
+        assets: [{ fileName: "cover.png", base64: PNG }],
       }),
     )
-    expect(plan.binaries).toEqual([{ path: "cards/heavy.png", base64: "aGk=" }])
+    expect(plan.binaries).toEqual([
+      { path: "cards/hana.png", base64: PNG },
+      { path: "assets/cover.png", base64: PNG },
+    ])
+    const manifest = parse(plan.files[0].contents) as { assets: unknown }
+    expect(manifest.assets).toEqual([{ path: "assets/cover.png" }])
   })
 })
 
-describe("panels (M15)", () => {
-  it("accepts a well-formed panels draft and plans ui/ into the source tree", () => {
+describe("panels 3.0", () => {
+  it("accepts views, bindings, a repeat, a page with a fallback, and plans ui/ into the tree", () => {
     const withPanels = draft({ panels: panelsDraft() })
     expect(validatePackDraft(withPanels)).toEqual([])
-
     const plan = buildPackSourcePlan(withPanels)
-    const paths = plan.files.map((file) => file.path)
-    expect(paths).toContain("ui/panels.yaml")
-    expect(paths).toContain("ui/case-board/index.html")
-    expect(paths).toContain("ui/case-board/app.js")
-
+    expect(plan.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining(["ui/panels.yaml", "ui/case-board.html"]),
+    )
+    expect(plan.binaries).toContainEqual({ path: "ui/map.png", base64: PNG })
     const manifest = parse(plan.files[0].contents) as { contents: Record<string, unknown> }
     expect(manifest.contents.panels).toEqual(["ui/panels.yaml"])
   })
 
-  it("omits contents.panels entirely when the pack ships none", () => {
+  it("omits contents.panels when the pack ships none", () => {
     const manifest = parse(buildManifestYaml(draft())) as { contents: Record<string, unknown> }
-    expect("panels" in manifest.contents).toBe(false)
+    expect(manifest.contents.panels).toBeUndefined()
   })
 
-  it("flags YAML that does not parse, with the first error line as detail", () => {
-    const issues = validatePackDraft(draft({ panels: { yamlText: "panels: [", files: [] } }))
-    expect(issues.map((issue) => issue.key)).toContain("packPanelsYamlInvalid")
-  })
-
-  it("mirrors the engine's structural rules (tier-2 fallback, asset confinement, missing files)", () => {
-    const badYaml = `panels:
-  - id: Case_Board
-    title: Board
-    slot: nowhere
-    entry: ui/case-board/index.html
-    assets:
-      - ui/case-board/index.html
-      - ui/elsewhere/app.js
-`
-    const issues = validatePackDraft(
-      draft({
-        panels: {
-          yamlText: badYaml,
-          files: [{ path: "ui/case-board/index.html", contents: "<main></main>" }],
-        },
-      }),
-    )
-    const keys = issues.map((issue) => issue.key)
-    expect(keys).toContain("packPanelInvalid")
-    expect(keys).toContain("packPanelMissingFile")
-    const details = issues
-      .filter((issue) => issue.key === "packPanelInvalid")
-      .map((issue) => String(issue.params?.detail))
-    expect(details.some((detail) => detail.includes("slug"))).toBe(true)
-    expect(details.some((detail) => detail.includes("slot"))).toBe(true)
-    expect(details.some((detail) => detail.includes("fallback"))).toBe(true)
-    expect(details.some((detail) => detail.includes("outside the entry's directory"))).toBe(true)
-  })
-
-  it("flags shipped panel files no panel references, and paths outside ui/", () => {
-    const issues = validatePackDraft(
-      draft({
-        panels: {
-          yamlText: PANELS_YAML,
-          files: [
-            { path: "ui/case-board/index.html", contents: "<main></main>" },
-            { path: "ui/case-board/app.js", contents: "x" },
-            { path: "ui/stray.css", contents: "x" },
-            { path: "elsewhere/evil.js", contents: "x" },
-          ],
-        },
-      }),
-    )
-    const keys = issues.map((issue) => issue.key)
-    expect(keys).toContain("packPanelFileOrphan")
-    expect(keys).toContain("packPanelPathInvalid")
-  })
-
-  it("ships a hand-written SKILL.md verbatim and flags one without frontmatter", () => {
-    const custom =
-      "---\nname: Direction\ndescription: Keeper craft.\nmetadata:\n  scope: room\n---\n\n# 導演台本\n"
-    const md = buildSkillMd({
-      slug: "direction",
-      nameEn: "",
-      descriptionEn: "",
-      descriptionZh: "",
-      hooks: [],
-      skillMd: custom,
-    })
-    expect(md).toBe(custom)
-
-    const issues = validatePackDraft(
-      draft({
-        skills: [
-          {
-            slug: "direction",
-            nameEn: "",
-            descriptionEn: "",
-            descriptionZh: "",
-            hooks: [],
-            skillMd: "no frontmatter",
-          },
-        ],
-      }),
-    )
-    expect(issues.map((issue) => issue.key)).toContain("packSkillMdNoFrontmatter")
-  })
-})
-
-describe("panels 2.1 (M19): new block kinds + visible_when", () => {
-  const YAML_21 = `panels:
-  - id: handouts
-    title: {en: Handouts, zh: 手边物}
-    slot: tray
+  it("reports the engine's own problem codes, at the engine's paths", () => {
+    const yaml = `panels:
+  - id: hud
+    title: HUD
+    slot: sidebar
+    views: {me: me, vars: variables}
     blocks:
-      - {kind: image, src: ui/handouts/page.png, caption: {en: "Torn page", zh: 残页}, alt: {en: "Nine lanterns"}}
-      - {kind: letter, body: {en: "Meet at the pier."}, from: "K.", date: {en: "March 3"}}
-      - {kind: clipping, headline: {en: "Nine lanterns vanish"}, body: {en: "The tide took them."}, source: {en: Gazette}}
-      - {kind: map_pin, src: ui/handouts/map.png, label: {en: "Tide mark"}, x: 0.25, y: {$var: pin_y}, note: {en: "went out here"}}
-      - {kind: title_card, title: {en: "The Send-Off"}, act: {en: "Act III"}, subtitle: {en: "what the tide keeps"}}
-      - {kind: text, style: warning, visible_when: "祭典日 >= 3", text: {en: "Tonight they burn."}}
-      - repeat: {prefix: "mvu.线索.", block: {kind: badge, label: {$leaf: label}, visible_when: "stage === 2"}}
+      - {kind: stat, label: Name, value: {$view: you.name}}
 `
+    const issues = validatePackDraft(draft({ panels: { yamlText: yaml, files: [] } }))
+    const panel = issues.filter((issue) => issue.key === "packPanelInvalid").map((issue) => issue.params)
+    expect(panel).toContainEqual({
+      code: "unknown_handle",
+      at: "panels.0.blocks.0.value.$view",
+      detail: "you",
+    })
+  })
 
-  it("accepts the five new block kinds with visible_when gates", () => {
+  it("flags a 1.x field the migration left (the engine refuses it as replaced_2x)", () => {
+    const yaml = `panels:
+  - id: hud
+    title: HUD
+    slot: sidebar
+    audience: keeper
+    blocks:
+      - {kind: meter, label: Fear, value: {$var: fear.level}, min: 0, max: 10}
+`
+    const codes = validatePackDraft(draft({ panels: { yamlText: yaml, files: [] } }))
+      .filter((issue) => issue.key === "packPanelInvalid")
+      .map((issue) => issue.params?.code)
+    expect(codes).toEqual(["replaced_2x", "replaced_2x"])
+  })
+
+  it("names a page or picture the pack does not ship, and a file no panel names", () => {
+    const issues = validatePackDraft(
+      draft({ panels: { yamlText: PANELS_YAML, files: [{ path: "ui/old.png", base64: PNG }] } }),
+    )
+    const missing = issues
+      .filter((issue) => issue.key === "packPanelMissingFile")
+      .map((issue) => issue.params?.file)
+    expect(missing).toEqual(expect.arrayContaining(["ui/map.png", "ui/case-board.html"]))
+    expect(issues.map((issue) => issue.key)).toContain("packPanelFileOrphan")
+  })
+
+  it("lets a panel picture be a dropped asset, not only a panel file", () => {
+    const yaml = PANELS_YAML.replace("src: ui/map.png", "src: assets/map.png")
     const issues = validatePackDraft(
       draft({
-        panels: {
-          yamlText: YAML_21,
-          files: [
-            { path: "ui/handouts/page.png", base64: "eA==" },
-            { path: "ui/handouts/map.png", base64: "eA==" },
-          ],
-        },
+        assets: [{ fileName: "map.png", base64: PNG }],
+        panels: { yamlText: yaml, files: [{ path: "ui/case-board.html", contents: "<main></main>" }] },
       }),
     )
     expect(issues).toEqual([])
   })
 
-  it("counts an image src as a panel file reference (never orphaned, flagged when missing)", () => {
-    // The engine folds image srcs into the ONE asset pipeline: a src whose
-    // file the source tree does not ship fails the build
-    // (`core.pack._enforce_panel_images`), so the wizard says it first.
-    const missing = validatePackDraft(
-      draft({
-        panels: {
-          yamlText: YAML_21,
-          files: [{ path: "ui/handouts/page.png", base64: "eA==" }],
-        },
-      }),
-    )
-    expect(missing.map((issue) => issue.key)).toContain("packPanelMissingFile")
-    expect(
-      missing.some(
-        (issue) => issue.key === "packPanelMissingFile" && issue.params?.file === "ui/handouts/map.png",
-      ),
-    ).toBe(true)
-
-    const orphan = validatePackDraft(
-      draft({
-        panels: {
-          yamlText: YAML_21,
-          files: [
-            { path: "ui/handouts/page.png", base64: "eA==" },
-            { path: "ui/handouts/map.png", base64: "eA==" },
-            { path: "ui/handouts/stray.png", base64: "eA==" },
-          ],
-        },
-      }),
-    )
-    expect(orphan.map((issue) => issue.key)).toEqual(["packPanelFileOrphan"])
-    expect(orphan[0].params?.file).toBe("ui/handouts/stray.png")
-  })
-
-  it("flags a new-kind block missing a required field, with the engine's field names", () => {
+  it("refuses a script beside a page: a page is one self-contained HTML file", () => {
     const issues = validatePackDraft(
       draft({
-        panels: {
-          yamlText: `panels:
-  - id: handouts
-    title: Handouts
-    slot: tray
-    blocks:
-      - {kind: clipping, headline: {en: "Nine lanterns vanish"}}
-      - {kind: map_pin, src: ui/m.png, label: {en: Pin}, x: 0.5}
-      - {kind: image, caption: {en: "no src"}}
-`,
-          files: [],
-        },
+        panels: { ...panelsDraft(), files: [...panelsDraft().files, { path: "ui/app.js", contents: "1" }] },
       }),
     )
-    const details = issues
-      .filter((issue) => issue.key === "packPanelInvalid")
-      .map((issue) => String(issue.params?.detail))
-    expect(details.some((detail) => detail.includes("blocks[0]: missing body"))).toBe(true)
-    expect(details.some((detail) => detail.includes("blocks[1]: missing y"))).toBe(true)
-    expect(details.some((detail) => detail.includes("blocks[2].src"))).toBe(true)
-  })
-
-  it("catches out-of-subset visible_when BEFORE the engine build — repeat inner blocks included", () => {
-    const issues = validatePackDraft(
-      draft({
-        panels: {
-          yamlText: `panels:
-  - id: gated
-    title: Gated
-    slot: sidebar
-    blocks:
-      - {kind: text, text: hi, visible_when: "day + 1 > 46"}
-      - repeat: {prefix: "mvu.", block: {kind: badge, label: x, visible_when: "clues[0] === 'ash'"}}
-`,
-          files: [],
-        },
-      }),
-    )
-    const details = issues
-      .filter((issue) => issue.key === "packPanelInvalid")
-      .map((issue) => String(issue.params?.detail))
-      .filter((detail) => detail.includes("visible_when"))
-    expect(details).toHaveLength(2)
-    expect(details[0]).toContain("blocks[0].visible_when")
-    expect(details[1]).toContain("repeat.block")
-    expect(details[0]).toContain("portable subset")
-  })
-
-  it("validates a tier-2 panel's fallback blocks the same way", () => {
-    const issues = validatePackDraft(
-      draft({
-        panels: {
-          yamlText: `panels:
-  - id: board
-    title: Board
-    slot: modal
-    entry: ui/board/index.html
-    assets: [ui/board/index.html]
-    fallback:
-      - {kind: letter, from: "K."}
-`,
-          files: [{ path: "ui/board/index.html", contents: "<main></main>" }],
-        },
-      }),
-    )
-    const details = issues
-      .filter((issue) => issue.key === "packPanelInvalid")
-      .map((issue) => String(issue.params?.detail))
-    expect(details.some((detail) => detail.includes("fallback[0]: missing body"))).toBe(true)
+    expect(issues.map((issue) => issue.key)).toContain("packPanelScriptFile")
   })
 })
 
 describe("safeFileName", () => {
   it("keeps unicode letters and falls back when nothing survives", () => {
-    expect(safeFileName("深渊码头 v2", "card")).toBe("深渊码头_v2")
-    expect(safeFileName("///", "card")).toBe("card")
+    expect(safeFileName("深渊 码头!", "x")).toBe("深渊_码头")
+    expect(safeFileName("!!!", "fallback")).toBe("fallback")
   })
 })
 
@@ -515,7 +445,7 @@ describe("presentation kit (M19)", () => {
     }
   }
 
-  it("emits the exact kit shape `core/presentation.py` parses, wired into manifest + plan", () => {
+  it("emits the exact kit shape the engine's kit reader parses, wired into manifest + plan", () => {
     const kit = presentationDraft()
     expect(parse(buildPresentationYaml(kit))).toEqual({
       version: 2,
@@ -545,7 +475,7 @@ describe("presentation kit (M19)", () => {
       assets: unknown
     }
     expect(manifest.contents.presentation).toEqual(["ui/presentation.yaml"])
-    // Refs/cues MUST join the asset block (`core/pack.py::_enforce_kit_assets`).
+    // Listed for a readable manifest (the builder takes them along listed or not).
     expect(manifest.assets).toEqual([{ path: "assets/wantang.png" }, { path: "assets/tide.mp3" }])
 
     const plan = buildPackSourcePlan(withKit)
@@ -725,7 +655,7 @@ audio:
   })
 
   it("omits an empty templates list rather than listing every shape", () => {
-    // `core/presentation.py::allows_template`: empty = all allowed. Writing
+    // The engine reads an empty allowlist as all shapes allowed. Writing
     // all five would be an allowlist the author never chose — and would then
     // silently exclude any shape a later engine version adds.
     const emitted = parse(buildPresentationYaml(presentationDraft({ templates: [] }))) as Record<
@@ -873,45 +803,6 @@ audio:
   })
 })
 
-describe("prep-phase scripts (M20 F)", () => {
-  const SCRIPT = `for (const name of ["a", "b"]) {
-  plan("add_npc", { name: name })
-}
-plan("define_variable", { var_id: "floor_seen", kind: "number" })
-`
-
-  it("declares contents.prep and lays the file under prep/", () => {
-    const withPrep = draft({ prep: [{ fileName: "setup.js", source: SCRIPT }] })
-    expect(validatePackDraft(withPrep)).toEqual([])
-    const plan = buildPackSourcePlan(withPrep)
-    expect(plan.files.map((file) => file.path)).toContain("prep/setup.js")
-    const manifest = parse(plan.files[0].contents) as { contents: Record<string, unknown> }
-    expect(manifest.contents.prep).toEqual(["prep/setup.js"])
-  })
-
-  it("mirrors the engine's build checks — extension, plain name, size, emptiness", () => {
-    const keys = (script: { fileName: string; source: string }) =>
-      validatePackDraft(draft({ prep: [script] })).map((issue) => issue.key)
-    expect(keys({ fileName: "setup.ts", source: SCRIPT })).toContain("packPrepNotJs")
-    expect(keys({ fileName: "nested/setup.js", source: SCRIPT })).toContain("packPrepPath")
-    expect(keys({ fileName: "setup.js", source: "x".repeat(20_001) })).toContain("packPrepTooLong")
-    expect(keys({ fileName: "setup.js", source: "   " })).toContain("packPrepEmpty")
-  })
-
-  it("reads what the source plans and what it reaches for", () => {
-    const reading = readPrepScript(SCRIPT)
-    expect(reading.literalPlanCalls).toBe(2)
-    expect(reading.hasLoop).toBe(true)
-    expect(reading.forbidden).toEqual([])
-
-    // A quoted `plan(` is text, not a call — and a fetch is a script that will
-    // fail at preview, because the sandbox has no network.
-    const reaching = readPrepScript('const s = "plan(" \nawait fetch("https://x")\n')
-    expect(reaching.literalPlanCalls).toBe(0)
-    expect(reaching.forbidden).toEqual(["fetch"])
-  })
-})
-
 describe("serialized modules (连载模组)", () => {
   const EPISODES = [
     { id: "ep1", ordinal: 1, title: "雨夜", summary: "第一夜。", releaseNotes: "首次发布。" },
@@ -932,40 +823,39 @@ describe("serialized modules (连载模组)", () => {
               { title: "第五层的住户", content: "他早已不是人类。", episode: "ep2" },
             ],
           }),
+          kind: "world",
           notesEn: "",
           notesZh: "",
         },
-        { fileName: "later.json", jsonText: "{}", notesEn: "", notesZh: "", episode: "ep2" },
+        {
+          fileName: "later.json",
+          jsonText: "{}",
+          kind: "character",
+          notesEn: "",
+          notesZh: "",
+          episode: "ep2",
+        },
       ],
-      lorebooks: [{ fileName: "fifth-floor.json", jsonText: "{}", episode: "ep2" }],
       assets: [
-        { fileName: "cover.png", base64: "aGk=" },
-        { fileName: "stairwell.png", base64: "aGk=", episode: "ep2" },
+        { fileName: "cover.png", base64: PNG },
+        { fileName: "stairwell.png", base64: PNG, episode: "ep2" },
       ],
     })
   }
 
   it("leaves every future-episode file out of the source tree AND the manifest", () => {
-    // The claim the whole design rests on: the file circulating at episode 1
-    // contains nothing of episode 2, so there is no gating machinery to get
-    // wrong and nothing to leak.
+    // The file circulating at episode 1 contains nothing of episode 2.
     const plan = buildPackSourcePlan(serialized(1))
     const paths = [...plan.files.map((f) => f.path), ...plan.binaries.map((b) => b.path)]
     expect(paths).toContain("cards/keeper.lorecard.json")
     expect(paths).toContain("assets/cover.png")
     expect(paths).not.toContain("cards/later.json")
-    expect(paths).not.toContain("lorebooks/fifth-floor.json")
     expect(paths).not.toContain("assets/stairwell.png")
-
-    // The manifest is built from the same filtered view, so it cannot name a
-    // file the tree does not carry.
     const manifest = parse(plan.files[0].contents) as {
       contents: Record<string, unknown>
       assets: { path: string }[]
     }
-    // A card with no install notes rides as a bare path string.
-    expect(manifest.contents.cards).toEqual(["cards/keeper.lorecard.json"])
-    expect(manifest.contents.lorebooks).toBeUndefined()
+    expect(manifest.contents.cards).toEqual([{ path: "cards/keeper.lorecard.json", kind: "world" }])
     expect(manifest.assets).toEqual([{ path: "assets/cover.png" }])
   })
 
@@ -974,7 +864,6 @@ describe("serialized modules (连载模组)", () => {
     const card = plan.files.find((file) => file.path === "cards/keeper.lorecard.json")!
     expect(card.contents).toContain("雨夜才有第五层")
     expect(card.contents).not.toContain("他早已不是人类")
-    // …and no artifact carries the studio's own tag.
     expect(card.contents).not.toContain("episode")
   })
 
@@ -982,76 +871,21 @@ describe("serialized modules (连载模组)", () => {
     const plan = buildPackSourcePlan(serialized(2))
     const paths = [...plan.files.map((f) => f.path), ...plan.binaries.map((b) => b.path)]
     expect(paths).toContain("cards/later.json")
-    expect(paths).toContain("lorebooks/fifth-floor.json")
     expect(paths).toContain("assets/stairwell.png")
     const card = plan.files.find((file) => file.path === "cards/keeper.lorecard.json")!
     expect(card.contents).toContain("他早已不是人类")
   })
 
-  it("writes CHANGELOG.md from the release-notes chain of this build only", () => {
-    const changelog = buildPackSourcePlan(serialized(1)).files.find((file) => file.path === "CHANGELOG.md")
+  it("writes CHANGELOG.md (never named by the manifest) from the release-notes chain of this build only", () => {
+    const plan = buildPackSourcePlan(serialized(1))
+    const changelog = plan.files.find((file) => file.path === "CHANGELOG.md")
     expect(changelog?.contents).toContain("首次发布。")
     expect(changelog?.contents).not.toContain("新增第五层。")
-    expect(changelog?.contents).not.toContain("第五层")
+    expect(plan.files[0].contents).not.toContain("CHANGELOG")
   })
 
   it("writes no CHANGELOG.md for an ordinary one-shot pack", () => {
     const plan = buildPackSourcePlan(draft())
     expect(plan.files.map((file) => file.path)).not.toContain("CHANGELOG.md")
-  })
-})
-
-describe("prompt presets as pack assets (UPSTREAM item 9)", () => {
-  const PRESET = JSON.stringify({
-    temperature: 0.9,
-    prompts: [{ identifier: "main", name: "Main", content: "You are the Keeper.", role: "system" }],
-    prompt_order: [{ character_id: "100001", order: [{ identifier: "main", enabled: true }] }],
-  })
-
-  it("declares contents.presets and lays the file under presets/", () => {
-    const withPreset = draft({ presets: [{ fileName: "corridor-keeper.json", jsonText: PRESET }] })
-    expect(validatePackDraft(withPreset)).toEqual([])
-    const plan = buildPackSourcePlan(withPreset)
-    expect(plan.files.map((file) => file.path)).toContain("presets/corridor-keeper.json")
-    const manifest = parse(plan.files[0].contents) as { contents: Record<string, unknown> }
-    expect(manifest.contents.presets).toEqual(["presets/corridor-keeper.json"])
-  })
-
-  it("mirrors the engine's structural refusals", () => {
-    const keys = (preset: { fileName: string; jsonText: string }) =>
-      validatePackDraft(draft({ presets: [preset] })).map((issue) => issue.key)
-    expect(keys({ fileName: "p.txt", jsonText: PRESET })).toContain("packPresetNotJson")
-    expect(keys({ fileName: "nested/p.json", jsonText: PRESET })).toContain("packPresetPath")
-    expect(keys({ fileName: "p.json", jsonText: "not json" })).toContain("packPresetNotJsonBody")
-    expect(keys({ fileName: "p.json", jsonText: "[1,2]" })).toContain("packPresetNotObject")
-    expect(keys({ fileName: "p.json", jsonText: "{}" })).toContain("packPresetNoPrompts")
-    // A sampling-only preset has no prompt text to fold, so the engine refuses
-    // it outright — better said here than at build time.
-    expect(keys({ fileName: "p.json", jsonText: '{"prompts": []}' })).toContain("packPresetEmptyPrompts")
-  })
-
-  it("catches two files that would collide in the SHARED preset store", () => {
-    // The id is the SANITIZED stem, so different filenames can land on one id
-    // and silently overwrite each other in `data_dir/presets/`.
-    const issues = validatePackDraft(
-      draft({
-        presets: [
-          { fileName: "Corridor Keeper.json", jsonText: PRESET },
-          { fileName: "corridor-keeper.json", jsonText: PRESET },
-        ],
-      }),
-    )
-    const collision = issues.find((issue) => issue.key === "packPresetIdCollision")
-    expect(collision?.params).toMatchObject({ id: "corridor-keeper" })
-  })
-})
-
-describe("sanitizePresetId", () => {
-  it("mirrors core/preset_store.py::sanitize_preset_id", () => {
-    expect(sanitizePresetId("Corridor Keeper.json")).toBe("corridor-keeper")
-    expect(sanitizePresetId("守秘人.json")).toBe("preset")
-    expect(sanitizePresetId("a".repeat(80) + ".json")).toHaveLength(64)
-    expect(sanitizePresetId("---.json")).toBe("preset")
-    expect(sanitizePresetId("")).toBe("")
   })
 })

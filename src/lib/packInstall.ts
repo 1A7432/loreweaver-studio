@@ -1,55 +1,55 @@
-// Installing a built pack — one target, everywhere.
+// Verifying a built pack with the REAL installer, without touching anybody's server.
 //
-// The engine installs under `settings.data_dir` (`TRPG_DATA_DIR`), and the
-// one-click local server runs with its OWN (`~/.loreweaver/data` by default,
-// `host_local.rs`). Left alone, `--install` from the pack bench lands wherever
-// the studio's environment points — usually the engine checkout — and the
-// server the author is about to play on never sees it.
-//
-// So every install path in the studio goes through here and targets the local
-// server's data dir. That is the directory the studio can actually promise
-// something about: it is the one the app itself will serve from. The alternative
-// — each button installing somewhere different — is how an author ends up with
-// two copies of a pack and a room that resolves neither.
-//
-// The command line the bench displays carries the same overlay, so a
-// copy-pasted command does what the button did.
+// The 3.0 engine installs into its data directory (`TRPG_DATA_DIR`) — on an operator's
+// machine that is a live server's packs. So Studio never installs there: it makes a fresh
+// scratch directory, runs `install <file> --yes` into it (the installer validates the whole
+// pack again, exactly as a server would, and writes it), lists what landed with `packs`, and
+// removes the directory. What an operator types on their own server is shown, not run.
 
-import { hostLocalStatus } from "./hostLocal"
-import { formatCliCommand, runEngineCli, type EngineCandidate, type EngineRunResult } from "./native"
+import {
+  parseInstallJson,
+  parsePacksJson,
+  type InstalledPack,
+  type PackInstallOutcome,
+} from "../features/studio/pack/buildResult"
+import {
+  formatCliCommand,
+  makeScratchDir,
+  removeScratchDir,
+  runEngineCli,
+  type EngineCandidate,
+  type EngineRunResult,
+} from "./native"
 
-export interface PackInstall {
-  result: EngineRunResult
-  /** Where it landed — worth showing, since it is not the cwd. */
-  dataDir: string
+export interface PackVerification {
+  /** The installer's answer; null when stdout was not its JSON object. */
+  install: PackInstallOutcome | null
+  installRun: EngineRunResult
+  /** What `packs` listed afterwards; null when it was not run or did not answer. */
+  listed: InstalledPack[] | null
+  listRun: EngineRunResult | null
 }
 
-/** The local server's data dir, resolved through the same override the host
- * store holds (an author who picked a server folder meant that folder). */
-export async function installDataDir(homeOverride = ""): Promise<string> {
-  const status = await hostLocalStatus(homeOverride.trim() || undefined)
-  return status.dataDir
-}
-
-/** Run `--install <pack> --yes` against the local server's data dir. */
-export async function installPack(
+/** `install <pack> --yes` into a scratch data directory, then `packs`; the directory is
+ * removed whatever happens. */
+export async function verifyPackInstall(
   candidate: EngineCandidate,
   packPath: string,
-  homeOverride = "",
-): Promise<PackInstall> {
-  const dataDir = await installDataDir(homeOverride)
-  const result = await runEngineCli(candidate, ["--install", packPath, "--yes"], {
-    TRPG_DATA_DIR: dataDir,
-  })
-  return { result, dataDir }
+): Promise<PackVerification> {
+  const dataDir = await makeScratchDir()
+  try {
+    const env = { TRPG_DATA_DIR: dataDir }
+    const installRun = await runEngineCli(candidate, ["install", packPath, "--yes"], env)
+    const install = parseInstallJson(installRun.stdout, installRun.stderr)
+    if (install === null || !install.ok) return { install, installRun, listed: null, listRun: null }
+    const listRun = await runEngineCli(candidate, ["packs"], env)
+    return { install, installRun, listed: parsePacksJson(listRun.stdout), listRun }
+  } finally {
+    await removeScratchDir(dataDir).catch(() => undefined)
+  }
 }
 
-/** The same install, as a line an author can paste into a terminal. */
-export function formatInstallCommand(
-  candidate: EngineCandidate | null,
-  packPath: string,
-  dataDir: string,
-): string {
-  const command = formatCliCommand(candidate, ["--install", packPath, "--yes"])
-  return dataDir ? `TRPG_DATA_DIR=${dataDir} ${command}` : command
+/** The install an operator runs on their own server, as a line to paste. */
+export function formatInstallCommand(candidate: EngineCandidate | null, packPath: string): string {
+  return formatCliCommand(candidate, ["install", packPath, "--yes"])
 }

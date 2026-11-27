@@ -5,21 +5,21 @@ import { lintSourceFromPackBench, lintSourceFromProject, loreFromJson } from "./
 import type { PackItem } from "../../../store/pack"
 
 describe("lintSourceFromProject", () => {
-  it("carries the forge's variables, lore and hooks, and no pack rules", () => {
+  it("carries the forge's variables and lore, and no pack rules", () => {
     const project = newProject("Corridor")
     project.variables = [{ ...newVariable(), id: "Fear Level", labelEn: "Fear", labelZh: "" }]
-    project.lorebook = [{ ...newLoreEntry(), title: "Rain", keys: "" }]
-    project.hooks = "on('turn_start', () => setvar('fear_level', 1))"
+    project.lorebook = [
+      { ...newLoreEntry(), title: "Rain", keys: "", content: "The {{var:fear_level}} rises." },
+    ]
 
     const source = lintSourceFromProject(project)
     // Ids are normalized the way the engine will see them.
     expect(source.variables[0].id).toBe("fear_level")
     expect(source.meta).toBeNull()
-    expect(source.code).toEqual([{ origin: "hooks", source: project.hooks }])
 
     const findings = lintPack(source)
     // The dead lore entry and the half-translated label; NOT the unused
-    // variable (the hooks name it) and no pack-metadata noise.
+    // variable (the lore names it) and no pack-metadata noise.
     expect(findings.map((f) => f.ruleId).sort()).toEqual(["bilingualGap", "loreNeverActivates"])
   })
 })
@@ -91,15 +91,41 @@ function cardItem(patch: Partial<PackItem>): PackItem {
     initvarProblems: [],
     episode: "",
     drafts: [],
-    extractSkill: false,
     notesEn: "",
     notesZh: "",
-    entryCount: 0,
     ...patch,
   }
 }
 
 describe("lintSourceFromPackBench", () => {
+  it("reads lore from a card's own lorebook and from no other file", () => {
+    const worldInfo = JSON.stringify({
+      entries: { "0": { comment: "Rain", content: "It rains.", key: ["rain"] } },
+    })
+    const metadata = {
+      id: "corridor",
+      version: "1.0.0",
+      nameEn: "C",
+      nameZh: "走",
+      descriptionEn: "d",
+      descriptionZh: "描",
+      authors: "Nyx",
+      license: "MIT",
+      rulepackPatch: "",
+      rulepackId: "",
+      rulepackMode: "patch" as const,
+    }
+    // A 3.0 pack carries lore inside a world card; a loose world-info JSON is
+    // just an asset, so it contributes nothing.
+    const source = lintSourceFromPackBench({
+      items: [cardItem({ kind: "asset", fileName: "rain.json", uid: "a1", jsonText: worldInfo })],
+      metadata,
+      panels: null,
+      presentation: null,
+    })
+    expect(source.lore).toEqual([])
+  })
+
   it("collects variables from included promotion drafts only", () => {
     const include = {
       uid: "d1",
@@ -125,11 +151,8 @@ describe("lintSourceFromPackBench", () => {
         rulepackPatch: "",
         rulepackId: "",
         rulepackMode: "patch" as const,
-        rulepackScriptName: "",
-        rulepackScriptSource: "",
       },
       panels: null,
-      manualSkills: [],
       presentation: null,
     })
     expect(source.variables.map((v) => v.id)).toEqual(["fear"])
@@ -151,11 +174,8 @@ describe("lintSourceFromPackBench", () => {
         rulepackPatch: "",
         rulepackId: "",
         rulepackMode: "patch" as const,
-        rulepackScriptName: "",
-        rulepackScriptSource: "",
       },
       panels: { yamlText: "panels: []", files: [{ path: "ui/handouts/page.png", base64: "" }] },
-      manualSkills: [],
       presentation: {
         generation: "allow",
         templates: [],
@@ -213,11 +233,8 @@ describe("lintSourceFromPackBench", () => {
         rulepackPatch: "",
         rulepackId: "",
         rulepackMode: "patch" as const,
-        rulepackScriptName: "",
-        rulepackScriptSource: "",
       },
       panels: null,
-      manualSkills: [],
       presentation: null,
     })
     // Only the tagged one, and under the path the pack will ship it at.

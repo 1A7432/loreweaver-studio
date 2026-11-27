@@ -1,12 +1,16 @@
-// World-half → `.lwpack` SOURCE directory. The studio deliberately does NOT
-// zip anything: validation and byte-determinism have exactly one source of
-// truth — the engine (`python -m app --pack <dir>` / `loreweaver-server
-// --pack`). This module only plans the source tree (pack.yaml + cards +
-// lorebooks + skills + rulepack patches) that the engine CLI then builds.
-// Field names and constraints mirror `core/pack.py`.
+// The pack draft → a pack SOURCE tree for the 3.0 engine (`docs/lwf/formats/pack.md`,
+// manifest 3, in the engine repository). The studio deliberately does NOT zip anything:
+// validation, bundling and byte-determinism have exactly one source of truth — the
+// engine's builder (`loreweaver pack <dir> --out <file>`). This module only plans the tree
+// (pack.yaml, cards, skills, rule-pack patches, module sources, panels, the presentation
+// kit and its media) that the builder then turns into a `.lwpack`.
+//
+// What 3.0 refuses is not here at all: no lorebooks (lore rides inside a card), no prompt
+// presets, no prep scripts, no rules scripts beside a rule pack, no `skills/<id>/hooks.js`.
+// Code is a MODULE: a TypeScript or JavaScript entry under `src/`, declared in the manifest,
+// bundled by the builder (`docs/lwf/formats/pack.md` §3).
 
-import { parse, stringify } from "yaml"
-import { evaluate } from "@loreweaver/protocol"
+import { stringify } from "yaml"
 import {
   buildChangelog,
   filterEpisodeContent,
@@ -15,33 +19,63 @@ import {
   type EpisodeTagged,
   type PackEpisode,
 } from "./episodes"
+import { checkPackPath, checkPanelsText } from "../pack/panelsCheck"
+import { readRulepack } from "./rulepack"
 import type { Issue } from "../model"
 
+/** `server/src/core/packs/manifest.ts`. */
+export const MANIFEST_VERSION = 3
+/** The wire protocol a Studio-written pack needs at least (`engine.protocol`). */
+export const ENGINE_PROTOCOL = "3.0"
 export const PACK_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 export const SEMVER_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:[-+][0-9A-Za-z.-]{1,32})?$/
-export const MAX_HOOK_SOURCE_CHARS = 40_000
+/** A rule system's id: its file's stem (`server/src/core/rulepacks/compile.ts`). */
+export const RULE_SYSTEM_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
+/** A skill's id: its directory's name (`server/src/core/skills/parse.ts`). */
+export const SKILL_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/
+/** A module's id: the prefix of its commands and views, `<id>/<name>`. */
+export const MODULE_ID_RE = /^[a-z][a-z0-9_]{0,63}$/
+export const MAX_MODULES = 16
+/** Entries per content kind. */
+export const MAX_KIND_ENTRIES = 64
+export const MAX_ASSETS = 512
+/** A module source's extensions in a source tree (`MODULE_SOURCE_EXTENSIONS`). */
+export const MODULE_SOURCE_EXTENSIONS = [".ts", ".mts", ".tsx", ".js", ".mjs", ".jsx"] as const
+/** Where module sources live in the tree. */
+export const MODULE_DIR = "src"
 const MAX_NOTE_CHARS = 2_000
+const MAX_TEXT_CHARS = 2_000
+const MAX_LICENSE_CHARS = 200
+const MAX_AUTHOR_CHARS = 200
+const MAX_AUTHORS = 32
 
-// M15 panel caps, mirroring `core/panels.py` (author-time strictness — the
-// engine re-validates at build; these keep the wizard red inline).
 export const PANELS_FILE_NAME = "ui/panels.yaml"
-const MAX_PANELS_PER_PACK = 16
-const MAX_PANEL_BLOCKS = 32
-const MAX_PANEL_EXTRA_ASSETS = 8
-const PANEL_SLOTS = new Set(["sidebar", "tray", "modal"])
-const PANEL_AUDIENCES = new Set(["all", "player", "keeper"])
-const PANEL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
+/** Code a pack may not carry outside its module entries (`SCRIPT_EXTENSIONS`). */
+const SCRIPT_EXTENSIONS = [
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".tsx",
+  ".jsx",
+  ".wasm",
+  ".node",
+  ".sh",
+  ".bat",
+  ".cmd",
+  ".ps1",
+  ".exe",
+  ".dll",
+  ".so",
+  ".dylib",
+]
 
-// M19 presentation kit (演出资料包), mirroring `core/presentation.py` — the
-// single schema authority; the engine re-parses the emitted file at pack
-// build (`core/pack.py::_validate_pack_presentation`), so these enums/caps
-// are copied from it, not invented.
+// The presentation kit (演出资料包), mirroring `server/src/core/presentation/kit.ts` — the
+// engine re-parses the emitted file at build, so these enums and caps are copied from it.
 export const PRESENTATION_FILE_NAME = "ui/presentation.yaml"
-/** `core/presentation.py::KIT_VERSION`. v2 (M19 completion, 2026-08-15) added
- * the `templates` allowlist and `style.palette` the M19 spec had promised, and
- * the engine REJECTS a v1 file outright — one clean break, no dual-schema
- * reader, per the standing no-backcompat sanction. The studio emits v2 only.
- * (This closed `UPSTREAM_TODO` item 12.) */
+/** `KIT_VERSION`: a v1 kit is refused outright. */
 export const PRESENTATION_KIT_VERSION = 2
 const MAX_PRESENTATION_FILE_BYTES = 128 * 1024
 const MAX_PRESENTATION_SUBJECTS = 64
@@ -54,47 +88,26 @@ const MAX_PRESENTATION_PALETTE_CHARS = 80
 export const PRESENTATION_GENERATION_MODES = ["allow", "pack_only"] as const
 export const PRESENTATION_SUBJECT_KINDS = ["npc", "location", "item"] as const
 export const PRESENTATION_AUDIO_LAYERS = ["bgm", "ambience", "sfx"] as const
-/** `core/presentation.py::TEMPLATE_KINDS` — the performance shapes the Stage
- * Director may stage. An EMPTY list means all of them; the engine's
- * `allows_template()` reads it that way, so the wizard must not "helpfully"
- * pre-tick every box (that would emit an allowlist the author never chose). */
+/** `TEMPLATE_KINDS`. An EMPTY list means all of them, so the wizard never pre-ticks every box. */
 export const PRESENTATION_TEMPLATE_KINDS = ["image", "title_card", "letter", "clipping", "text"] as const
-/** Soft editor hints only — the engine takes each asset's MIME from the file
- * EXTENSION (`core/pack.py::_ASSET_MIME_BY_SUFFIX`, a table it owns rather than
- * the build machine's mimetypes db) and checks it against
- * `core/hooks.py::UI_IMAGE_MIMES` / `core/presentation.py::AUDIO_MIMES`
- * (`core/pack.py::_enforce_kit_assets`). These two lists are that table's
- * documented surface, pinned upstream by `tests/core/test_pack_asset_mime.py`. */
+/** The asset types a pack may ship, by extension (`ASSET_MIME_BY_EXTENSION`). */
 export const PRESENTATION_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "svg"] as const
-export const PRESENTATION_AUDIO_EXTENSIONS = ["mp3", "ogg", "wav", "flac", "m4a", "aac"] as const
+export const PRESENTATION_AUDIO_EXTENSIONS = [
+  "mp3",
+  "ogg",
+  "oga",
+  "opus",
+  "wav",
+  "flac",
+  "m4a",
+  "aac",
+] as const
+const ASSET_EXTENSIONS: readonly string[] = [
+  ...PRESENTATION_IMAGE_EXTENSIONS,
+  ...PRESENTATION_AUDIO_EXTENSIONS,
+]
 
-// M19 (protocol 2.1) template additions, mirroring `core/panels.py`: the
-// `image` kind, the four performance kinds' required/optional fields with
-// their per-field caps (`core/hooks.py`), and the `visible_when` portable
-// subset (`core/condexpr.py` — MAX_EXPR_LEN included).
-const MAX_UI_LABEL_CHARS = 120
-const MAX_UI_CAPTION_CHARS = 300
-const MAX_UI_BODY_CHARS = 4_000
-const MAX_VISIBLE_WHEN_CHARS = 500
-const PERFORMANCE_KIND_FIELDS: Record<string, { required: string[]; optional: string[] }> = {
-  letter: { required: ["body"], optional: ["from", "to", "date"] },
-  clipping: { required: ["headline", "body"], optional: ["source", "date"] },
-  map_pin: { required: ["src", "label", "x", "y"], optional: ["note"] },
-  title_card: { required: ["title"], optional: ["subtitle", "act"] },
-}
-const PERFORMANCE_FIELD_CAPS: Record<string, number> = {
-  body: MAX_UI_BODY_CHARS,
-  headline: MAX_UI_LABEL_CHARS,
-  label: MAX_UI_LABEL_CHARS,
-  title: MAX_UI_LABEL_CHARS,
-  from: MAX_UI_LABEL_CHARS,
-  to: MAX_UI_LABEL_CHARS,
-  date: MAX_UI_LABEL_CHARS,
-  source: MAX_UI_LABEL_CHARS,
-  act: MAX_UI_LABEL_CHARS,
-  note: MAX_UI_CAPTION_CHARS,
-  subtitle: MAX_UI_CAPTION_CHARS,
-}
+export type CardKind = "world" | "character"
 
 export interface PackCardDraft extends EpisodeTagged {
   /** File name under `cards/` (already sanitized, extension included). */
@@ -102,7 +115,10 @@ export interface PackCardDraft extends EpisodeTagged {
   /** Exactly one of these: JSON card text, or original PNG bytes. */
   jsonText?: string
   base64?: string
-  /** Install notes (table rules / usage guide, shown at install). */
+  /** What the card is, as Studio detected it. Written as `kind:`; the engine checks it
+   * against the card itself and refuses the pack on a mismatch (`card_kind_mismatch`). */
+  kind: CardKind
+  /** Notes for the room admin. */
   notesEn: string
   notesZh: string
 }
@@ -112,32 +128,37 @@ export interface PackSkillDraft {
   nameEn: string
   descriptionEn: string
   descriptionZh: string
-  /** Hook sources, concatenated into one hooks.js. */
-  hooks: string[]
-  /** Hand-written SKILL.md body (frontmatter included). When set it ships
-   * VERBATIM instead of the generated stub — real keeper skills carry prompt
-   * sections, not just a description line. */
+  /** Hand-written SKILL.md (frontmatter included). When set it ships VERBATIM instead of the
+   * generated stub — real keeper skills carry prompt sections, not just a description. */
   skillMd?: string
 }
 
-/** One file a tier-2 panel ships (path is pack-relative, under `ui/`). */
+/** One module: content code the builder bundles (`docs/lwf/formats/pack.md` §3). Studio
+ * writes the source the author gave it and declares it; it does not type-check or run it. */
+export interface PackModuleDraft {
+  uid: string
+  /** MUST equal the id the module passes to `defineModule`. */
+  id: string
+  /** The entry file's name under `src/`. */
+  fileName: string
+  source: string
+}
+
+/** One file a panel names (a page's HTML, a picture), at its pack path under `ui/`. */
 export interface PackPanelFileDraft {
   path: string
-  /** Exactly one of these: UTF-8 text (html/js/css ride as text for readable
-   * diffs) or raw bytes. */
+  /** Exactly one of these: UTF-8 text (an HTML page) or raw bytes. */
   contents?: string
   base64?: string
 }
 
-/** The pack's module-UI declaration: `ui/panels.yaml` + every panel file. */
+/** The pack's panels: `ui/panels.yaml` + every file it names. */
 export interface PackPanelsDraft {
   yamlText: string
   files: PackPanelFileDraft[]
 }
 
-/** One picturable subject (the 定妆 convention). An empty ref is LEGAL — it
- * means "nameable in captions, never generated" (`core/presentation.py`:
- * ref-mandatory is doctrine enforced by the runtime, not by the schema). */
+/** One picturable subject. An empty ref is LEGAL: nameable, never generated. */
 export interface PackPresentationSubjectDraft {
   uid: string
   id: string
@@ -150,7 +171,7 @@ export interface PackPresentationSubjectDraft {
   prompt: string
 }
 
-/** One audio cue the Director may call for, bound to a pack audio asset. */
+/** One audio cue, bound to a pack sound. */
 export interface PackPresentationAudioDraft {
   uid: string
   id: string
@@ -161,107 +182,28 @@ export interface PackPresentationAudioDraft {
   title: string
 }
 
-/** The pack's Stage Director brief: `ui/presentation.yaml` + its media files. */
+/** The presentation kit: `ui/presentation.yaml` + its media files. */
 export interface PackPresentationDraft {
   generation: string
-  /** Kit v2 `templates`: the performance shapes the Director may stage. EMPTY
-   * means every shape is allowed — it is not the same as listing them all,
-   * because the engine reads an empty list as "no allowlist". */
+  /** `templates`: EMPTY means every shape is allowed. */
   templates: string[]
   keywordsEn: string
   keywordsZh: string
   /** Banned elements, one per line. */
   bannedText: string
-  /** Kit v2 `style.palette`: hex codes or colour words, one per line. */
+  /** `style.palette`: hex codes or colour words, one per line. */
   paletteText: string
   subjects: PackPresentationSubjectDraft[]
   audio: PackPresentationAudioDraft[]
 }
 
-// M20 F prep-phase scripts (`contents.prep`), mirroring `core/prep_script.py`
-// and the build-side checks in `core/pack.py::_validate_pack_prep_scripts`.
-// The engine's build checks are deliberately STATIC (extension, size, UTF-8) so
-// packs build identically on machines without the optional QuickJS extra; a
-// syntax error surfaces at `run_prep_plan`'s preview instead. The studio mirrors
-// exactly those checks, plus advisory counts of the runtime caps.
-export const PREP_DIR = "prep"
-export const MAX_PREP_SCRIPT_CHARS = 20_000
-export const MAX_PREP_OPERATIONS = 200
-
-/** One prep-phase plan script. `plan(tool, args)` is the only callable the
- * sandbox exposes; the engine applies the emitted operation list through the
- * ordinary tool path, previewed whole before anything is touched. */
-export interface PackPrepScriptDraft {
-  /** File name under `prep/` — `.js`, the extension the build enforces. */
-  fileName: string
-  source: string
-}
-
-// Keeper-style prompt presets shipped with a pack (`contents.presets`,
-// UPSTREAM item 9). Mirrors `core/pack.py::_validate_pack_presets` and
-// `core/preset_store.py::sanitize_preset_id`: install lands each file in the
-// SHARED store at `data_dir/presets/<id>.json`, where the id is the sanitized
-// filename stem — so two files sanitizing to the same id would silently
-// overwrite each other, and the engine makes that a build error rather than an
-// install surprise. Install ≠ enable still holds: a room folds a preset in only
-// when its keeper runs `.preset enable <id>`.
-export const PRESETS_DIR = "presets"
-/** `core/preset.py::MAX_PRESET_BYTES` / `MAX_PROMPTS`. */
-export const MAX_PRESET_BYTES = 2 * 1024 * 1024
-export const MAX_PRESET_PROMPTS = 512
-
-export interface PackPresetDraft {
-  /** File name under `presets/`; its stem becomes the store id. */
-  fileName: string
-  /** The SillyTavern completion-preset document, verbatim. */
-  jsonText: string
-}
-
-/** Mirror of `core/preset_store.py::sanitize_preset_id`: the stem lowercased,
- * every run outside `[a-z0-9]` collapsed to one dash, capped at 64. A stem that
- * leaves nothing usable (a fully-CJK title) falls back to `preset`; an empty
- * input stays "" so the caller can reject it. */
-export function sanitizePresetId(name: string): string {
-  const stem = name
-    .replace(/\.[^.]*$/, "")
-    .trim()
-    .toLowerCase()
-  if (!stem) return ""
-  const slug = stem
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64)
-  return slug && /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) ? slug : "preset"
-}
-
-/** One rules script a rulepack ships (stage-E `resolution.script` /
- * `subsystems.*.script`). The engine reads it from NEXT TO the YAML and refuses
- * a name with a path separator, so this is a bare file name and nothing else
- * (`core/pack.py::_rulepack_script_files`). */
-export interface PackRulepackScriptDraft {
-  fileName: string
-  source: string
-}
-
 export interface PackRulepackDraft {
-  /** Becomes `rulepacks/<id>.yaml`; the id must be a slug. */
+  /** Becomes `rulepacks/<id>.yaml`; the id is the rule system's. */
   id: string
   yamlText: string
-  /** Rules scripts shipped beside the YAML. Their presence is what lights
-   * `has_rules_script` on the trust card — code, disclosed like hooks. */
-  scripts?: PackRulepackScriptDraft[]
 }
 
-/** `core/rules_script.py::MAX_SCRIPT_CHARS` — the same cap as a hooks.js. */
-export const MAX_RULES_SCRIPT_CHARS = 40_000
-
-export interface PackLorebookDraft extends EpisodeTagged {
-  fileName: string
-  jsonText: string
-}
-
-/** One media asset. The author side only declares the path — sha256/mime/size
- * are filled in by the engine at build time. */
+/** One media asset (a picture or a sound). */
 export interface PackAssetDraft extends EpisodeTagged {
   fileName: string
   base64: string
@@ -277,27 +219,17 @@ export interface WorldPackDraft {
   authors: string[]
   license: string
   cards: PackCardDraft[]
-  lorebooks: PackLorebookDraft[]
   skills: PackSkillDraft[]
   rulepacks: PackRulepackDraft[]
+  modules: PackModuleDraft[]
   assets: PackAssetDraft[]
-  /** M20 F prep-phase plan scripts. They NEVER run automatically — a keeper
-   * invokes one by reference and previews the plan first. */
-  prep: PackPrepScriptDraft[]
-  /** Keeper-style prompt presets. Installed into the SHARED preset store, and
-   * inert until a keeper enables one per room. */
-  presets: PackPresetDraft[]
-  /** M15 module-UI panels; null when the pack ships none. */
+  /** Panels; null when the pack ships none. */
   panels: PackPanelsDraft | null
-  /** M19 presentation kit; null when the pack ships none — the Stage Director
-   * is kit-gated, so null means "no staged beats for rooms of this module". */
+  /** The presentation kit; null when the pack ships none. */
   presentation: PackPresentationDraft | null
-  /** Serialized installments. Empty = an ordinary one-shot pack, which builds
-   * exactly as it always did. */
+  /** Serialized installments. Empty = an ordinary one-shot pack. */
   episodes: PackEpisode[]
-  /** Build up to this episode ordinal; 0 (or absent) means "everything". A
-   * release at episode N carries episodes 1..N and NOTHING of N+1, which is
-   * what makes the circulating file spoiler-safe by construction. */
+  /** Build up to this episode ordinal; 0 (or absent) means "everything". */
   buildUpTo?: number
 }
 
@@ -326,489 +258,241 @@ export function safeFileName(raw: string, fallback: string): string {
   return base || fallback
 }
 
-/** Author-side validation, mirroring what `core.pack.build_pack` will reject —
- * surfaced BEFORE the engine run so the wizard can go red inline. */
+/** Text counted in code points, as the engine counts it. */
+function charCount(text: string): number {
+  return Array.from(text).length
+}
+
+function extensionOf(path: string): string {
+  const name = path.split("/").at(-1) ?? ""
+  const dot = name.lastIndexOf(".")
+  return dot <= 0 ? "" : name.slice(dot).toLowerCase()
+}
+
+/** Where an author reads how to write a module (the engine's module SDK guide). */
+export const SDK_GUIDE_URL = "https://github.com/1A7432/loreweaver/blob/v3/sdk/README.md"
+
+/** Whether a module's source names its id where `defineModule` takes it. Advisory: Studio
+ * does not parse TypeScript, so this only catches the plain mismatch. */
+export function moduleIdMentioned(source: string, id: string): boolean {
+  if (!id) return true
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`\\bid\\s*:\\s*["'\`]${escaped}["'\`]`).test(source)
+}
+
+/** The module entry's pack path. */
+export function moduleEntryPath(module: Pick<PackModuleDraft, "fileName">): string {
+  return `${MODULE_DIR}/${module.fileName.trim()}`
+}
+
+/** Author-side validation, mirroring what the engine's builder refuses — surfaced BEFORE
+ * the build so the wizard goes red inline. The builder stays the authority. */
 export function validatePackDraft(draft: WorldPackDraft): Issue[] {
   const issues: Issue[] = []
   if (!PACK_ID_RE.test(draft.id)) issues.push({ key: "packIdInvalid" })
   if (!SEMVER_RE.test(draft.version)) issues.push({ key: "packVersionInvalid" })
   if (!draft.nameEn.trim() && !draft.nameZh.trim()) issues.push({ key: "packNameRequired" })
-  if (!draft.descriptionEn.trim() && !draft.descriptionZh.trim()) {
+  if (!draft.descriptionEn.trim() && !draft.descriptionZh.trim())
     issues.push({ key: "packDescriptionRequired" })
+  for (const text of [draft.nameEn, draft.nameZh, draft.descriptionEn, draft.descriptionZh]) {
+    if (charCount(text.trim()) > MAX_TEXT_CHARS) {
+      issues.push({ key: "packTextTooLong", params: { max: MAX_TEXT_CHARS } })
+      break
+    }
   }
   if (!draft.license.trim()) issues.push({ key: "packLicenseRequired" })
-  if (draft.authors.every((author) => !author.trim())) issues.push({ key: "packAuthorsRequired" })
+  else if (charCount(draft.license.trim()) > MAX_LICENSE_CHARS) {
+    issues.push({ key: "packLicenseTooLong", params: { max: MAX_LICENSE_CHARS } })
+  }
+  const authors = draft.authors.map((author) => author.trim()).filter(Boolean)
+  if (authors.length === 0) issues.push({ key: "packAuthorsRequired" })
+  if (authors.length > MAX_AUTHORS || authors.some((author) => charCount(author) > MAX_AUTHOR_CHARS)) {
+    issues.push({ key: "packAuthorsTooMany", params: { max: MAX_AUTHORS, chars: MAX_AUTHOR_CHARS } })
+  }
 
+  // One file, one role: a path is named once (case-insensitively, as the engine compares).
   const seenFiles = new Set<string>()
+  const claim = (path: string, from?: string) => {
+    const key = path.normalize("NFC").toLowerCase()
+    if (seenFiles.has(key))
+      issues.push({ key: "packDuplicatePath", params: from ? { file: path, from } : { file: path } })
+    seenFiles.add(key)
+  }
+
+  if (draft.cards.length > MAX_KIND_ENTRIES)
+    issues.push({ key: "packTooManyEntries", params: { kind: "cards", max: MAX_KIND_ENTRIES } })
   for (const card of draft.cards) {
     if ((card.jsonText === undefined) === (card.base64 === undefined)) {
       issues.push({ key: "packCardBodyMissing", params: { file: card.fileName } })
     }
-    if (card.notesEn.length > MAX_NOTE_CHARS || card.notesZh.length > MAX_NOTE_CHARS) {
+    if (charCount(card.notesEn) > MAX_NOTE_CHARS || charCount(card.notesZh) > MAX_NOTE_CHARS) {
       issues.push({ key: "packNotesTooLong", params: { file: card.fileName, max: MAX_NOTE_CHARS } })
     }
     const path = `cards/${card.fileName}`
-    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
-    seenFiles.add(path)
+    if (!/\.(png|json)$/i.test(card.fileName) || checkPackPath(path) !== null) {
+      issues.push({ key: "packCardFileName", params: { file: card.fileName } })
+    }
+    claim(path)
   }
+
+  if (draft.skills.length > MAX_KIND_ENTRIES)
+    issues.push({ key: "packTooManyEntries", params: { kind: "skills", max: MAX_KIND_ENTRIES } })
   const seenSkillSlugs = new Set<string>()
   for (const skill of draft.skills) {
-    if (!PACK_ID_RE.test(skill.slug)) {
+    if (!SKILL_ID_RE.test(skill.slug))
       issues.push({ key: "packSkillSlugInvalid", params: { file: skill.slug } })
-    }
-    if (seenSkillSlugs.has(skill.slug)) {
+    if (seenSkillSlugs.has(skill.slug))
       issues.push({ key: "packDuplicatePath", params: { file: `skills/${skill.slug}` } })
-    }
     seenSkillSlugs.add(skill.slug)
-    const joined = joinHooks(skill.hooks)
-    if (joined.length > MAX_HOOK_SOURCE_CHARS) {
-      issues.push({ key: "packHooksTooLong", params: { file: skill.slug, max: MAX_HOOK_SOURCE_CHARS } })
-    }
-    // A hand-written SKILL.md must open with YAML frontmatter or the engine's
-    // `parse_skill_text` refuses the whole pack.
+    claim(`skills/${skill.slug}/SKILL.md`)
+    // A hand-written SKILL.md must open with YAML front matter or the engine refuses the pack.
     const custom = skill.skillMd?.trim()
-    if (custom && !custom.startsWith("---")) {
+    if (custom && !custom.startsWith("---"))
       issues.push({ key: "packSkillMdNoFrontmatter", params: { file: skill.slug } })
-    }
+  }
+
+  if (draft.rulepacks.length > MAX_KIND_ENTRIES) {
+    issues.push({ key: "packTooManyEntries", params: { kind: "rulepacks", max: MAX_KIND_ENTRIES } })
   }
   for (const rulepack of draft.rulepacks) {
-    if (!PACK_ID_RE.test(rulepack.id)) {
+    if (!RULE_SYSTEM_ID_RE.test(rulepack.id))
       issues.push({ key: "packRulepackIdInvalid", params: { file: rulepack.id } })
+    // A rule pack that needs the rules-script lane is refused: that lane is not part of 3.0.
+    if (readRulepack(rulepack.yamlText).summary.scripts.length > 0) {
+      issues.push({ key: "packRulepackScript", params: { file: rulepack.id } })
     }
-    for (const script of rulepack.scripts ?? []) {
-      // The engine reads a script from beside its YAML and refuses anything
-      // with a separator before any read happens.
-      if (script.fileName.includes("/") || script.fileName.includes("\\")) {
-        issues.push({ key: "packRulesScriptPath", params: { file: script.fileName } })
-      }
-      if (!script.fileName.toLowerCase().endsWith(".js")) {
-        issues.push({ key: "packRulesScriptNotJs", params: { file: script.fileName } })
-      }
-      if (script.source.length > MAX_RULES_SCRIPT_CHARS) {
-        issues.push({
-          key: "packRulesScriptTooLong",
-          params: { file: script.fileName, max: MAX_RULES_SCRIPT_CHARS },
-        })
-      }
+    claim(`rulepacks/${rulepack.id}.yaml`)
+  }
+
+  if (draft.modules.length > MAX_MODULES)
+    issues.push({ key: "packModulesTooMany", params: { max: MAX_MODULES } })
+  const moduleIds = new Set<string>()
+  for (const module of draft.modules) {
+    const label = module.id || module.fileName || "?"
+    if (!MODULE_ID_RE.test(module.id)) issues.push({ key: "packModuleIdInvalid", params: { id: label } })
+    else if (moduleIds.has(module.id))
+      issues.push({ key: "packModuleIdDuplicate", params: { id: module.id } })
+    moduleIds.add(module.id)
+    const fileName = module.fileName.trim()
+    const path = moduleEntryPath(module)
+    if (
+      fileName.includes("/") ||
+      !MODULE_SOURCE_EXTENSIONS.some((extension) => fileName.toLowerCase().endsWith(extension)) ||
+      checkPackPath(path) !== null
+    ) {
+      issues.push({ key: "packModuleFileName", params: { id: label, file: fileName } })
     }
+    if (!module.source.trim()) issues.push({ key: "packModuleEmpty", params: { id: label } })
+    claim(path)
   }
-  for (const lorebook of draft.lorebooks) {
-    const path = `lorebooks/${lorebook.fileName}`
-    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
-    seenFiles.add(path)
-  }
+
+  if (draft.assets.length > MAX_ASSETS) issues.push({ key: "packTooManyAssets", params: { max: MAX_ASSETS } })
   for (const asset of draft.assets) {
     const path = `assets/${asset.fileName}`
-    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
-    seenFiles.add(path)
+    // Anything but a picture or a sound is refused (`asset_type`).
+    if (!ASSET_EXTENSIONS.includes(extensionOf(path).slice(1))) {
+      issues.push({ key: "packAssetType", params: { file: path } })
+    }
+    claim(path)
   }
-  for (const script of draft.prep) {
-    // The engine's build-side checks, verbatim (`_validate_pack_prep_scripts`):
-    // `.js` extension and the sandbox's character cap. Everything else about a
-    // prep script is checked at preview time, not at build.
-    const path = `${PREP_DIR}/${script.fileName}`
-    if (!script.fileName.toLowerCase().endsWith(".js")) {
-      issues.push({ key: "packPrepNotJs", params: { file: path } })
-    }
-    if (script.fileName.includes("/")) {
-      issues.push({ key: "packPrepPath", params: { file: script.fileName } })
-    }
-    if (script.source.length > MAX_PREP_SCRIPT_CHARS) {
-      issues.push({ key: "packPrepTooLong", params: { file: path, max: MAX_PREP_SCRIPT_CHARS } })
-    }
-    if (!script.source.trim()) issues.push({ key: "packPrepEmpty", params: { file: path } })
-    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
-    seenFiles.add(path)
-  }
-  const presetIds = new Set<string>()
-  for (const preset of draft.presets) {
-    const path = `${PRESETS_DIR}/${preset.fileName}`
-    if (!preset.fileName.toLowerCase().endsWith(".json")) {
-      issues.push({ key: "packPresetNotJson", params: { file: path } })
-    }
-    if (preset.fileName.includes("/")) {
-      issues.push({ key: "packPresetPath", params: { file: preset.fileName } })
-    }
-    // The store id is the SANITIZED stem, so two different filenames can land
-    // on one id — which would silently overwrite in the shared store. The
-    // engine refuses that at build; saying it here names both files.
-    const id = sanitizePresetId(preset.fileName)
-    if (!id) {
-      issues.push({ key: "packPresetNoId", params: { file: path } })
-    } else if (presetIds.has(id)) {
-      issues.push({ key: "packPresetIdCollision", params: { file: path, id } })
-    }
-    presetIds.add(id)
-    issues.push(...readPresetIssues(preset, path))
-    if (seenFiles.has(path)) issues.push({ key: "packDuplicatePath", params: { file: path } })
-    seenFiles.add(path)
-  }
-  if (draft.panels !== null) issues.push(...validatePanelsDraft(draft.panels, seenFiles))
+  if (draft.panels !== null) issues.push(...validatePanelsDraft(draft, seenFiles))
   if (draft.presentation !== null) issues.push(...validatePresentationDraft(draft.presentation, seenFiles))
   return issues
 }
 
-/** The structural checks `core/preset.py::parse_st_preset` makes before it will
- * accept a document at all — everything below that degrades into warnings
- * engine-side, so only the hard refusals are mirrored here. */
-function readPresetIssues(preset: PackPresetDraft, path: string): Issue[] {
-  const issues: Issue[] = []
-  const bytes = new TextEncoder().encode(preset.jsonText).length
-  if (bytes > MAX_PRESET_BYTES) {
-    issues.push({ key: "packPresetTooBig", params: { file: path, max: MAX_PRESET_BYTES } })
-    return issues
-  }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(preset.jsonText)
-  } catch {
-    issues.push({ key: "packPresetNotJsonBody", params: { file: path } })
-    return issues
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    issues.push({ key: "packPresetNotObject", params: { file: path } })
-    return issues
-  }
-  const prompts = (parsed as Record<string, unknown>).prompts
-  if (!Array.isArray(prompts)) {
-    issues.push({ key: "packPresetNoPrompts", params: { file: path } })
-  } else if (prompts.length === 0) {
-    issues.push({ key: "packPresetEmptyPrompts", params: { file: path } })
-  } else if (prompts.length > MAX_PRESET_PROMPTS) {
-    issues.push({ key: "packPresetTooManyPrompts", params: { file: path, max: MAX_PRESET_PROMPTS } })
-  }
-  return issues
-}
-
-/** Advisory reading of one prep script: how many operations it plans, and
- * whether it reaches for anything the sandbox does not expose.
- *
- * `plan(tool, args)` is the ONLY callable (`core/prep_script.py::_PRELUDE`),
- * and the engine caps a plan at {@link MAX_PREP_OPERATIONS} operations. A
- * literal count is a lower bound — a loop can plan far more — so this reports
- * what it can see and says so. */
-export function readPrepScript(source: string): {
-  literalPlanCalls: number
-  hasLoop: boolean
-  forbidden: string[]
-  chars: number
-} {
-  const withoutStrings = source.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, " ")
-  const literalPlanCalls = (withoutStrings.match(/\bplan\s*\(/g) ?? []).length
-  const hasLoop = /\b(?:for|while)\s*\(/.test(withoutStrings)
-  // The sandbox has no host, no network and no engine state. Naming one of
-  // these is not a build error — it is a script that will fail at preview.
-  const forbidden = ["fetch", "require", "import", "process", "globalThis.__plan", "XMLHttpRequest"].filter(
-    (name) => new RegExp(`\\b${name.replace(".", "\\.")}\\b`).test(withoutStrings),
-  )
-  return { literalPlanCalls, hasLoop, forbidden, chars: source.length }
-}
-
-/** The block-level 2.1 helpers. Everything else deep stays the ENGINE's job;
- * its build error lands in the wizard terminal. The two things the wizard CAN
- * be actionable about: the five new block kinds' required fields, and
- * `visible_when`, which the engine refuses at pack build
- * (`core.panels._validated_visible_when`) so the wizard must catch it FIRST. */
-
-function isBindingShape(value: unknown): boolean {
-  return typeof value === "object" && value !== null && ("$var" in value || "$leaf" in value)
-}
-
-/** A localized text field, mirroring `core/panels.py::_localized`: a plain
- * string, an `{en,zh}` map, or a binding (checked only against the room). */
-function checkLocalized(value: unknown, cap: number): string | null {
-  if (isBindingShape(value)) return null
-  if (typeof value === "string") {
-    return value.trim().length > 0 && value.length <= cap
-      ? null
-      : `must be a non-empty string of at most ${cap} chars`
-  }
-  if (typeof value === "object" && value !== null) {
-    const entries = Object.entries(value as Record<string, unknown>)
-    const unknown = entries.map(([key]) => key).filter((key) => key !== "en" && key !== "zh")
-    if (unknown.length > 0) return `unknown locale keys ${unknown.sort().join(", ")}`
-    if (entries.length === 0) return "needs at least one of en, zh"
-    for (const [locale, text] of entries) {
-      if (typeof text !== "string" || !text.trim() || text.length > cap) {
-        return `${locale}: must be a non-empty string of at most ${cap} chars`
-      }
-    }
-    return null
-  }
-  return "expected a string or an en/zh mapping"
-}
-
-/** A bindable number, mirroring `core/panels.py::_scalar(types=(int, float))`. */
-function checkBindableNumber(value: unknown): string | null {
-  if (isBindingShape(value)) return null
-  return typeof value === "number" && Number.isFinite(value) ? null : "expected a number or a $var binding"
-}
-
-/** A pack-relative asset path, mirroring `core/panels.py::_validated_asset_path`. */
-function checkAssetPath(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) return "must be a relative path string"
-  const path = value.trim()
-  if (path.startsWith("/") || path.split("/").some((part) => part === ".." || part === "." || !part.trim())) {
-    return "must be a plain relative path (no .. segments)"
-  }
-  return null
-}
-
-/** One `visible_when` condition, mirroring `core/panels.py::_validated_visible_when`
- * (which pairs `compile_expression(probe="1")` with `check_subset`). The shipped
- * evaluator IS the portable subset, so a dry run rejects syntax errors AND
- * out-of-subset constructs in one pass; the `"1"` probe coerces as a number
- * AND orders as a string, so a type only the runtime can know never fails the
- * build-time check. */
-function checkVisibleWhen(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) return "must be a non-empty condition string"
-  const condition = value.trim()
-  if (condition.length > MAX_VISIBLE_WHEN_CHARS) {
-    return `condition exceeds ${MAX_VISIBLE_WHEN_CHARS} chars`
-  }
-  try {
-    evaluate(condition, () => "1")
-    return null
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `${message} (visible_when is the portable subset: comparisons, boolean logic, literals, dotted references — no arithmetic, calls or brackets)`
-  }
-}
-
-/** The 2.1 block-level checks: `visible_when` on ANY block (a repeat wrapper
- * and its inner template included), and the five new kinds' required fields.
- * Returns the image/map_pin `src` paths — the engine folds those into the ONE
- * content-addressed asset pipeline (`core.pack._validate_pack_panels`), so the
- * caller counts them as panel file references exactly like tier-2 assets. */
-function validateTemplateBlocks(
-  blocks: readonly unknown[],
-  label: string,
-  bad: (detail: string) => void,
-  inRepeat = false,
-): string[] {
-  const srcs: string[] = []
-  for (const [index, block] of blocks.entries()) {
-    const here = `${label}[${index}]`
-    if (typeof block !== "object" || block === null) {
-      bad(`${here}: each block must be a mapping`)
-      continue
-    }
-    const record = block as Record<string, unknown>
-    if ("visible_when" in record) {
-      const problem = checkVisibleWhen(record.visible_when)
-      if (problem) bad(`${here}.visible_when: ${problem}`)
-    }
-    if ("repeat" in record) {
-      if (inRepeat) {
-        bad(`${here}: repeat does not nest`)
-        continue
-      }
-      const spec = record.repeat as Record<string, unknown> | null
-      if (typeof spec !== "object" || spec === null) {
-        bad(`${here}.repeat: must be a mapping`)
-        continue
-      }
-      if (typeof spec.prefix !== "string" || !spec.prefix.trim()) {
-        bad(`${here}.repeat.prefix: must be a non-empty string`)
-      }
-      srcs.push(...validateTemplateBlocks([spec.block], `${here}.repeat.block`, bad, true))
-      continue
-    }
-    const kind = record.kind
-    if (kind === "image") {
-      const problem = checkAssetPath(record.src)
-      if (problem) bad(`${here}.src: ${problem}`)
-      else srcs.push((record.src as string).trim())
-      for (const field of ["caption", "alt"] as const) {
-        if (record[field] === undefined) continue
-        const issue = checkLocalized(
-          record[field],
-          field === "caption" ? MAX_UI_CAPTION_CHARS : MAX_UI_LABEL_CHARS,
-        )
-        if (issue) bad(`${here}.${field}: ${issue}`)
-      }
-      continue
-    }
-    if (typeof kind !== "string" || !(kind in PERFORMANCE_KIND_FIELDS)) continue
-    const fields = PERFORMANCE_KIND_FIELDS[kind]
-    for (const field of fields.required) {
-      if (record[field] === undefined) {
-        bad(`${here}: missing ${field}`)
-        continue
-      }
-      const problem =
-        field === "src"
-          ? checkAssetPath(record[field])
-          : field === "x" || field === "y"
-            ? checkBindableNumber(record[field])
-            : checkLocalized(record[field], PERFORMANCE_FIELD_CAPS[field])
-      if (problem) bad(`${here}.${field}: ${problem}`)
-      else if (field === "src") srcs.push((record[field] as string).trim())
-    }
-    for (const field of fields.optional) {
-      if (record[field] === undefined) continue
-      const problem = checkLocalized(record[field], PERFORMANCE_FIELD_CAPS[field])
-      if (problem) bad(`${here}.${field}: ${problem}`)
-    }
-  }
-  return srcs
-}
-
-/** Structural mirror of `core/panels.py::parse_panels_text` — the shape-level
- * rules that decide whether the engine will even look at the file (slug/slot/
- * audience enums, tier-1 vs tier-2 key sets, asset confinement, caps), plus
- * the 2.1 block checks above. Detail strings are author diagnostics,
- * technical English on purpose (same stance as the engine's). */
-function validatePanelsDraft(panels: PackPanelsDraft, seenFiles: Set<string>): Issue[] {
+/** The panels file against the engine's reader (`panelsCheck.ts`), and the files it names
+ * against what the pack ships: a page's HTML from the panel files, every picture from the
+ * panel files, the dropped assets or the kit's media. */
+function validatePanelsDraft(draft: WorldPackDraft, seenFiles: Set<string>): Issue[] {
+  const panels = draft.panels as PackPanelsDraft
   const issues: Issue[] = []
   const filePaths = new Set<string>()
   for (const file of panels.files) {
     const path = file.path
-    const clean =
-      path.startsWith("ui/") &&
-      !path.endsWith("/") &&
-      path !== PANELS_FILE_NAME &&
-      path.split("/").every((part) => part.trim().length > 0 && part !== "." && part !== "..")
-    if (!clean) {
+    if (
+      !path.startsWith("ui/") ||
+      path === PANELS_FILE_NAME ||
+      path === PRESENTATION_FILE_NAME ||
+      checkPackPath(path) !== null
+    ) {
       issues.push({ key: "packPanelPathInvalid", params: { file: path } })
       continue
     }
-    if (filePaths.has(path) || seenFiles.has(path)) {
-      issues.push({ key: "packDuplicatePath", params: { file: path } })
+    // A page is ONE self-contained HTML file: a script beside it is code the pack may not carry.
+    if (SCRIPT_EXTENSIONS.includes(extensionOf(path))) {
+      issues.push({ key: "packPanelScriptFile", params: { file: path } })
     }
+    const key = path.normalize("NFC").toLowerCase()
+    if (filePaths.has(path) || seenFiles.has(key))
+      issues.push({ key: "packDuplicatePath", params: { file: path } })
     filePaths.add(path)
-    seenFiles.add(path)
+    seenFiles.add(key)
     if ((file.contents === undefined) === (file.base64 === undefined)) {
       issues.push({ key: "packPanelFileBodyMissing", params: { file: path } })
     }
   }
 
-  let doc: unknown
-  try {
-    doc = parse(panels.yamlText)
-  } catch (error) {
+  const checked = checkPanelsText(panels.yamlText)
+  for (const problem of checked.problems) {
     issues.push({
-      key: "packPanelsYamlInvalid",
-      params: { detail: error instanceof Error ? error.message.split("\n")[0] : String(error) },
+      key: "packPanelInvalid",
+      params: { code: problem.code, at: problem.path || PANELS_FILE_NAME, detail: problem.detail ?? "" },
     })
-    return issues
-  }
-  const root = doc as Record<string, unknown> | null
-  const list = root !== null && typeof root === "object" ? root.panels : undefined
-  if (!Array.isArray(list) || list.length === 0) {
-    issues.push({ key: "packPanelsShape" })
-    return issues
-  }
-  if (list.length > MAX_PANELS_PER_PACK) {
-    issues.push({ key: "packPanelsCount", params: { max: MAX_PANELS_PER_PACK } })
   }
 
+  const shipped = new Set<string>([...filePaths, ...draft.assets.map((asset) => `assets/${asset.fileName}`)])
+  if (draft.presentation !== null) {
+    for (const file of presentationKitFiles(draft.presentation)) shipped.add(`assets/${file.fileName}`)
+  }
   const referenced = new Set<string>()
-  const seenIds = new Set<string>()
-  // Image/map_pin `src`s join the same content-addressed pipeline as tier-2
-  // assets (`core.pack`): referenced (never orphaned), and an error when the
-  // source tree does not ship them.
-  const noteImageSrcs = (srcs: readonly string[], panelRef: string) => {
-    for (const src of srcs) {
-      referenced.add(src)
-      if (!filePaths.has(src)) {
-        issues.push({ key: "packPanelMissingFile", params: { panel: panelRef, file: src } })
+  for (const panel of checked.panels) {
+    if (panel.entry !== null) {
+      referenced.add(panel.entry)
+      const page = panels.files.find((file) => file.path === panel.entry)
+      if (page === undefined)
+        issues.push({ key: "packPanelMissingFile", params: { panel: panel.id, file: panel.entry } })
+      else if (page.contents === undefined && page.base64 !== undefined) {
+        issues.push({ key: "packPanelPageNotText", params: { file: panel.entry } })
+      }
+    }
+    for (const image of panel.images) {
+      referenced.add(image)
+      if (!shipped.has(image))
+        issues.push({ key: "packPanelMissingFile", params: { panel: panel.id, file: image } })
+      else if (!(PRESENTATION_IMAGE_EXTENSIONS as readonly string[]).includes(extensionOf(image).slice(1))) {
+        issues.push({ key: "packPanelImageType", params: { panel: panel.id, file: image } })
       }
     }
   }
-  for (const [index, rawPanel] of list.entries()) {
-    const panel = rawPanel as Record<string, unknown> | null
-    const bad = (detail: string) =>
-      issues.push({
-        key: "packPanelInvalid",
-        params: { panel: typeof panel?.id === "string" ? panel.id : `#${index + 1}`, detail },
-      })
-    if (panel === null || typeof panel !== "object") {
-      bad("each panel must be a mapping")
-      continue
+  // A panel file nothing names never reaches the archive: the builder reads only named files.
+  if (checked.problems.length === 0) {
+    for (const path of filePaths) {
+      if (!referenced.has(path)) issues.push({ key: "packPanelFileOrphan", params: { file: path } })
     }
-    const id = typeof panel.id === "string" ? panel.id : ""
-    if (!PANEL_SLUG_RE.test(id)) bad("id must be a lowercase slug ([a-z0-9-], max 64)")
-    else if (seenIds.has(id)) bad("duplicate panel id")
-    else seenIds.add(id)
-    if (panel.title === undefined) bad("missing title")
-    if (typeof panel.slot !== "string" || !PANEL_SLOTS.has(panel.slot)) {
-      bad("slot must be sidebar | tray | modal")
-    }
-    if (panel.audience !== undefined) {
-      if (typeof panel.audience !== "string" || !PANEL_AUDIENCES.has(panel.audience)) {
-        bad("audience must be all | player | keeper")
-      }
-    }
-
-    if (panel.entry === undefined) {
-      // Tier 1: blocks required; tier-2 keys forbidden.
-      if (panel.assets !== undefined || panel.fallback !== undefined) {
-        bad("only a tier-2 panel (with entry) declares assets/fallback")
-      }
-      const blocks = panel.blocks
-      if (!Array.isArray(blocks) || blocks.length === 0) bad("a tier-1 panel needs blocks")
-      else {
-        if (blocks.length > MAX_PANEL_BLOCKS) bad(`at most ${MAX_PANEL_BLOCKS} blocks`)
-        noteImageSrcs(validateTemplateBlocks(blocks, "blocks", bad), id || `#${index + 1}`)
-      }
-      continue
-    }
-
-    // Tier 2: entry html + explicit assets (entry included) + explicit fallback.
-    if (panel.blocks !== undefined) bad("a tier-2 panel declares fallback blocks, not blocks")
-    const entry = typeof panel.entry === "string" ? panel.entry : ""
-    if (!/\.html?$/i.test(entry)) bad("entry must be an .html document")
-    const assets = Array.isArray(panel.assets) ? panel.assets.filter((a) => typeof a === "string") : []
-    if (assets.length === 0) bad("a tier-2 panel must list every file it ships (entry included)")
-    else {
-      if (!assets.includes(entry)) bad("assets must include the entry document itself")
-      if (assets.length - 1 > MAX_PANEL_EXTRA_ASSETS) {
-        bad(`at most ${MAX_PANEL_EXTRA_ASSETS} assets beyond the entry`)
-      }
-      const entryDir = entry.includes("/") ? entry.slice(0, entry.lastIndexOf("/")) : ""
-      for (const asset of assets) {
-        if (entryDir !== "" && !asset.startsWith(`${entryDir}/`)) {
-          bad(`${asset} is outside the entry's directory ${entryDir}`)
-        }
-        referenced.add(asset)
-        if (!filePaths.has(asset)) {
-          issues.push({ key: "packPanelMissingFile", params: { panel: id || `#${index + 1}`, file: asset } })
-        }
-      }
-    }
-    if (!("fallback" in panel))
-      bad("fallback is required for a tier-2 panel (write `fallback: null` to opt out)")
-    else if (Array.isArray(panel.fallback)) {
-      if (panel.fallback.length === 0) bad("fallback must be a non-empty list of blocks (or null)")
-      else {
-        if (panel.fallback.length > MAX_PANEL_BLOCKS) bad(`fallback: at most ${MAX_PANEL_BLOCKS} blocks`)
-        noteImageSrcs(validateTemplateBlocks(panel.fallback, "fallback", bad), id || `#${index + 1}`)
-      }
-    }
-  }
-
-  for (const path of filePaths) {
-    if (!referenced.has(path)) issues.push({ key: "packPanelFileOrphan", params: { file: path } })
   }
   return issues
 }
 
-/** A kit media file ships as `assets/<fileName>`: it must stay a plain
- * basename so the resulting pack-relative path passes the engine's
- * confinement check (`core/presentation.py::_asset_path`). */
-function checkKitFileName(fileName: string): string | null {
-  if (fileName.includes("/")) return "must be a plain file name (kit files land directly under assets/, no /)"
-  return checkAssetPath(`assets/${fileName}`)
+/** Every stored panels file's checks, as the editor shows them inline. */
+export function panelsProblems(yamlText: string) {
+  return checkPanelsText(yamlText).problems
 }
 
-/** Structural mirror of `core/presentation.py::parse_presentation_text` —
+/** A kit media file ships as `assets/<fileName>`: a plain basename, so the pack path passes
+ * the engine's path rule. */
+function checkKitFileName(fileName: string): string | null {
+  if (fileName.includes("/")) return "must be a plain file name (kit files land directly under assets/, no /)"
+  const problem = checkPackPath(`assets/${fileName}`)
+  return problem === null ? null : `not a usable file name (${problem})`
+}
+
+/** Structural mirror of the engine's kit reader (`server/src/core/presentation/kit.ts`) —
  * same enums, same caps, same slug rule, so a kit green here survives the
  * engine's re-parse at build. Subject/cue issues carry `uid` + `field` params
  * so the wizard stage renders them next to the offending input; duplicate
- * paths raised here carry `from: "presentation"` for step partitioning. The
- * pack-layer MIME rules (`core/pack.py::_enforce_kit_assets`) are the
- * engine's — the editor only soft-hints them by extension. */
+ * paths raised here carry `from: "presentation"` for step partitioning. Whether
+ * each file IS a picture or a sound (`kit_asset_type`) is the engine's check;
+ * the editor only soft-hints it by extension. */
 function validatePresentationDraft(kit: PackPresentationDraft, seenFiles: Set<string>): Issue[] {
   const issues: Issue[] = []
   type GenerationMode = (typeof PRESENTATION_GENERATION_MODES)[number]
@@ -816,10 +500,11 @@ function validatePresentationDraft(kit: PackPresentationDraft, seenFiles: Set<st
   type AudioLayer = (typeof PRESENTATION_AUDIO_LAYERS)[number]
 
   const noteKitAssetPath = (path: string) => {
-    if (seenFiles.has(path)) {
+    const key = path.normalize("NFC").toLowerCase()
+    if (seenFiles.has(key)) {
       issues.push({ key: "packDuplicatePath", params: { file: path, from: "presentation" } })
     }
-    seenFiles.add(path)
+    seenFiles.add(key)
   }
 
   if (!PRESENTATION_GENERATION_MODES.includes(kit.generation as GenerationMode)) {
@@ -958,7 +643,7 @@ function validatePresentationDraft(kit: PackPresentationDraft, seenFiles: Set<st
     }
   }
 
-  // The emitted file itself is capped (`core/presentation.py:MAX_PRESENTATION_FILE_BYTES`).
+  // The emitted file itself is capped (`MAX_KIT_BYTES`).
   const bytes = new TextEncoder().encode(buildPresentationYaml(kit)).length
   if (bytes > MAX_PRESENTATION_FILE_BYTES) {
     issues.push({ key: "packPresentationTooBig", params: { max: MAX_PRESENTATION_FILE_BYTES } })
@@ -967,7 +652,7 @@ function validatePresentationDraft(kit: PackPresentationDraft, seenFiles: Set<st
 }
 
 /** `ui/presentation.yaml`, emitted exactly in the shape
- * `core/presentation.py::parse_presentation_text` accepts: `version: 2` and an
+ * the engine's kit reader accepts: `version: 2` and an
  * explicit `generation` always; optional sections omitted when empty;
  * localized fields ride as `{en, zh}` maps with the filled locales only;
  * media references point at `assets/<fileName>` (the flagship's layout). */
@@ -1028,8 +713,8 @@ export function buildPresentationYaml(kit: PackPresentationDraft): string {
 
 /** The kit's media files in declaration order (subject refs, then cue
  * assets), de-duplicated by file name — folded into the manifest `assets:`
- * block and the source tree's binaries so every ref/cue passes the asset-block
- * membership check (`core/pack.py::_enforce_kit_assets`). */
+ * block (for a readable manifest: the builder takes them along listed or not)
+ * and the source tree's binaries. */
 export function presentationKitFiles(kit: PackPresentationDraft): { fileName: string; base64: string }[] {
   const files: { fileName: string; base64: string }[] = []
   const seen = new Set<string>()
@@ -1044,9 +729,9 @@ export function presentationKitFiles(kit: PackPresentationDraft): { fileName: st
   return files
 }
 
-/** The kit at a glance — the same numbers the engine's trust card discloses
- * (`core/pack.py`: `presentation` = subject count; `imagegen` = generation
- * allowed AND at least one subject ships a ref). */
+/** The kit at a glance: subjects and cues (what the engine's trust card counts), and
+ * whether image generation can happen at all (generation allowed AND at least one
+ * subject ships a reference picture). */
 export function presentationSummary(kit: PackPresentationDraft): {
   subjects: number
   withRefs: number
@@ -1054,12 +739,8 @@ export function presentationSummary(kit: PackPresentationDraft): {
   mode: "allow" | "pack_only"
   imagegen: boolean
 } {
-  // The engine's rule is the ref PATH, not the bytes:
-  // `any(kit.generates and any(subject.ref for subject in kit.subjects))`
-  // (`core/pack.py`), and `ref` is what `buildPresentationYaml` writes from
-  // `refFileName`. Counting base64 instead made the preview disagree with the
-  // built pack after any reload, since the persisted session drops those bytes
-  // and keeps the name.
+  // The ref PATH counts, not the bytes: `ref` is what `buildPresentationYaml` writes
+  // from `refFileName`, and the persisted session drops the bytes and keeps the name.
   const withRefs = kit.subjects.filter((subject) => subject.refFileName.trim() !== "").length
   const mode = kit.generation === "pack_only" ? "pack_only" : "allow"
   return {
@@ -1078,19 +759,16 @@ function localized(en: string, zh: string): Record<string, string> {
   return out
 }
 
-/** Manifest v2: a card entry is a plain path, or a `{path, notes}` mapping
- * when install notes exist. Authors NEVER declare `kind` — the engine rejects
- * a declared kind outright (`core/pack.py::_parse_card_entry`); detection at
- * build time is the single source of truth and stamps the built manifest. */
-function cardEntryToYaml(card: PackCardDraft): unknown {
-  const path = `cards/${card.fileName}`
+/** A card entry: `{path, kind}` and the notes for the room admin when there are any. */
+function cardEntryToYaml(card: PackCardDraft): Record<string, unknown> {
+  const entry: Record<string, unknown> = { path: `cards/${card.fileName}`, kind: card.kind }
   const notes = localized(card.notesEn, card.notesZh)
-  if (Object.keys(notes).length === 0) return path
-  return { path, notes }
+  if (Object.keys(notes).length > 0) entry.notes = notes
+  return entry
 }
 
-/** The build's horizon: the episode ordinal this release stops at. 0 episodes
- * (an ordinary pack) or an unset `buildUpTo` both mean "everything". */
+/** The build's horizon: the episode ordinal this release stops at. 0 episodes (an ordinary
+ * pack) or an unset `buildUpTo` both mean "everything". */
 export function buildHorizon(draft: WorldPackDraft): number {
   const latest = latestOrdinal(draft.episodes)
   if (latest === 0) return Number.MAX_SAFE_INTEGER
@@ -1101,28 +779,20 @@ export function buildHorizon(draft: WorldPackDraft): number {
 /**
  * The draft as it will actually SHIP: content tagged past the horizon is gone.
  *
- * Everything downstream — the manifest, the file plan, the asset block — reads
- * this and only this, so there is exactly one place a future episode can be
- * excluded and no way for two of them to disagree about what a release
- * contains. That is what makes "the circulating file has no future content"
- * a structural claim rather than a promise.
+ * Everything downstream — the manifest, the file plan, the asset block — reads this and only
+ * this, so there is exactly one place a future episode can be excluded and no way for two of
+ * them to disagree about what a release contains.
  */
 export function draftForRelease(draft: WorldPackDraft): WorldPackDraft {
   const upTo = buildHorizon(draft)
   if (upTo === Number.MAX_SAFE_INTEGER) return draft
   const keep = <T extends EpisodeTagged>(item: T) => includedInBuild(draft.episodes, item, upTo)
-  // A whole FILE can belong to an installment, and so can one entry inside it:
-  // an author who adds a chapter to an existing world tags entries, not files.
-  // Both are cut here, and the studio's own tag never reaches the artifact.
   const trim = (jsonText: string) => filterEpisodeContent(jsonText, draft.episodes, upTo)
   return {
     ...draft,
     cards: draft.cards
       .filter(keep)
       .map((card) => (card.jsonText === undefined ? card : { ...card, jsonText: trim(card.jsonText) })),
-    lorebooks: draft.lorebooks
-      .filter(keep)
-      .map((lorebook) => ({ ...lorebook, jsonText: trim(lorebook.jsonText) })),
     assets: draft.assets.filter(keep),
   }
 }
@@ -1131,60 +801,45 @@ export function buildManifestYaml(input: WorldPackDraft): string {
   const draft = draftForRelease(input)
   const contents: Record<string, unknown> = {}
   if (draft.skills.length > 0) contents.skills = draft.skills.map((skill) => `skills/${skill.slug}`)
-  if (draft.rulepacks.length > 0) {
+  if (draft.rulepacks.length > 0)
     contents.rulepacks = draft.rulepacks.map((rulepack) => `rulepacks/${rulepack.id}.yaml`)
-  }
   if (draft.cards.length > 0) contents.cards = draft.cards.map(cardEntryToYaml)
-  if (draft.lorebooks.length > 0) {
-    contents.lorebooks = draft.lorebooks.map((lorebook) => `lorebooks/${lorebook.fileName}`)
-  }
-  if (draft.presets.length > 0) {
-    contents.presets = draft.presets.map((preset) => `${PRESETS_DIR}/${preset.fileName}`)
-  }
-  if (draft.prep.length > 0) {
-    contents.prep = draft.prep.map((script) => `${PREP_DIR}/${script.fileName}`)
-  }
-  if (draft.panels !== null) contents.panels = [PANELS_FILE_NAME]
   if (draft.presentation !== null) contents.presentation = [PRESENTATION_FILE_NAME]
-  // NOTE: no `trust` block — it is generated at pack time; a hand-written one
-  // is rejected by the engine (`parse_manifest_text(expect_trust=False)`).
-  // Same for `files:` (the built archive's generated inventory) and card
-  // `kind` (detection-stamped). `manifest_version` stays omitted — for an
-  // AUTHOR manifest omission means "current" (`core/pack.py:318`).
+  if (draft.panels !== null) contents.panels = [PANELS_FILE_NAME]
   const manifest: Record<string, unknown> = {
+    manifest_version: MANIFEST_VERSION,
     id: draft.id,
     version: draft.version,
     name: localized(draft.nameEn, draft.nameZh),
     description: localized(draft.descriptionEn, draft.descriptionZh),
     authors: draft.authors.map((author) => author.trim()).filter((author) => author.length > 0),
     license: draft.license.trim(),
-    // Minimum engine versions (minimum-compare only; `protocol` + `server` are
-    // the only keys the engine accepts). "2.0" mirrors the flagship reference
-    // pack (`content/xipu-songdeng/pack.yaml`) and covers every content kind
-    // the studio can emit.
-    engine: { protocol: "2.0" },
-    contents,
+    // A minimum, never a range: the wire protocol every kind Studio writes needs.
+    engine: { protocol: ENGINE_PROTOCOL },
   }
+  if (draft.modules.length > 0) {
+    // The builder bundles each entry and rewrites `entry` to the bundle it writes.
+    manifest.modules = draft.modules.map((module) => ({ id: module.id, entry: moduleEntryPath(module) }))
+  }
+  if (Object.keys(contents).length > 0) manifest.contents = contents
+  // The pictures and sounds a kit or a panel names travel with them, listed or not; what is
+  // listed here are the dropped assets and, for a readable manifest, the kit's media.
   const kitFiles = draft.presentation !== null ? presentationKitFiles(draft.presentation) : []
   if (draft.assets.length > 0 || kitFiles.length > 0) {
-    // Integrity fields (sha256/mime/size) are the engine's to fill at build.
-    // Kit refs/cues MUST sit in this block (`core/pack.py::_enforce_kit_assets`).
+    const listed = new Set<string>()
     manifest.assets = [
-      ...draft.assets.map((asset) => ({ path: `assets/${asset.fileName}` })),
-      ...kitFiles.map((file) => ({ path: `assets/${file.fileName}` })),
+      ...draft.assets.map((asset) => asset.fileName),
+      ...kitFiles.map((file) => file.fileName),
     ]
+      .map((fileName) => `assets/${fileName}`)
+      .filter((path) => (listed.has(path) ? false : (listed.add(path), true)))
+      .map((path) => ({ path }))
   }
   return stringify(manifest, { lineWidth: 0 })
 }
 
-function joinHooks(hooks: string[]): string {
-  return hooks
-    .map((code, index) => (hooks.length > 1 ? `// --- hook ${index + 1} ---\n${code}` : code))
-    .join("\n\n")
-}
-
-/** SKILL.md with the frontmatter `core.skills.parse_skill_text` expects. A
- * hand-written `skillMd` ships verbatim — the author owns the whole document. */
+/** SKILL.md with the front matter the engine's skill reader expects. A hand-written
+ * `skillMd` ships verbatim — the author owns the whole document. */
 export function buildSkillMd(skill: PackSkillDraft): string {
   const custom = skill.skillMd?.trim()
   if (custom) return custom.endsWith("\n") ? custom : `${custom}\n`
@@ -1200,59 +855,38 @@ export function buildSkillMd(skill: PackSkillDraft): string {
   return `---\n${frontmatter}---\n\n${skill.descriptionEn.trim() || skill.slug}\n${zhBlock}`
 }
 
-/** Lay out the full source tree. Callers hand the plan to the Rust side to
- * write, then run the engine CLI on the resulting directory. */
+/** Lay out the full source tree. Callers hand the plan to the Rust side to write, then run
+ * the engine's builder on the resulting directory. */
 export function buildPackSourcePlan(input: WorldPackDraft): PackSourcePlan {
-  // ONE filtered view for the whole plan: the manifest and the files it names
-  // are built from the same object, so a future episode cannot survive in one
-  // and not the other.
+  // ONE filtered view for the whole plan: the manifest and the files it names are built from
+  // the same object, so a future episode cannot survive in one and not the other.
   const draft = draftForRelease(input)
   const files: PackTextFile[] = [{ path: "pack.yaml", contents: buildManifestYaml(draft) }]
   const binaries: PackBinaryFile[] = []
 
+  // The release notes, for the author's repository. The builder reads only the files the
+  // manifest names, so this never reaches the archive.
   const changelog = buildChangelog(
     input.nameEn || input.nameZh,
     input.version,
     input.episodes,
     buildHorizon(input),
   )
-  // Only when there is something to say. The Bomb-3 `--publish`/`--update`
-  // rails will read this; an empty one would be noise in every one-shot pack.
   if (changelog) files.push({ path: "CHANGELOG.md", contents: changelog })
 
   for (const card of draft.cards) {
-    if (card.jsonText !== undefined) {
-      files.push({ path: `cards/${card.fileName}`, contents: card.jsonText })
-    } else if (card.base64 !== undefined) {
-      binaries.push({ path: `cards/${card.fileName}`, base64: card.base64 })
-    }
+    if (card.jsonText !== undefined) files.push({ path: `cards/${card.fileName}`, contents: card.jsonText })
+    else if (card.base64 !== undefined) binaries.push({ path: `cards/${card.fileName}`, base64: card.base64 })
   }
-  for (const lorebook of draft.lorebooks) {
-    files.push({ path: `lorebooks/${lorebook.fileName}`, contents: lorebook.jsonText })
-  }
-  for (const skill of draft.skills) {
+  for (const skill of draft.skills)
     files.push({ path: `skills/${skill.slug}/SKILL.md`, contents: buildSkillMd(skill) })
-    if (skill.hooks.length > 0) {
-      files.push({ path: `skills/${skill.slug}/hooks.js`, contents: joinHooks(skill.hooks) })
-    }
-  }
-  for (const rulepack of draft.rulepacks) {
+  for (const rulepack of draft.rulepacks)
     files.push({ path: `rulepacks/${rulepack.id}.yaml`, contents: rulepack.yamlText })
-    // Beside the YAML, exactly where `_validate_rulepack_file`'s script loader
-    // looks for it.
-    for (const script of rulepack.scripts ?? []) {
-      files.push({ path: `rulepacks/${script.fileName}`, contents: script.source })
-    }
+  for (const module of draft.modules) {
+    const source = module.source.endsWith("\n") ? module.source : `${module.source}\n`
+    files.push({ path: moduleEntryPath(module), contents: source })
   }
-  for (const asset of draft.assets) {
-    binaries.push({ path: `assets/${asset.fileName}`, base64: asset.base64 })
-  }
-  for (const script of draft.prep) {
-    files.push({ path: `${PREP_DIR}/${script.fileName}`, contents: script.source })
-  }
-  for (const preset of draft.presets) {
-    files.push({ path: `${PRESETS_DIR}/${preset.fileName}`, contents: preset.jsonText })
-  }
+  for (const asset of draft.assets) binaries.push({ path: `assets/${asset.fileName}`, base64: asset.base64 })
   if (draft.panels !== null) {
     files.push({ path: PANELS_FILE_NAME, contents: draft.panels.yamlText })
     for (const file of draft.panels.files) {
@@ -1262,10 +896,11 @@ export function buildPackSourcePlan(input: WorldPackDraft): PackSourcePlan {
   }
   if (draft.presentation !== null) {
     files.push({ path: PRESENTATION_FILE_NAME, contents: buildPresentationYaml(draft.presentation) })
+    const written = new Set(binaries.map((binary) => binary.path))
     for (const file of presentationKitFiles(draft.presentation)) {
-      binaries.push({ path: `assets/${file.fileName}`, base64: file.base64 })
+      const path = `assets/${file.fileName}`
+      if (!written.has(path)) binaries.push({ path, base64: file.base64 })
     }
   }
-
   return { dirName: draft.id, files, binaries }
 }

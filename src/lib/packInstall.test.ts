@@ -1,79 +1,90 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import BUILD_OK from "../features/studio/pack/fixtures/build-ok.json"
+
+const INSTALLED = JSON.stringify({
+  ok: true,
+  installed: true,
+  id: "corridor-apartment",
+  version: "1.0.0",
+  sha256: BUILD_OK.sha256,
+  trust: BUILD_OK.trust,
+  shadowed: { ruleSystems: [], skills: [] },
+  replaced: null,
+})
+const LISTED = JSON.stringify({
+  ok: true,
+  packs: [{ id: "corridor-apartment", version: "1.0.0", name: {}, sha256: BUILD_OK.sha256, installedAt: 1 }],
+})
 
 const native = vi.hoisted(() => ({
-  runEngineCli: vi.fn(async () => ({ code: 0, stdout: "", stderr: "", timedOut: false })),
+  runEngineCli: vi.fn(),
+  makeScratchDir: vi.fn(async () => "/tmp/lw-studio-verify-1-2"),
+  removeScratchDir: vi.fn(async () => {}),
   formatCliCommand: (candidate: { program: string; args: string[] } | null, args: string[]): string =>
-    [candidate?.program ?? "python", ...(candidate?.args ?? []), ...args].join(" "),
+    [candidate?.program ?? "loreweaver", ...(candidate?.args ?? []), ...args].join(" "),
 }))
-const host = vi.hoisted(() => ({
-  hostLocalStatus: vi.fn(async (homeOverride?: string) => ({
-    running: false,
-    home: homeOverride ?? "/Users/nyx/.loreweaver",
-    dataDir: `${homeOverride ?? "/Users/nyx/.loreweaver"}/data`,
-    hostId: null,
-  })),
-}))
-
 vi.mock("./native", () => native)
-vi.mock("./hostLocal", () => ({ ...host, HOST_LOCAL_EVENT: "loreweaver://host-local" }))
 
-import { formatInstallCommand, installDataDir, installPack } from "./packInstall"
+import { formatInstallCommand, verifyPackInstall } from "./packInstall"
 
-const CANDIDATE = { kind: "python-module" as const, program: "python", args: ["-m", "app"], cwd: "/repo" }
+const CANDIDATE = {
+  kind: "checkout" as const,
+  program: "bun",
+  args: ["/engine/server/src/cli/main.ts"],
+  cwd: "/tmp",
+  version: "3.0.0",
+  problem: null,
+}
+const run = (stdout: string, code = 0, stderr = "") => ({ code, stdout, stderr, timedOut: false })
 
-describe("installPack", () => {
+describe("verifyPackInstall", () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it("always targets the LOCAL SERVER's data dir", () => {
-    // The one thing this module exists for: the engine installs under
-    // settings.data_dir, the local server has its own, and an install that
-    // lands anywhere else is a pack the app will never serve.
-    return installPack(CANDIDATE, "/out/deep-pier-1.0.0.lwpack").then((install) => {
-      expect(native.runEngineCli).toHaveBeenCalledWith(
-        CANDIDATE,
-        ["--install", "/out/deep-pier-1.0.0.lwpack", "--yes"],
-        { TRPG_DATA_DIR: "/Users/nyx/.loreweaver/data" },
-      )
-      expect(install.dataDir).toBe("/Users/nyx/.loreweaver/data")
+  it("installs into a fresh scratch data directory, lists it, and removes the directory", async () => {
+    native.runEngineCli.mockResolvedValueOnce(run(INSTALLED)).mockResolvedValueOnce(run(LISTED))
+    const verification = await verifyPackInstall(CANDIDATE, "/out/pack.lwpack")
+    expect(native.runEngineCli).toHaveBeenNthCalledWith(
+      1,
+      CANDIDATE,
+      ["install", "/out/pack.lwpack", "--yes"],
+      {
+        TRPG_DATA_DIR: "/tmp/lw-studio-verify-1-2",
+      },
+    )
+    expect(native.runEngineCli).toHaveBeenNthCalledWith(2, CANDIDATE, ["packs"], {
+      TRPG_DATA_DIR: "/tmp/lw-studio-verify-1-2",
     })
+    expect(verification.install?.ok).toBe(true)
+    expect(verification.listed?.map((pack) => pack.id)).toEqual(["corridor-apartment"])
+    expect(native.removeScratchDir).toHaveBeenCalledWith("/tmp/lw-studio-verify-1-2")
   })
 
-  it("follows the author's own server-folder override", async () => {
-    await installPack(CANDIDATE, "/out/x.lwpack", "  /Volumes/Table/lw  ")
-    expect(host.hostLocalStatus).toHaveBeenCalledWith("/Volumes/Table/lw")
-    expect(native.runEngineCli).toHaveBeenCalledWith(CANDIDATE, expect.anything(), {
-      TRPG_DATA_DIR: "/Volumes/Table/lw/data",
+  it("reports a refusal from stderr and lists nothing, still removing the directory", async () => {
+    native.runEngineCli.mockResolvedValueOnce(
+      run("", 1, '{"ok":false,"code":"engine_too_old","detail":"protocol 3.1"}'),
+    )
+    const verification = await verifyPackInstall(CANDIDATE, "/out/pack.lwpack")
+    expect(verification.install).toEqual({
+      ok: false,
+      refusal: { code: "engine_too_old", detail: "protocol 3.1", problems: [] },
     })
+    expect(verification.listed).toBeNull()
+    expect(native.runEngineCli).toHaveBeenCalledTimes(1)
+    expect(native.removeScratchDir).toHaveBeenCalled()
   })
 
-  it("reads a blank override as no override at all", async () => {
-    await installDataDir("   ")
-    expect(host.hostLocalStatus).toHaveBeenCalledWith(undefined)
-  })
-
-  it("hands back the engine's own result untouched", async () => {
-    native.runEngineCli.mockResolvedValueOnce({
-      code: 1,
-      stdout: "",
-      stderr: "pack requires protocol >= 9.0",
-      timedOut: false,
-    })
-    const install = await installPack(CANDIDATE, "/out/x.lwpack")
-    expect(install.result.code).toBe(1)
-    expect(install.result.stderr).toContain("protocol >= 9.0")
+  it("removes the directory even when the engine cannot be spawned", async () => {
+    native.runEngineCli.mockRejectedValueOnce(new Error("spawning bun failed"))
+    await expect(verifyPackInstall(CANDIDATE, "/out/pack.lwpack")).rejects.toThrow("spawning bun failed")
+    expect(native.removeScratchDir).toHaveBeenCalled()
   })
 })
 
 describe("formatInstallCommand", () => {
-  it("carries the same override, so a pasted line does what the button did", () => {
-    expect(formatInstallCommand(CANDIDATE, "/out/x.lwpack", "/Users/nyx/.loreweaver/data")).toBe(
-      "TRPG_DATA_DIR=/Users/nyx/.loreweaver/data python -m app --install /out/x.lwpack --yes",
-    )
-  })
-
-  it("omits the override when the data dir is not known yet", () => {
-    expect(formatInstallCommand(CANDIDATE, "/out/x.lwpack", "")).toBe(
-      "python -m app --install /out/x.lwpack --yes",
+  it("is the operator's own install line, never Studio's scratch directory", () => {
+    expect(formatInstallCommand(null, "/out/pack.lwpack")).toBe("loreweaver install /out/pack.lwpack --yes")
+    expect(formatInstallCommand(CANDIDATE, "/out/pack.lwpack")).toBe(
+      "bun /engine/server/src/cli/main.ts install /out/pack.lwpack --yes",
     )
   })
 })

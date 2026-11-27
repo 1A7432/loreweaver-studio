@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest"
 import { exportNativeBundle } from "../exporters"
-import { newLoreEntry, newPregen, newProject, newVariable, validateProject } from "../model"
+import { newLoreEntry, newProject, newVariable, validateProject } from "../model"
 import { splitCard } from "./cardSplit"
 import { looksLikeLorecard, countVariableSpecs, lorecardToCard, lorecardToProject } from "./lorecard"
 
@@ -18,7 +18,6 @@ function sampleProject() {
   project.alternateGreetings = ["序章：三年前的最后一夜。", "冷开场：内调的茶。"]
   project.creatorNotes = "keeper first"
   project.tags = "noir, tokyo"
-  project.hooks = "on('turn_start', () => { /* pulse */ })"
 
   const heat = newVariable()
   heat.id = "视线"
@@ -61,19 +60,11 @@ function sampleProject() {
   truth.condition = "证据链完整度 >= 6"
   project.lorebook = [open, truth]
 
-  const detective = newPregen()
-  detective.name = "林晚"
-  detective.concept = "放不下的退休刑警"
-  detective.notes = "知道得太多。"
-  detective.skillsText = "侦查 60\n图书馆使用 55"
-  const rookie = newPregen()
-  rookie.name = "阿灿"
-  project.pregens = [detective, rookie]
   return project
 }
 
 describe("lorecard round trip", () => {
-  it("export → import preserves prose, variables, lore flags and hooks", () => {
+  it("export → import preserves prose, variables and lore flags", () => {
     const project = sampleProject()
     const specs = validateProject(project).specs
     expect(specs).toHaveLength(3)
@@ -85,7 +76,6 @@ describe("lorecard round trip", () => {
     expect(back.name).toBe("白鹭")
     expect(back.alternateGreetings).toEqual(project.alternateGreetings)
     expect(back.mesExample).toBe(project.mesExample)
-    expect(back.hooks).toBe(project.hooks)
     expect(back.tags).toBe("noir, tokyo")
 
     expect(back.variables).toHaveLength(3)
@@ -108,14 +98,8 @@ describe("lorecard round trip", () => {
     expect(reOpen?.sticky).toBe(2)
     expect(reOpen?.stableId).toBe("harumi-block")
 
-    expect(back.pregens).toHaveLength(2)
-    expect(back.pregens[0]).toMatchObject({
-      name: "林晚",
-      concept: "放不下的退休刑警",
-      notes: "知道得太多。",
-      skillsText: "侦查 60\n图书馆使用 55",
-    })
-    expect(back.pregens[1]).toMatchObject({ name: "阿灿", skillsText: "" })
+    expect(back).not.toHaveProperty("hooks")
+    expect(back).not.toHaveProperty("pregens")
 
     // The round-tripped specs are identical — the bundle is the source of truth.
     expect(validateProject(back).specs).toEqual(specs)
@@ -186,7 +170,11 @@ describe("lorecard as a pack card (engine-aligned classification)", () => {
   it("secret lore and hooks count as world machinery and leave the character half", () => {
     const project = sampleProject()
     const specs = validateProject(project).specs
-    const bundle = exportNativeBundle(project, specs) as Record<string, unknown>
+    // The forge no longer writes `hooks`; a bundle from a 2.x export still can.
+    const bundle = {
+      ...exportNativeBundle(project, specs),
+      hooks: ["on('turn_start', () => { /* pulse */ })"],
+    } as Record<string, unknown>
     const { card, warnings } = lorecardToCard(bundle)
     expect(warnings).toEqual([])
 
@@ -208,7 +196,7 @@ describe("lorecard as a pack card (engine-aligned classification)", () => {
     expect(openEntry?.id).toBe("harumi-block")
   })
 
-  it("tolerates {code} hook dicts and skips junk pregens with warnings", () => {
+  it("tolerates {code} hook dicts when reading a card's hooks", () => {
     const { card, hooks } = lorecardToCard({
       format: "loreweaver.card",
       format_version: 1,
@@ -217,16 +205,33 @@ describe("lorecard as a pack card (engine-aligned classification)", () => {
     })
     expect(hooks).toEqual(["one()", "two()"])
     expect(card.raw).toHaveProperty("hooks")
+  })
 
+  it("does not import a 2.x bundle's hooks or pregens into a project, and says so", () => {
     const { project, warnings } = lorecardToProject({
       format: "loreweaver.card",
       format_version: 1,
       name: "X",
+      hooks: [{ code: "one()" }, "two()", "  ", 42],
       pregens: [{ name: "林晚", skills: { 侦查: 60, bad: "x" } }, { concept: "no name" }, "not-an-object"],
     })
-    expect(project.pregens).toHaveLength(1)
-    expect(project.pregens[0].skillsText).toBe("侦查 60")
-    expect(warnings).toHaveLength(3)
+    expect(project).not.toHaveProperty("hooks")
+    expect(project).not.toHaveProperty("pregens")
+    expect(warnings).toEqual([
+      "pregens: 3 not imported (a 3.0 engine imports no pregenerated cast)",
+      "hooks: 2 not imported (a 3.0 engine runs no hook scripts)",
+    ])
+  })
+
+  it("stays quiet about hooks and pregens a bundle does not carry", () => {
+    const { warnings } = lorecardToProject({
+      format: "loreweaver.card",
+      format_version: 1,
+      name: "X",
+      hooks: [],
+      pregens: [],
+    })
+    expect(warnings).toEqual([])
   })
 
   it("skips junk rows with warnings instead of failing the bundle", () => {

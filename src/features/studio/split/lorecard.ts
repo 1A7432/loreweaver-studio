@@ -10,12 +10,12 @@
 //    keeper-only visibility, native `condition`/`secret` fields), closing the
 //    round trip with `exportNativeBundle`.
 //
-// Versions: v1 (the frozen M16 consolidation shape — native field names,
-// top-level `hooks`, entry `id`s, `pregens`) is the ONLY version, on both
-// sides. The studio briefly kept a v0 reader for its own historical exports;
-// it is gone. A format the engine refuses is not a format, and a second shape
-// alive only in the editor is exactly the drift the pre-adoption break window
-// exists to prevent — the round-trip gate can only pin ONE truth.
+// Versions: v1 (native field names, entry `id`s) is the ONLY version, on both
+// sides (`LORECARD_VERSION` in the engine's `server/src/core/card/lorecard.ts`).
+// A bundle may still carry the 2.x `hooks` and `pregens` sections: the 3.0
+// engine counts its hook scripts (they make the card a world card) and runs
+// none, and imports no pregens — so the forge reads neither into a project and
+// says what it left out.
 //
 // Junk rows are skipped and reported as warnings, never fatal — same tolerance
 // as the engine. Structural garbage (wrong format tag / version) throws.
@@ -23,15 +23,11 @@
 import { asText, CardParseError, isRecord, type StCharacterCard } from "./charcard"
 import {
   isValidVarId,
-  MAX_PREGENS,
-  MAX_PREGEN_SKILLS,
   newLoreEntry,
-  newPregen,
   newProject,
   newVariable,
   normalizeVarId,
   type ForgeLoreEntry,
-  type ForgePregen,
   type ForgeProject,
   type ForgeVariable,
   type LorePosition,
@@ -362,42 +358,9 @@ export interface ImportedLorecard {
   warnings: string[]
 }
 
-/** One native pregen row → the forge editor's form state, mirroring the
- * engine's `_parse_pregens` tolerance (caps, int skills, junk skipped with
- * warnings). The skills mapping flattens back to one `name value` per line. */
-function pregenToForge(raw: unknown, index: number, warnings: string[]): ForgePregen | null {
-  if (!isRecord(raw)) {
-    warnings.push(`pregens[${index}]: skipped (entry must be a JSON object)`)
-    return null
-  }
-  const name = asText(raw.name).trim()
-  if (!name) {
-    warnings.push(`pregens[${index}]: skipped (missing name)`)
-    return null
-  }
-  const pregen = newPregen()
-  pregen.name = name
-  // v1 writes `concept`; the engine also accepts `blurb`.
-  pregen.concept = asText(raw.concept ?? raw.blurb).trim()
-  pregen.notes = asText(raw.notes).trim()
-  const skillsRaw = raw.skills
-  if (isRecord(skillsRaw)) {
-    const lines: string[] = []
-    for (const [key, value] of Object.entries(skillsRaw).slice(0, MAX_PREGEN_SKILLS)) {
-      const parsed = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null
-      if (parsed === null) {
-        warnings.push(`pregens[${index}].skills.${key}: skipped (not an integer)`)
-        continue
-      }
-      lines.push(`${key.trim()} ${parsed}`)
-    }
-    pregen.skillsText = lines.join("\n")
-  }
-  return pregen
-}
-
-/** Native bundle → a ForgeProject, losslessly (the inverse of
- * `exportNativeBundle`). Throws on structural garbage; junk rows warn. */
+/** Native bundle → a ForgeProject (the inverse of `exportNativeBundle`): everything but the
+ * 2.x `hooks` and `pregens`, which are counted into warnings. Throws on structural garbage;
+ * junk rows warn. */
 export function lorecardToProject(raw: Record<string, unknown>): ImportedLorecard {
   if (!looksLikeLorecard(raw)) throw new CardParseError("notALorecard")
   requireVersion(raw)
@@ -428,19 +391,10 @@ export function lorecardToProject(raw: Record<string, unknown>): ImportedLorecar
   }
   project.lorebook = lorebook
 
-  const pregens: ForgePregen[] = []
-  const rawPregens = Array.isArray(raw.pregens) ? raw.pregens : []
-  for (const [index, item] of rawPregens.entries()) {
-    if (pregens.length >= MAX_PREGENS) {
-      warnings.push(`pregens: truncated to ${MAX_PREGENS} entries`)
-      break
-    }
-    const pregen = pregenToForge(item, index, warnings)
-    if (pregen !== null) pregens.push(pregen)
-  }
-  project.pregens = pregens
-
-  const hooks = hookCodes(raw)
-  if (hooks.length > 0) project.hooks = hooks.join("\n\n")
+  const pregens = Array.isArray(raw.pregens) ? raw.pregens.length : 0
+  if (pregens > 0)
+    warnings.push(`pregens: ${pregens} not imported (a 3.0 engine imports no pregenerated cast)`)
+  const hooks = hookCodes(raw).length
+  if (hooks > 0) warnings.push(`hooks: ${hooks} not imported (a 3.0 engine runs no hook scripts)`)
   return { project, warnings }
 }

@@ -184,11 +184,17 @@ export async function writePackSource(
   })
 }
 
+/** A 3.0 engine command line Studio can run: a `loreweaver` on PATH (`binary`), or an engine
+ * checkout run as `bun <dir>/server/src/cli/main.ts` (`checkout`). */
 export interface EngineCandidate {
-  kind: "bundled-binary" | "python-module"
+  kind: "binary" | "checkout"
   program: string
   args: string[]
   cwd: string | null
+  /** What `--version` printed; null when it did not answer. */
+  version: string | null
+  /** Why `--version` failed, when it did. */
+  problem: string | null
 }
 
 export interface EngineRunResult {
@@ -203,9 +209,8 @@ export async function probeEngineCli(engineRepoDir: string | null): Promise<Engi
   return invoke<EngineCandidate[]>("probe_engine_cli", { engineRepoDir })
 }
 
-/** `env` overlays the studio's environment for this one run — the "test this
- * pack now" path uses it to point `TRPG_DATA_DIR` at the local server's own
- * data dir, so an installed pack lands where that server will look for it. */
+/** Run one engine command. The Rust side removes every `TRPG_*` variable of the studio's own
+ * environment first; `env` overlays this run's (the verification's `TRPG_DATA_DIR`). */
 export async function runEngineCli(
   candidate: EngineCandidate,
   args: string[],
@@ -219,12 +224,22 @@ export async function runEngineCli(
   })
 }
 
-/** Render the exact command line for display / copy-paste (when the engine
- * CLI is missing, the wizard shows this next to the source directory). */
+/** A fresh, empty directory under the system temp dir, for a scratch `TRPG_DATA_DIR`. */
+export async function makeScratchDir(): Promise<string> {
+  return invoke<string>("make_scratch_dir")
+}
+
+/** Remove a directory `makeScratchDir` made (the Rust side refuses any other). */
+export async function removeScratchDir(path: string): Promise<void> {
+  await invoke("remove_scratch_dir", { path })
+}
+
+/** Render the exact command line for display / copy-paste. Without a probed engine it is the
+ * `loreweaver` command an operator would type. */
 export function formatCliCommand(candidate: EngineCandidate | null, args: string[]): string {
   const quote = (part: string) => (/[\s"']/.test(part) ? JSON.stringify(part) : part)
-  const program = candidate?.program ?? "python"
-  const prefix = candidate?.args ?? ["-m", "app"]
+  const program = candidate?.program ?? "loreweaver"
+  const prefix = candidate?.args ?? []
   return [program, ...prefix, ...args].map(quote).join(" ")
 }
 

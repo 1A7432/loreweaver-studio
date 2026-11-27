@@ -1,0 +1,1 @@
+{"ok":false,"code":"invalid_pack","problems":[{"code":"card_kind_mismatch","path":"cards/lin-wan.st.json","detail":"character"},{"code":"card_kind_mismatch","path":"cards/lin-wan.png","detail":"character"}]}

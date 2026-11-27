@@ -1,8 +1,19 @@
 //! Local engine CLI integration. The studio never zips or validates packs in
-//! TypeScript — the engine (`loreweaver-server --pack` / `python -m app
-//! --pack`) is the single source of truth for validation and deterministic
-//! builds. This module only finds that CLI and runs it, streaming nothing:
-//! one bounded run, stdout/stderr and exit code back to the WebView.
+//! TypeScript — the 3.0 engine's command line (`loreweaver pack <dir> --out
+//! <file>`, `install <file> --yes`, `packs`) is the single source of truth for
+//! validation, module bundling and deterministic builds. This module only finds
+//! that command line and runs it, streaming nothing: one bounded run, stdout /
+//! stderr and exit code back to the WebView. Every command prints ONE JSON
+//! object (`server/src/cli/main.ts` in the engine repository).
+//!
+//! Where the engine is found:
+//! - a `loreweaver` executable on PATH (the compiled single-file server), or
+//! - an engine CHECKOUT the author points Studio at: it is run as
+//!   `bun <dir>/server/src/cli/main.ts …`, from a temporary working directory —
+//!   Bun loads `.env` from the working directory, and a checkout's `.env` (model
+//!   keys) must not be read by a pack build.
+//!
+//! Each candidate is probed with `--version` before it is offered.
 //!
 //! Capture contract (`run_engine_cli` / `run_engine_command`):
 //! - Both pipes are drained from spawn, concurrently. Filling one pipe can
@@ -23,16 +34,23 @@ use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 /// Bound runaway CLI output before it reaches the WebView.
 const MAX_CAPTURE_BYTES: usize = 256 * 1024;
 const RUN_TIMEOUT: Duration = Duration::from_secs(600);
+/// `--version` answers at once; a candidate that does not is not offered as working.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 /// After the child is reaped, readers should see EOF almost immediately.
 /// This is a hang-break, not a second run budget.
 const READER_SETTLE: Duration = Duration::from_secs(8);
+/// The name every scratch data directory starts with; `remove_scratch_dir`
+/// removes nothing else.
+const SCRATCH_PREFIX: &str = "lw-studio-verify-";
+/// The engine's entry point inside a checkout.
+const CHECKOUT_ENTRY: [&str; 4] = ["server", "src", "cli", "main.ts"];
 
 /// Appended once when a pipe produced more than the capture cap. The
 /// captured text is the PREFIX (first `MAX_CAPTURE_BYTES` bytes), not a tail.
@@ -41,12 +59,16 @@ const READ_ERROR_PREFIX: &str = "\n… (read error: ";
 
 #[derive(Serialize, Clone)]
 pub struct EngineCandidate {
-    /// "bundled-binary" (PATH `loreweaver-server`) or "python-module".
+    /// "binary" (a `loreweaver` on PATH) or "checkout" (`bun <dir>/server/src/cli/main.ts`).
     pub kind: String,
     pub program: String,
-    /// Argument prefix before the studio's own flags (e.g. ["-m", "app"]).
+    /// Argument prefix before the studio's own arguments (the checkout's entry file).
     pub args: Vec<String>,
     pub cwd: Option<String>,
+    /// What `--version` printed; None when it did not answer.
+    pub version: Option<String>,
+    /// Why `--version` failed, when it did.
+    pub problem: Option<String>,
 }
 
 fn executable_in_path(name: &str) -> Option<PathBuf> {
@@ -71,56 +93,124 @@ fn executable_in_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Probe for a usable engine CLI. `engine_repo_dir` is the user-configured
-/// checkout of the main repo (enables the `python -m app` route).
+/// Ask a candidate its version. The run is sandboxed like every other.
+async fn probe_version(candidate: &mut EngineCandidate) {
+    let mut args = candidate.args.clone();
+    args.push("--version".to_owned());
+    match run_engine_command(
+        &candidate.program,
+        &args,
+        candidate.cwd.as_deref(),
+        None,
+        true,
+        PROBE_TIMEOUT,
+        4096,
+    )
+    .await
+    {
+        Ok(result) if result.code == Some(0) && !result.stdout.trim().is_empty() => {
+            candidate.version = Some(result.stdout.trim().to_owned());
+        }
+        Ok(result) => {
+            let detail = if result.stderr.trim().is_empty() {
+                result.stdout.trim().to_owned()
+            } else {
+                result.stderr.trim().to_owned()
+            };
+            candidate.problem = Some(format!(
+                "--version exited with {}: {}",
+                result
+                    .code
+                    .map_or_else(|| "no code".to_owned(), |code| code.to_string()),
+                detail.chars().take(400).collect::<String>()
+            ));
+        }
+        Err(err) => candidate.problem = Some(err),
+    }
+}
+
+/// Probe for a usable engine command line: a `loreweaver` on PATH, and the
+/// user-configured engine checkout (run with `bun`). Each is asked `--version`.
 #[tauri::command]
 pub async fn probe_engine_cli(engine_repo_dir: Option<String>) -> Vec<EngineCandidate> {
     let mut candidates = Vec::new();
-    if let Some(binary) = executable_in_path("loreweaver-server") {
+    if let Some(binary) = executable_in_path("loreweaver") {
         candidates.push(EngineCandidate {
-            kind: "bundled-binary".to_owned(),
+            kind: "binary".to_owned(),
             program: binary.to_string_lossy().into_owned(),
             args: Vec::new(),
-            cwd: None,
+            cwd: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+            version: None,
+            problem: None,
         });
     }
     if let Some(repo) = engine_repo_dir {
-        let repo_path = Path::new(&repo);
-        if repo_path.join("app.py").is_file() {
-            // The repo's own virtualenv carries the engine's dependencies; a
-            // bare system python almost never does (found live: `python3 -m
-            // app --pack` died with a dependency traceback while the checkout
-            // had a perfectly good .venv). Prefer the venv interpreter.
-            let venv_pythons = [
-                repo_path.join(".venv").join("bin").join("python"),
-                repo_path.join(".venv").join("Scripts").join("python.exe"),
-                repo_path.join("venv").join("bin").join("python"),
-                repo_path.join("venv").join("Scripts").join("python.exe"),
-            ];
-            let venv = venv_pythons.iter().find(|python| python.is_file());
-            if let Some(python) = venv {
-                candidates.push(EngineCandidate {
-                    kind: "python-module".to_owned(),
-                    program: python.to_string_lossy().into_owned(),
-                    args: vec!["-m".to_owned(), "app".to_owned()],
-                    cwd: Some(repo.clone()),
-                });
-            } else {
-                for python in ["python3", "python"] {
-                    if executable_in_path(python).is_some() {
-                        candidates.push(EngineCandidate {
-                            kind: "python-module".to_owned(),
-                            program: python.to_owned(),
-                            args: vec!["-m".to_owned(), "app".to_owned()],
-                            cwd: Some(repo),
-                        });
-                        break;
-                    }
-                }
-            }
+        let entry = CHECKOUT_ENTRY
+            .iter()
+            .fold(Path::new(&repo).to_path_buf(), |path, part| path.join(part));
+        if entry.is_file() {
+            let bun = executable_in_path("bun");
+            candidates.push(EngineCandidate {
+                kind: "checkout".to_owned(),
+                program: bun.map_or_else(
+                    || "bun".to_owned(),
+                    |path| path.to_string_lossy().into_owned(),
+                ),
+                args: vec![entry.to_string_lossy().into_owned()],
+                // Never the checkout itself: Bun would load its `.env`.
+                cwd: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+                version: None,
+                problem: None,
+            });
         }
     }
+    for candidate in &mut candidates {
+        probe_version(candidate).await;
+    }
     candidates
+}
+
+/// A fresh, empty data directory for verifying a pack with the real installer
+/// (`TRPG_DATA_DIR`), under the system temporary directory.
+#[tauri::command]
+pub fn make_scratch_dir() -> Result<String, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("{SCRATCH_PREFIX}{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| format!("creating {} failed: {err}", dir.display()))?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// Whether `path` is a scratch directory this module made: directly under the
+/// system temporary directory, named with `SCRATCH_PREFIX`.
+fn is_scratch_dir(path: &Path) -> bool {
+    let named = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(SCRATCH_PREFIX));
+    let temp = std::env::temp_dir();
+    let parent_is_temp = match (path.parent(), temp.canonicalize()) {
+        (Some(parent), Ok(temp)) => parent.canonicalize().is_ok_and(|parent| parent == temp),
+        _ => false,
+    };
+    named && parent_is_temp
+}
+
+/// Remove a scratch directory `make_scratch_dir` made, and nothing else.
+#[tauri::command]
+pub fn remove_scratch_dir(path: String) -> Result<(), String> {
+    let dir = Path::new(&path);
+    if !is_scratch_dir(dir) {
+        return Err(format!("{path} is not a scratch directory this app made"));
+    }
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("removing {path} failed: {err}")),
+    }
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -240,11 +330,10 @@ fn timeout_stderr(program: &str, timeout: Duration, captured: &str) -> String {
 /// from `probe_engine_cli` or the user's explicit settings — this is a local
 /// developer tool acting on the user's own click, not an exposed surface.
 ///
-/// `env` overlays the studio's own environment for this one run. The caller
-/// that needs it is "test this pack now": `--install` lands the pack under
-/// `settings.data_dir`, which the engine reads from `TRPG_DATA_DIR`, and the
-/// one-click local server runs with its own data dir — without the overlay the
-/// pack would install where nothing is going to look for it.
+/// Every `TRPG_*` variable of the studio's own environment is removed first:
+/// anything an operator left exported would configure this run (another data
+/// directory, a model key). `env` then overlays the run's own settings — the
+/// pack verification uses it to point `TRPG_DATA_DIR` at a scratch directory.
 #[tauri::command]
 pub async fn run_engine_cli(
     program: String,
@@ -257,6 +346,7 @@ pub async fn run_engine_cli(
         &args,
         cwd.as_deref(),
         env,
+        true,
         RUN_TIMEOUT,
         MAX_CAPTURE_BYTES,
     )
@@ -271,6 +361,7 @@ pub(crate) async fn run_engine_command(
     args: &[String],
     cwd: Option<&str>,
     env: Option<HashMap<String, String>>,
+    scrub_trpg: bool,
     timeout: Duration,
     capture_cap: usize,
 ) -> Result<RunResult, String> {
@@ -283,6 +374,13 @@ pub(crate) async fn run_engine_command(
         .kill_on_drop(true);
     if let Some(dir) = cwd {
         command.current_dir(dir);
+    }
+    if scrub_trpg {
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("TRPG_") {
+                command.env_remove(key);
+            }
+        }
     }
     for (key, value) in env.unwrap_or_default() {
         command.env(key, value);
@@ -341,8 +439,8 @@ pub(crate) async fn run_engine_command(
 #[cfg(test)]
 mod tests {
     use super::{
-        drain_pipe, run_engine_command, timeout_line, PipeCapture, READ_ERROR_PREFIX,
-        TRUNCATED_MARKER,
+        drain_pipe, is_scratch_dir, make_scratch_dir, remove_scratch_dir, run_engine_command,
+        timeout_line, PipeCapture, READ_ERROR_PREFIX, TRUNCATED_MARKER,
     };
     use std::collections::HashMap;
     use std::io::Cursor;
@@ -396,6 +494,51 @@ mod tests {
                 ],
             )
         }
+    }
+
+    #[test]
+    fn a_scratch_dir_is_made_empty_and_removed_again() {
+        let dir = make_scratch_dir().expect("scratch dir");
+        let path = std::path::Path::new(&dir);
+        assert!(path.is_dir());
+        assert!(is_scratch_dir(path));
+        std::fs::write(path.join("index.json"), "[]").expect("write into it");
+        remove_scratch_dir(dir.clone()).expect("remove");
+        assert!(!path.exists());
+        // Removing it twice is fine; it is gone either way.
+        remove_scratch_dir(dir).expect("remove again");
+    }
+
+    #[test]
+    fn only_a_scratch_dir_may_be_removed() {
+        let temp = std::env::temp_dir();
+        // The right name somewhere else, and another name in the right place.
+        let elsewhere = temp.join("not-temp").join("lw-studio-verify-1");
+        assert!(!is_scratch_dir(&elsewhere));
+        assert!(
+            remove_scratch_dir(temp.join("someone-elses").to_string_lossy().into_owned()).is_err()
+        );
+        assert!(remove_scratch_dir(temp.to_string_lossy().into_owned()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_overlay_still_reaches_a_scrubbed_child() {
+        let args = vec!["-c".to_owned(), "printf '%s' \"$TRPG_DATA_DIR\"".to_owned()];
+        let mut env = HashMap::new();
+        env.insert("TRPG_DATA_DIR".to_owned(), "/scratch".to_owned());
+        let result = run_engine_command(
+            "sh",
+            &args,
+            None,
+            Some(env),
+            true,
+            Duration::from_secs(10),
+            4096,
+        )
+        .await
+        .expect("spawn/wait failed");
+        assert_eq!(result.stdout, "/scratch");
     }
 
     #[test]
@@ -457,7 +600,15 @@ mod tests {
         let (program, args) = short_echo();
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            run_engine_command(program, &args, None, None, Duration::from_secs(10), 4096),
+            run_engine_command(
+                program,
+                &args,
+                None,
+                None,
+                false,
+                Duration::from_secs(10),
+                4096,
+            ),
         )
         .await
         .expect("short command hung")
@@ -501,6 +652,7 @@ mod tests {
             &args,
             None,
             Some(env),
+            false,
             Duration::from_secs(10),
             4096,
         )
@@ -529,7 +681,7 @@ mod tests {
         let args = vec!["-c".to_owned(), script];
         let result = tokio::time::timeout(
             Duration::from_secs(15),
-            run_engine_command("sh", &args, None, None, Duration::from_secs(12), 64),
+            run_engine_command("sh", &args, None, None, false, Duration::from_secs(12), 64),
         )
         .await
         .expect("stderr-first overfill deadlocked")
@@ -558,7 +710,7 @@ mod tests {
         let args = vec!["-c".to_owned(), script];
         let result = tokio::time::timeout(
             Duration::from_secs(15),
-            run_engine_command("sh", &args, None, None, Duration::from_secs(12), 64),
+            run_engine_command("sh", &args, None, None, false, Duration::from_secs(12), 64),
         )
         .await
         .expect("stdout-first overfill deadlocked")
@@ -581,7 +733,7 @@ mod tests {
         ];
         let result = tokio::time::timeout(
             Duration::from_secs(15),
-            run_engine_command("sh", &args, None, None, Duration::from_secs(12), 32),
+            run_engine_command("sh", &args, None, None, false, Duration::from_secs(12), 32),
         )
         .await
         .expect("huge stdout hung")
@@ -618,7 +770,15 @@ mod tests {
         ];
         let result = tokio::time::timeout(
             Duration::from_secs(8),
-            run_engine_command("sh", &args, None, None, Duration::from_millis(250), 4096),
+            run_engine_command(
+                "sh",
+                &args,
+                None,
+                None,
+                false,
+                Duration::from_millis(250),
+                4096,
+            ),
         )
         .await
         .expect("timeout path hung (readers or wait did not settle)")
@@ -650,7 +810,15 @@ mod tests {
         let args = vec!["-n".to_owned(), "30".to_owned(), "127.0.0.1".to_owned()];
         let result = tokio::time::timeout(
             Duration::from_secs(8),
-            run_engine_command("ping", &args, None, None, Duration::from_millis(300), 4096),
+            run_engine_command(
+                "ping",
+                &args,
+                None,
+                None,
+                false,
+                Duration::from_millis(300),
+                4096,
+            ),
         )
         .await
         .expect("timeout path hung")

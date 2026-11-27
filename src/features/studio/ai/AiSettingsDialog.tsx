@@ -5,24 +5,16 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { aiAvailable, pickDirectory } from "../../../lib/native"
-import { useActivePreset } from "./presetStore"
 import { useAiStore } from "./provider"
-import {
-  deepseekProTemperatureConflict,
-  matchProviderPreset,
-  PROVIDER_PRESETS,
-  type ProviderPresetId,
-} from "./providerPresets"
+import { matchProviderPreset, PROVIDER_PRESETS, type ProviderPresetId } from "./providerPresets"
 
 export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const settings = useAiStore()
-  const activePreset = useActivePreset()
   const [showKey, setShowKey] = useState(false)
 
   const providerPresetId = matchProviderPreset(settings.baseUrl, settings.kind)
   const modelSuggestions = PROVIDER_PRESETS.find((preset) => preset.id === providerPresetId)?.models ?? []
-  const deepseekWarning = deepseekProTemperatureConflict(settings.model, activePreset?.sampling)
 
   const applyProviderPreset = (id: ProviderPresetId) => {
     const preset = PROVIDER_PRESETS.find((candidate) => candidate.id === id)
@@ -99,11 +91,6 @@ export default function AiSettingsDialog({ onClose }: { onClose: () => void }) {
               <option key={model} value={model} />
             ))}
           </datalist>
-          {deepseekWarning ? (
-            <p className="studio-notice" role="alert">
-              {t("studio.ai.deepseekProTempWarning")}
-            </p>
-          ) : null}
         </label>
         <label className="field">
           {t("studio.ai.maxTokens")}

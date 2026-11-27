@@ -2,38 +2,30 @@
 // hand-made cards. Drafts that fail deterministic validation never land; the
 // panel shows what was rejected and lets the conversation continue.
 
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { LlmMessage } from "../../../lib/native"
 import { useStudioStore } from "../../../store/studio"
 import type { ForgeProject } from "../model"
-import { useActivePreset, usePresetStore } from "./presetStore"
 import { CHARACTER_CARD_SYSTEM, WORLD_CARD_SYSTEM } from "./prompts"
 import { aiReady, draftWithRetries, useAiStore } from "./provider"
 import { StreamPreview } from "./StreamPreview"
 import { useDraftStream } from "./useDraftStream"
-import { deepseekProTemperatureConflict } from "./providerPresets"
 import { draftToProject } from "./schemas"
-import { assembleSystemPrompt, toLlmSampling, type MarkerSlot } from "./stPreset"
 
 type DraftMode = "world" | "character"
 
 export default function AiPanel({
   onClose,
   onOpenSettings,
-  onOpenPresets,
 }: {
   onClose: () => void
   onOpenSettings: () => void
-  onOpenPresets: () => void
 }) {
   const { t } = useTranslation()
   const importProject = useStudioStore((s) => s.importProject)
   const settings = useAiStore()
   const ready = aiReady(settings)
-  const presets = usePresetStore((s) => s.presets)
-  const setActivePreset = usePresetStore((s) => s.setActive)
-  const activePreset = useActivePreset()
 
   const [mode, setMode] = useState<DraftMode>("world")
   const [input, setInput] = useState("")
@@ -45,31 +37,7 @@ export default function AiPanel({
   const stream = useDraftStream()
   const [error, setError] = useState<string | null>(null)
 
-  const builtinSystem = mode === "world" ? WORLD_CARD_SYSTEM : CHARACTER_CARD_SYSTEM
-
-  // With a preset active, its assembled text leads and the built-in JSON
-  // contract follows — the deterministic gate stays enforceable either way.
-  // Marker slots are fed from THIS conversation's own context: the current
-  // draft's prose (nothing on the first turn — anchors simply stay empty).
-  const assembled = useMemo(() => {
-    if (activePreset === null) return null
-    const slots: Partial<Record<MarkerSlot, string>> = {}
-    if (draft !== null) {
-      slots.charDescription = draft.description
-      slots.charPersonality = draft.personality
-      slots.scenario = draft.scenario
-    }
-    return assembleSystemPrompt(activePreset, activePreset.overrides, slots)
-  }, [activePreset, draft])
-
-  const system =
-    assembled === null || assembled.system === "" ? builtinSystem : `${assembled.system}\n\n${builtinSystem}`
-  const sampling = useMemo(() => {
-    if (activePreset === null) return undefined
-    const params = toLlmSampling(activePreset.sampling)
-    return Object.keys(params).length > 0 ? params : undefined
-  }, [activePreset])
-  const deepseekWarning = deepseekProTemperatureConflict(settings.model, sampling)
+  const system = mode === "world" ? WORLD_CARD_SYSTEM : CHARACTER_CARD_SYSTEM
 
   const generate = async () => {
     const prompt = input.trim()
@@ -87,7 +55,7 @@ export default function AiPanel({
           return { value: gated.project, problems: gated.problems }
         },
         3,
-        sampling,
+        undefined,
         stream.onStream,
       )
       setAttempts(result.attempts)
@@ -151,45 +119,12 @@ export default function AiPanel({
               <option value="character">{t("studio.ai.modes.character")}</option>
             </select>
           </label>
-          <label className="field field-narrow">
-            {t("studio.ai.promptPreset")}
-            <select
-              value={activePreset?.id ?? ""}
-              onChange={(e) => setActivePreset(e.target.value === "" ? null : e.target.value)}
-              disabled={history.length > 0}
-            >
-              <option value="">{t("studio.ai.builtinPrompts")}</option>
-              {presets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.name || t("studio.untitled")}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="button" className="link-button" onClick={onOpenPresets}>
-            {t("studio.ai.managePresets")}
-          </button>
           {history.length > 0 ? (
             <button type="button" className="ghost-button" onClick={startOver}>
               {t("studio.ai.startOver")}
             </button>
           ) : null}
         </div>
-
-        {activePreset !== null && assembled !== null ? (
-          <p className="studio-hint">
-            {t("studio.ai.presetInUse", {
-              name: activePreset.name,
-              segments: assembled.segmentCount,
-              slots: assembled.usedSlots.length,
-            })}
-          </p>
-        ) : null}
-        {deepseekWarning ? (
-          <p className="studio-notice" role="alert">
-            {t("studio.ai.deepseekProTempWarning")}
-          </p>
-        ) : null}
 
         <label className="field">
           {draft === null ? t("studio.ai.describe") : t("studio.ai.refine")}
@@ -244,7 +179,6 @@ export default function AiPanel({
               {t("studio.ai.summary", {
                 vars: draft.variables.length,
                 lore: draft.lorebook.length,
-                hooks: draft.hooks.trim() ? 1 : 0,
               })}
             </p>
             {draft.description ? <p className="ai-draft-description">{draft.description}</p> : null}

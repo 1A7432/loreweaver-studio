@@ -1,21 +1,19 @@
-// Dual export, per the M14 card-forge draft:
-//  - a Loreweaver-native bundle (lossless: keeps keeper-only variables and
-//    secret lore; typed specs ride verbatim) — format v1, the frozen M16
-//    consolidation shape parsed by the engine's `core/lorecard.py`;
-//  - a SillyTavern V3 card (plays in stock ST *and* imports back into
-//    Loreweaver): typed specs become a generated [InitVar] entry, `condition`
-//    becomes an `@@if` decorator line, hooks ride extensions.loreweaver_hooks.
-//    Keeper-only variables and secret entries are EXCLUDED (no safe ST shape).
-// docs/FORMATS.md documents both shapes.
+// Dual export:
+//  - a Loreweaver-native bundle (`*.lorecard.json`, format v1 — lossless: keeps
+//    keeper-only variables and secret lore; typed specs ride verbatim), read by
+//    the 3.0 engine's `server/src/core/card/lorecard.ts`;
+//  - a SillyTavern V3 card (plays in stock ST *and* imports into Loreweaver):
+//    typed specs become a generated [InitVar] entry, `condition` becomes an
+//    `@@if` decorator line. Keeper-only variables and secret entries are
+//    EXCLUDED (no safe ST shape).
+// Neither carries hook scripts or a pregenerated cast any more: a 3.0 engine
+// counts a card's hooks and never runs them (and they make it a world card),
+// and imports no pregens. The round-trip gate parses both exports with the
+// engine's own card reader (`scripts/check_roundtrip.sh`).
 
 import {
-  MAX_PREGEN_CONCEPT_LEN,
-  MAX_PREGEN_NAME_LEN,
-  MAX_PREGEN_NOTES_LEN,
-  parsePregenSkills,
   splitKeys,
   type ForgeLoreEntry,
-  type ForgePregen,
   type ForgeProject,
   type ModvarSpec,
   type SelectiveLogic,
@@ -66,32 +64,10 @@ function loreToNative(entry: ForgeLoreEntry): Record<string, unknown> {
   }
 }
 
-/** One pregen → the native cast row. Lengths are capped to the engine's
- * truncation limits so the export parses back to exactly what we wrote;
- * invalid skill lines are dropped here and surfaced by `validateProject`. */
-function pregenToNative(pregen: ForgePregen): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    name: pregen.name.trim().slice(0, MAX_PREGEN_NAME_LEN),
-  }
-  const episode = pregen.episode?.trim() ?? ""
-  if (episode) out[EPISODE_FIELD] = episode
-  const concept = pregen.concept.trim().slice(0, MAX_PREGEN_CONCEPT_LEN)
-  if (concept) out["concept"] = concept
-  const notes = pregen.notes.trim().slice(0, MAX_PREGEN_NOTES_LEN)
-  if (notes) out["notes"] = notes
-  const { skills } = parsePregenSkills(pregen.skillsText)
-  if (Object.keys(skills).length > 0) out["skills"] = skills
-  return out
-}
-
 export function exportNativeBundle(project: ForgeProject, specs: ModvarSpec[]): Record<string, unknown> {
-  const hooks = project.hooks.trim()
-  const pregens = (project.pregens ?? []).map(pregenToNative)
   return {
     format: "loreweaver.card",
-    // Format v1: the frozen M16 consolidation shape — native field names,
-    // top-level `hooks`, entry `id`s, and the `pregens` cast. v0 (the
-    // pre-freeze provisional shape) is deliberately unmigratable engine-side.
+    // Format v1 (`LORECARD_VERSION`): native field names and entry `id`s.
     format_version: 1,
     name: project.name.trim(),
     description: project.description,
@@ -104,10 +80,6 @@ export function exportNativeBundle(project: ForgeProject, specs: ModvarSpec[]): 
     tags: splitKeys(project.tags),
     variables: specs,
     worldbook: project.lorebook.map(loreToNative),
-    // Both sections are optional engine-side; omitting empty keys keeps the
-    // document cleaner than writing `"hooks": []` / `"pregens": []`.
-    ...(hooks ? { hooks: [project.hooks] } : {}),
-    ...(pregens.length > 0 ? { pregens } : {}),
   }
 }
 
@@ -272,7 +244,7 @@ export function exportSillyTavernCard(
       creator: "",
       character_version: "",
       group_only_greetings: [],
-      extensions: project.hooks.trim() ? { loreweaver_hooks: [project.hooks] } : {},
+      extensions: {},
       character_book: {
         name: `${project.name.trim()} Worldbook`,
         entries,

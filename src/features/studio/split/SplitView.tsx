@@ -167,10 +167,8 @@ export default function SplitView() {
       initvarProblems: session.initvarProblems,
       episode: "",
       drafts: session.drafts,
-      extractSkill: false,
       notesEn: exposeLines.length > 0 ? `After world import: ${exposeLines.join(" · ")}` : "",
       notesZh: exposeLines.length > 0 ? `世界导入后建议执行:${exposeLines.join(" · ")}` : "",
-      entryCount: 0,
     }
     seedFromSplit(item, item.notesZh, item.notesEn)
     setView("pack")

@@ -1,247 +1,84 @@
-// The editor over a real panels file: it opens what an author wrote, edits it as
-// fields, and writes back YAML the engine still accepts.
+// The editor over a real panels file: it opens what an author wrote, edits it as fields, writes
+// back YAML the engine's checks accept, and previews it with the shared evaluation.
 
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 import { parse as parseYaml } from "yaml"
 import "../../../i18n"
-import type { LintVariable } from "../lint/model"
 import PanelsEditor from "./PanelsEditor"
-
-const VARIABLES: LintVariable[] = [{ id: "tide", labelEn: "Tide", labelZh: "潮汐", visibility: "player" }]
 
 const FILE = `panels:
   - id: tide-board
     title: {en: Tide, zh: 潮汐}
     slot: sidebar
+    views: {me: me}
     blocks:
-      - {kind: meter, label: {en: Water, zh: 水位}, value: {$var: tide}, min: 0, max: 10}
+      - {kind: stat, label: {en: Name, zh: 名字}, value: {$view: me.character.name}}
+      - {kind: meter, label: Water, value: 3, min: 0, max: 10}
 `
 
 function open(yamlText = FILE) {
   const onChange = vi.fn()
-  render(<PanelsEditor yamlText={yamlText} onChange={onChange} variables={VARIABLES} />)
+  render(
+    <PanelsEditor yamlText={yamlText} onChange={onChange} variables={[]} moduleIds={["harbor"]} files={[]} />,
+  )
   return onChange
 }
 
-/** The editor the way PackWizard mounts it: the parent STORES what the editor emits
- * and hands it straight back as `yamlText`. A test that stubs `onChange` never closes
- * that loop, and the loop is where an editor can eat its own cursor. */
 function Wired({ initial = FILE }: { initial?: string }) {
   const [text, setText] = useState(initial)
   return (
     <>
-      <PanelsEditor yamlText={text} onChange={setText} variables={VARIABLES} />
+      <PanelsEditor yamlText={text} onChange={setText} variables={[]} moduleIds={[]} files={[]} />
       <output data-testid="stored">{text}</output>
     </>
   )
 }
 
 describe("PanelsEditor", () => {
-  it("opens a hand-written file as fields, bindings included", () => {
+  it("opens a hand-written file as fields, views and bindings included", () => {
     open()
-
     expect((screen.getByLabelText("Panel id") as HTMLInputElement).value).toBe("tide-board")
-    expect((screen.getByLabelText("Title en") as HTMLInputElement).value).toBe("Tide")
-    expect((screen.getByLabelText("Title zh") as HTMLInputElement).value).toBe("潮汐")
-    // The bound field shows the variable it is bound to, chosen from the pack's own list.
-    expect((screen.getByLabelText("Value") as HTMLSelectElement).value).toBe("tide")
+    expect((screen.getByLabelText("Handle 1") as HTMLInputElement).value).toBe("me")
+    expect((screen.getByLabelText("View 1") as HTMLInputElement).value).toBe("me")
+    expect(screen.getAllByDisplayValue("me.character.name")).toHaveLength(1)
   })
 
-  // "Keeps the author's file as written" is true of the four things it models —
-  // NOT of comments, blank lines or quoting style, which the parse+stringify
-  // round-trip drops on the first committed edit. The editor says so up front.
-  it("warns that field editing reprints the file", () => {
+  it("previews the panel with the engine's sample view values", () => {
     open()
-    expect(screen.getByText(/reprints the whole file/)).toBeInTheDocument()
+    // The engine's sample `me` view names the character Ada Lovelace.
+    expect(screen.getByText("Ada Lovelace")).toBeInTheDocument()
+    expect(screen.getByText("Water")).toBeInTheDocument()
   })
 
-  it("writes the file back as YAML the schema accepts", async () => {
+  it("writes the file back as YAML, bindings intact", async () => {
     const onChange = open()
     await userEvent.clear(screen.getByLabelText("Max"))
     await userEvent.type(screen.getByLabelText("Max"), "12")
-
-    const written = parseYaml(onChange.mock.calls.at(-1)![0]) as {
-      panels: { id: string; blocks: Record<string, unknown>[] }[]
-    }
-    expect(written.panels[0].id).toBe("tide-board")
-    expect(written.panels[0].blocks[0].max).toBe(12)
-    // The binding survived an edit to a neighbouring field.
-    expect(written.panels[0].blocks[0].value).toEqual({ $var: "tide" })
-  })
-
-  it("keeps the author's cursor: typing several characters lands them all, in one field", async () => {
-    // Under the real parent every emitted text used to come straight back as
-    // `yamlText`, be re-parsed into a model with fresh uids, and remount every card —
-    // the focused input was destroyed after ONE keystroke and the next one was lost.
-    render(<Wired />)
-    const box = screen.getByLabelText("Panel id") as HTMLInputElement
-    await userEvent.click(box)
-    await userEvent.type(box, "-two")
-    expect(screen.getByLabelText("Panel id")).toBe(box)
-    expect(document.activeElement).toBe(box)
-    expect(box.value).toBe("tide-board-two")
-    expect(screen.getByTestId("stored").textContent).toContain("id: tide-board-two")
-  })
-
-  it("re-reads the file when the YAML tab changes it, without touching the field it did not", async () => {
-    render(<Wired />)
-    await userEvent.click(screen.getByRole("button", { name: "YAML" }))
-    const yaml = screen.getByRole("textbox", { name: /panels\.yaml|YAML/i }) as HTMLTextAreaElement
-    fireEvent.change(yaml, {
-      target: { value: "panels:\n  - id: other\n    title: Other\n    slot: modal\n    blocks: []\n" },
-    })
-    await userEvent.click(screen.getByRole("button", { name: "Fields" }))
-    expect((screen.getByLabelText("Panel id") as HTMLInputElement).value).toBe("other")
-    expect((screen.getByLabelText("Where") as HTMLSelectElement).value).toBe("modal")
-  })
-
-  it("offers the ENGINE's slots — sidebar, tray, modal — and opens a tray panel as one", () => {
-    open(FILE.replace("slot: sidebar", "slot: tray"))
-    const where = screen.getByLabelText("Where") as HTMLSelectElement
-    expect([...where.options].map((option) => option.value)).toEqual(["sidebar", "tray", "modal"])
-    expect(where.value).toBe("tray")
-  })
-
-  it("shows a block it does not model as kept-as-written instead of dropping it", async () => {
-    const onChange = open(`panels:
-  - id: tide-board
-    title: {en: Tide, zh: 潮汐}
-    slot: sidebar
-    blocks:
-      - {kind: hologram, depth: 3}
-      - {kind: stat, label: {en: Water, zh: 水位}, value: {$var: tide}}
-`)
-    expect(screen.getByText(/kept exactly as written — this editor does not model/i)).toBeInTheDocument()
-    expect(screen.getByText(/1 block\(s\) are of a kind this editor does not model/i)).toBeInTheDocument()
-    // An edit elsewhere writes the file back with the opaque block still in place.
-    await userEvent.type(screen.getByLabelText("Panel id"), "x")
     const written = parseYaml(onChange.mock.calls.at(-1)![0]) as {
       panels: { blocks: Record<string, unknown>[] }[]
     }
-    expect(written.panels[0].blocks[0]).toEqual({ kind: "hologram", depth: 3 })
+    expect(written.panels[0].blocks[1].max).toBe(12)
+    expect(written.panels[0].blocks[0].value).toEqual({ $view: "me.character.name" })
   })
 
-  it("edits a choices block as rows: id, what it sends, and a bilingual label", async () => {
-    const onChange = open(`panels:
-  - id: tide-board
-    title: {en: Tide, zh: 潮汐}
-    slot: sidebar
-    blocks:
-      - {kind: choices, options: [{id: look, label: {en: Look, zh: 看}, input: .ra 侦查}]}
-`)
-    expect((screen.getByLabelText("Option id 1") as HTMLInputElement).value).toBe("look")
-    expect((screen.getByLabelText("Sends 1") as HTMLInputElement).value).toBe(".ra 侦查")
-    await userEvent.click(screen.getByRole("button", { name: "Add an option" }))
-    await userEvent.type(screen.getByLabelText("Option id 2"), "wait")
-    await userEvent.type(screen.getByLabelText("Sends 2"), "wait a while")
-    await userEvent.type(screen.getByLabelText("Label 2 en"), "Wait")
-    const written = parseYaml(onChange.mock.calls.at(-1)![0]) as {
-      panels: { blocks: { options: Record<string, unknown>[] }[] }[]
-    }
-    expect(written.panels[0].blocks[0].options[1]).toEqual({
-      id: "wait",
-      label: "Wait",
-      input: "wait a while",
-    })
+  it("keeps the author's cursor across the parent's round trip", async () => {
+    render(<Wired />)
+    const box = screen.getByLabelText("Panel id") as HTMLInputElement
+    await userEvent.type(box, "-x")
+    expect((screen.getByLabelText("Panel id") as HTMLInputElement).value).toBe("tide-board-x")
+    expect(screen.getByTestId("stored").textContent).toContain("id: tide-board-x")
   })
 
-  it("offers a repeat item only inside a repeat, and no binding on a file path", () => {
-    open(`panels:
-  - id: tide-board
-    title: {en: Tide, zh: 潮汐}
-    slot: sidebar
-    blocks:
-      - {kind: image, src: assets/map.png}
-      - repeat: {prefix: lantern., block: {kind: stat, label: {$leaf: label}, value: {$leaf: value}}}
-`)
-    // The path field has no source menu at all — the engine takes a plain string there.
-    expect(screen.queryByLabelText("File source")).not.toBeInTheDocument()
-    // The repeated block's fields offer the repeat item; a plain block's would not.
-    const labelSource = screen.getByLabelText("Label source") as HTMLSelectElement
-    expect(within(labelSource).getByRole("option", { name: "Repeat item" })).toBeInTheDocument()
-    expect((screen.getByLabelText("Show the whole repeat when") as HTMLInputElement).value).toBe("")
+  it("shows the engine's problem for a path to an undeclared handle", () => {
+    open(FILE.replace("me.character.name", "you.name"))
+    expect(screen.getByText(/“you” is no view handle this panel declares/)).toBeInTheDocument()
   })
 
-  it("keeps a file path a string even when it looks like a number", async () => {
-    const onChange = open(`panels:
-  - id: tide-board
-    title: {en: Tide, zh: 潮汐}
-    slot: sidebar
-    blocks:
-      - {kind: image, src: assets/map.png}
-`)
-    await userEvent.clear(screen.getByLabelText("File"))
-    await userEvent.type(screen.getByLabelText("File"), "12")
-    const written = parseYaml(onChange.mock.calls.at(-1)![0]) as { panels: { blocks: { src: unknown }[] }[] }
-    expect(written.panels[0].blocks[0].src).toBe("12")
-  })
-
-  it("adds a panel, and says what is still missing rather than writing it silently", async () => {
-    const onChange = open()
-    await userEvent.click(screen.getByRole("button", { name: "Add a panel" }))
-
-    expect(screen.getByText(/id must be a lowercase slug/)).toBeInTheDocument()
-    expect(screen.getByText(/has no blocks/)).toBeInTheDocument()
-    expect(onChange).toHaveBeenCalled()
-  })
-
-  it("flags a binding the pack does not declare — the block would vanish at the table", async () => {
-    open(`panels:
-  - id: tide-board
-    title: {en: Tide, zh: 潮汐}
-    slot: sidebar
-    blocks:
-      - {kind: stat, label: {en: Water, zh: 水位}, value: {$var: tidal}}
-`)
-    expect(screen.getByText(/is not a variable this pack declares/)).toBeInTheDocument()
-  })
-
-  it("keeps the YAML tab for the author who wants it", async () => {
-    open()
-    await userEvent.click(screen.getByRole("button", { name: "YAML" }))
-    expect(
-      (screen.getByRole("textbox", { name: /panels\.yaml|YAML/i }) as HTMLTextAreaElement).value,
-    ).toContain("tide-board")
-  })
-
-  it("refuses to guess at an unparseable file instead of emptying it", () => {
-    open("panels: [")
-    expect(screen.getByText(/cannot be parsed/)).toBeInTheDocument()
-    expect(screen.queryByLabelText("Panel id")).not.toBeInTheDocument()
-  })
-
-  it("shows a tier-2 panel in place and writes it back between its neighbors", async () => {
-    const onChange = open(`panels:
-  - id: hud
-    title: HUD
-    slot: sidebar
-    blocks:
-      - {kind: stat, label: A, value: 1}
-  - id: board
-    title: Board
-    slot: sidebar
-    entry: ui/board/index.html
-  - id: map
-    title: Map
-    slot: modal
-    blocks:
-      - {kind: image, src: assets/map.png}
-`)
-    expect(screen.getByText(/Panel “board” ships its own HTML/)).toBeInTheDocument()
-    const ids = screen.getAllByLabelText("Panel id") as HTMLInputElement[]
-    expect(ids.map((box) => box.value)).toEqual(["hud", "map"])
-
-    await userEvent.type(ids[0], "x")
-    const written = parseYaml(onChange.mock.calls.at(-1)![0]) as { panels: { id: string }[] }
-    expect(written.panels.map((panel) => panel.id)).toEqual(["hudx", "board", "map"])
-  })
-
-  it("opens an unknown slot as itself, not as sidebar", () => {
-    open(FILE.replace("slot: sidebar", "slot: overlay"))
-    expect((screen.getByLabelText("Where") as HTMLSelectElement).value).toBe("overlay")
-    expect(screen.getByText(/not a panel slot/)).toBeInTheDocument()
+  it("says a page without a fallback shows one line elsewhere", () => {
+    open("panels:\n  - {id: c, title: C, slot: modal, entry: ui/c.html, fallback: null}\n")
+    expect(screen.getAllByText(/needs a rich client/).length).toBeGreaterThan(0)
   })
 })

@@ -15,7 +15,8 @@
     // Protocol 3.0's client library from source, TEMPORARILY a path dependency on the engine
     // checkout until loreweaver-protocol 3.0.0 is on npm (see vite.config.ts).
     "paths": {
-      "loreweaver-protocol/v3": ["./node_modules/loreweaver-protocol/src/v3/index.ts"]
+      "loreweaver-protocol/v3": ["./node_modules/loreweaver-protocol/src/v3/index.ts"],
+      "loreweaver-protocol": ["./node_modules/loreweaver-protocol/src/index.ts"]
     }
   },
   "include": ["src", "vitest.setup.ts"]

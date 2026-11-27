@@ -3,6 +3,7 @@ import {
   buildDraftFromState,
   classifyJson,
   initvarLeaves,
+  migratePackSession,
   packExposeLines,
   packValidationIssues,
   usePackStore,
@@ -48,7 +49,6 @@ describe("classifyJson", () => {
     expect(classifyJson({ name: "Atlas", description: "city color", entries: [{ content: "a" }] })).toBe(
       "lorebook",
     )
-    expect(classifyJson({ name: "Atlas", entries: { "0": { content: "a" } } })).toBe("lorebook")
     expect(classifyJson({ something: 1 })).toBe("asset")
     expect(classifyJson([1])).toBe("asset")
   })
@@ -71,43 +71,65 @@ describe("initvarLeaves", () => {
   })
 })
 
+const METADATA = {
+  id: "deep-pier",
+  version: "0.1.0",
+  nameEn: "Deep Pier",
+  nameZh: "深渊码头",
+  descriptionEn: "d",
+  descriptionZh: "描述",
+  authors: "someone",
+  license: "MIT",
+  rulepackPatch: "",
+  rulepackId: "",
+  rulepackMode: "patch" as const,
+}
+
 describe("pack store pipeline", () => {
   beforeEach(reset)
 
-  it("classifies dropped files and locks world kind on machinery", async () => {
+  it("classifies dropped files and pins the world kind on machinery", async () => {
     const store = usePackStore.getState()
-    await store.addFiles([
-      file("Heavy Card.json", heavyCardJson()),
-      file("world book.json", JSON.stringify({ entries: [{ content: "lore" }, { content: "x" }] })),
-      file("notes.txt", "hello"),
-    ])
+    await store.addFiles([file("Heavy Card.json", heavyCardJson()), file("notes.txt", "hello")])
     const items = usePackStore.getState().items
-    expect(items.map((item) => item.kind)).toEqual(["card", "lorebook", "asset"])
+    expect(items.map((item) => item.kind)).toEqual(["card", "asset"])
 
     const card = items[0]
     expect(card.cardKind).toBe("world")
     expect(card.payloads).toEqual({ hooks: 1, initvarEntries: 1, ejsBlocks: 1, secretEntries: 0 })
+    // The hook script is kept for display (it makes the card a world card; 3.0 never runs it).
+    expect(card.hooks).toEqual(["on('turn_start', () => {})"])
     expect(card.drafts.length).toBe(2)
-    expect(items[1].entryCount).toBe(2)
 
-    // The engine's rule survives manual edits: machinery ⇒ world.
+    // The kind is what the card IS, whatever an edit says.
     usePackStore.getState().updateItem(card.uid, { cardKind: "character" })
     expect(usePackStore.getState().items[0].cardKind).toBe("world")
   })
 
-  it("pins a clean card to character in both directions (v2: kind is detected, never declared)", async () => {
-    const store = usePackStore.getState()
-    await store.addFiles([file("npc.json", JSON.stringify({ spec: "chara_card_v2", data: { name: "NPC" } }))])
+  it("leaves a dropped lorebook out and says why: 3.0 packs carry lore inside a world card", async () => {
+    await usePackStore
+      .getState()
+      .addFiles([
+        file("world book.json", JSON.stringify({ entries: [{ content: "lore" }] })),
+        file("npc.json", "{}"),
+      ])
+    const state = usePackStore.getState()
+    expect(state.items.map((item) => item.sourceName)).toEqual(["npc.json"])
+    expect(state.loadError).toEqual({ key: "pack.lorebookRefused", params: { file: "world book.json" } })
+  })
+
+  it("pins a clean card to character in both directions", async () => {
+    await usePackStore
+      .getState()
+      .addFiles([file("npc.json", JSON.stringify({ spec: "chara_card_v2", data: { name: "NPC" } }))])
     const card = usePackStore.getState().items[0]
     expect(card.cardKind).toBe("character")
     usePackStore.getState().updateItem(card.uid, { cardKind: "world" })
     expect(usePackStore.getState().items[0].cardKind).toBe("character")
   })
 
-  it("folds a native bundle's typed variables specs into the world detection", async () => {
-    const store = usePackStore.getState()
-    // A specs-only lorecard: no hooks, no [InitVar] entry, no secret lore —
-    // only typed specs. `core/pack.py:644-652` forces kind: world here.
+  it("folds a native bundle's typed variables into the world detection", async () => {
+    // A specs-only lorecard: the engine counts typed variables as world machinery.
     const bundle = {
       format: "loreweaver.card",
       format_version: 1,
@@ -121,7 +143,7 @@ describe("pack store pipeline", () => {
       ],
       worldbook: [{ title: "Pier", content: "plain lore" }],
     }
-    await store.addFiles([file("lin-wan.lorecard.json", JSON.stringify(bundle))])
+    await usePackStore.getState().addFiles([file("lin-wan.lorecard.json", JSON.stringify(bundle))])
     const card = usePackStore.getState().items[0]
     expect(card.kind).toBe("card")
     expect(card.cardKind).toBe("world")
@@ -129,7 +151,6 @@ describe("pack store pipeline", () => {
   })
 
   it("keeps a native bundle without any machinery a character card", async () => {
-    const store = usePackStore.getState()
     const bundle = {
       format: "loreweaver.card",
       format_version: 1,
@@ -137,43 +158,24 @@ describe("pack store pipeline", () => {
       description: "no trackers at all",
       worldbook: [{ title: "Pier", content: "plain lore" }],
     }
-    await store.addFiles([file("a-bai.lorecard.json", JSON.stringify(bundle))])
-    const card = usePackStore.getState().items[0]
-    expect(card.cardKind).toBe("character")
-    expect(card.payloads?.initvarEntries).toBe(0)
+    await usePackStore.getState().addFiles([file("a-bai.lorecard.json", JSON.stringify(bundle))])
+    expect(usePackStore.getState().items[0].cardKind).toBe("character")
   })
 
-  it("builds a WorldPackDraft with skills extracted and hooks removed from the card copy", async () => {
+  it("builds a draft whose cards carry their detected kind and their original text", async () => {
     await usePackStore.getState().addFiles([file("heavy.json", heavyCardJson())])
     const card = usePackStore.getState().items[0]
-    usePackStore.getState().updateItem(card.uid, { extractSkill: true, notesZh: "备注", notesEn: "note" })
-
-    const draft = buildDraftFromState(usePackStore.getState().items, {
-      id: "deep-pier",
-      version: "0.1.0",
-      nameEn: "Deep Pier",
-      nameZh: "深渊码头",
-      descriptionEn: "d",
-      descriptionZh: "描述",
-      authors: "someone",
-      license: "MIT",
-      rulepackPatch: "",
-      rulepackId: "",
-      rulepackMode: "patch" as const,
-      rulepackScriptName: "",
-      rulepackScriptSource: "",
-    })
+    usePackStore.getState().updateItem(card.uid, { notesZh: "备注", notesEn: "note" })
+    const draft = buildDraftFromState({ items: usePackStore.getState().items, metadata: METADATA })
     expect(draft.cards).toHaveLength(1)
-    // Manifest v2: the author draft carries NO kind — detection stamps it.
-    expect(draft.cards[0]).not.toHaveProperty("kind")
-    expect(draft.cards[0].jsonText).not.toContain("loreweaver_hooks")
-    expect(draft.skills).toHaveLength(1)
-    expect(draft.skills[0].hooks).toEqual(["on('turn_start', () => {})"])
+    expect(draft.cards[0].kind).toBe("world")
+    // The card ships as dropped: its hooks are counted by the engine, never run.
+    expect(draft.cards[0].jsonText).toBe(heavyCardJson())
+    expect(draft.skills).toEqual([])
   })
 
   it("suggests expose lines only for player-guessed prefixes of world cards", async () => {
     await usePackStore.getState().addFiles([file("heavy.json", heavyCardJson())])
-    // 理.好感度 is player-guessed; secret_flag is keeper-guessed by name.
     expect(packExposeLines(usePackStore.getState().items)).toEqual([".var expose 理"])
   })
 
@@ -181,61 +183,54 @@ describe("pack store pipeline", () => {
     await usePackStore.getState().addFiles([file("cover art.png", "not a png at all")])
     const items = usePackStore.getState().items
     expect(items[0].kind).toBe("asset")
-    const draft = buildDraftFromState(items, {
-      id: "p",
-      version: "0.1.0",
-      nameEn: "P",
-      nameZh: "",
-      descriptionEn: "d",
-      descriptionZh: "",
-      authors: "a",
-      license: "MIT",
-      rulepackPatch: "",
-      rulepackId: "",
-      rulepackMode: "patch" as const,
-      rulepackScriptName: "",
-      rulepackScriptSource: "",
-    })
+    const draft = buildDraftFromState({ items, metadata: METADATA })
     expect(draft.assets).toEqual([{ fileName: items[0].fileName, base64: items[0].base64, episode: "" }])
   })
 
-  describe("rules scripts", () => {
-    const withRulepack = (yamlText: string, source: string) =>
-      buildDraftFromState([], {
-        id: "p",
-        version: "0.1.0",
-        nameEn: "P",
-        nameZh: "",
-        descriptionEn: "d",
-        descriptionZh: "",
-        authors: "a",
-        license: "MIT",
-        rulepackPatch: yamlText,
-        rulepackId: "mysys",
-        rulepackMode: "full" as const,
-        rulepackScriptName: "whatever-the-picker-called-it.js",
-        rulepackScriptSource: source,
-      })
-
-    it("ships the script under the name the YAML declares, not the picked one", () => {
-      // `core/pack.py` reads the script by the name in `resolution.script` and
-      // from NEXT TO the yaml. The file name the author happened to pick on
-      // disk is not the contract; the declaration is.
-      const draft = withRulepack("resolution:\n  script: grade.js\n  roll: 1d100\n", "function resolve() {}")
-      expect(draft.rulepacks[0].scripts).toEqual([{ fileName: "grade.js", source: "function resolve() {}" }])
+  it("names the rule pack after its id, or `<pack id>-rules`", () => {
+    const named = buildDraftFromState({
+      items: [],
+      metadata: { ...METADATA, rulepackPatch: "extends: coc7\n", rulepackId: "pier" },
     })
-
-    it("ships nothing when the YAML declares no script", () => {
-      // An orphan file would be dead weight at best; the engine never reads a
-      // script it was not pointed at.
-      const draft = withRulepack("extends: coc7\n", "function resolve() {}")
-      expect(draft.rulepacks[0].scripts).toEqual([])
+    expect(named.rulepacks).toEqual([{ id: "pier", yamlText: "extends: coc7\n" }])
+    const unnamed = buildDraftFromState({
+      items: [],
+      metadata: { ...METADATA, rulepackPatch: "extends: coc7\n" },
     })
+    expect(unnamed.rulepacks[0].id).toBe("deep-pier-rules")
+  })
+})
 
-    it("ships nothing when the declaration has no source behind it", () => {
-      const draft = withRulepack("resolution:\n  script: grade.js\n  roll: 1d100\n", "   ")
-      expect(draft.rulepacks[0].scripts).toEqual([])
-    })
+describe("modules", () => {
+  beforeEach(reset)
+
+  it("adds a module with a starter source whose id is the module's", () => {
+    usePackStore.getState().addModule()
+    usePackStore.getState().addModule()
+    const [first, second] = usePackStore.getState().modules
+    expect(first.id).toBe("main")
+    expect(first.fileName).toBe("main.ts")
+    expect(first.source).toContain('id: "main"')
+    expect(first.source).toContain('from "loreweaver/module"')
+    expect(second.id).not.toBe(first.id)
+  })
+
+  it("edits and removes one, and the removal can be undone", () => {
+    usePackStore.getState().addModule()
+    const module = usePackStore.getState().modules[0]
+    usePackStore.getState().updateModule(module.uid, { id: "tide", source: "export default 1" })
+    expect(usePackStore.getState().modules[0]).toMatchObject({ id: "tide", source: "export default 1" })
+    usePackStore.getState().removeModule(module.uid)
+    expect(usePackStore.getState().modules).toEqual([])
+  })
+
+  it("flows into the draft, and its issues gate the build", () => {
+    usePackStore.getState().addModule()
+    const module = usePackStore.getState().modules[0]
+    usePackStore.getState().updateModule(module.uid, { id: "Bad" })
+    const input = { items: [], metadata: METADATA, modules: usePackStore.getState().modules }
+    expect(buildDraftFromState(input).modules).toHaveLength(1)
+    expect(packValidationIssues(input).map((issue) => issue.key)).toContain("packModuleIdInvalid")
   })
 })
 
@@ -254,8 +249,6 @@ describe("presentation kit (M19) store actions", () => {
     rulepackPatch: "",
     rulepackId: "",
     rulepackMode: "patch" as const,
-    rulepackScriptName: "",
-    rulepackScriptSource: "",
   }
 
   it("opts in explicitly (null by default), and addPresentation is idempotent", () => {
@@ -333,10 +326,10 @@ describe("presentation kit (M19) store actions", () => {
     usePackStore.getState().updatePresentationSubject(subject.uid, { id: "Bad ID" })
 
     const kit = usePackStore.getState().presentation!
-    const draft = buildDraftFromState([], metadata, null, [], kit)
+    const draft = buildDraftFromState({ items: [], metadata, presentation: kit })
     expect(draft.presentation).toBe(kit)
 
-    const issues = packValidationIssues([], metadata, null, [], kit)
+    const issues = packValidationIssues({ items: [], metadata, presentation: kit })
     const idIssue = issues.find((issue) => issue.key === "packPresentationSubjectInvalid")
     expect(idIssue?.params?.uid).toBe(subject.uid)
     expect(idIssue?.params?.field).toBe("id")
@@ -365,8 +358,6 @@ describe("pack session persistence", () => {
     rulepackPatch: "",
     rulepackId: "",
     rulepackMode: "patch" as const,
-    rulepackScriptName: "",
-    rulepackScriptSource: "",
   }
 
   /** What zustand's `persist` would write, without going through localStorage. */
@@ -403,7 +394,7 @@ describe("pack session persistence", () => {
     const item = usePackStore.getState().items[0]
     usePackStore.getState().updateItem(item.uid, { needsBytes: true, base64: "" })
 
-    const blocked = packValidationIssues(usePackStore.getState().items, metadata)
+    const blocked = packValidationIssues({ items: usePackStore.getState().items, metadata })
     expect(blocked.map((issue) => issue.key)).toContain("packItemNeedsBytes")
 
     usePackStore
@@ -413,7 +404,7 @@ describe("pack session persistence", () => {
     expect(after.needsBytes).toBe(false)
     expect(after.base64).not.toBe("")
     expect(
-      packValidationIssues(usePackStore.getState().items, metadata).map((issue) => issue.key),
+      packValidationIssues({ items: usePackStore.getState().items, metadata }).map((issue) => issue.key),
     ).not.toContain("packItemNeedsBytes")
   })
 
@@ -446,36 +437,172 @@ describe("pack session persistence", () => {
   })
 
   it("does not persist the engine probe or the last run's terminal output", async () => {
-    usePackStore.getState().setCandidates([{ kind: "python-module", program: "py", args: [], cwd: null }])
+    usePackStore
+      .getState()
+      .setCandidates([
+        { kind: "binary", program: "loreweaver", args: [], cwd: null, version: "3.0.0", problem: null },
+      ])
     usePackStore.getState().setRunResult({ code: 0, stdout: "x".repeat(1000), stderr: "", timedOut: false })
     const written = persisted()
     expect(written.candidates).toBeUndefined()
     expect(written.runResult).toBeUndefined()
-    // The build RESULT does survive — "Test now" is one click away after a reload.
+    // The build RESULT does survive — "Verify" is one click away after a reload.
     expect(written).toHaveProperty("packResult")
   })
 
-  it("drops a stored session of another shape instead of half-loading it", async () => {
-    // Not `expect(version).toBe(2)` — that asserts a constant, and the constant
-    // was never the point. This stores a session shaped like an older one and
-    // rehydrates for real: the metadata form is ONE persisted object, so a
-    // partial one arrives whole and the first `.trim()` on a missing field
-    // throws inside a render. The version mismatch is what prevents that.
+  it("migrates a stored 2.x draft: drops what 3.0 refuses, converts the panels, says so once", async () => {
+    // A session as the 2.x bench persisted it (version 2): a lorebook item, a card whose
+    // hooks were extracted into a skill, a skill with a hooks.js, a rule-pack script, a
+    // prep script, a preset, and 1.x panels.
     const stale = {
-      state: { step: "metadata", metadata: { id: "old-pack", version: "0.1.0" } },
-      version: 1,
+      version: 2,
+      state: {
+        step: "metadata",
+        items: [
+          {
+            uid: "c1",
+            fileName: "heavy.json",
+            sourceName: "heavy.json",
+            kind: "card",
+            base64: "",
+            jsonText: heavyCardJson(),
+            size: 10,
+            needsBytes: false,
+            card: null,
+            payloads: { hooks: 1, initvarEntries: 1, ejsBlocks: 1, secretEntries: 0 },
+            cardKind: "world",
+            hooks: ["on('turn_start', () => {})"],
+            leaves: [],
+            leavesTruncated: false,
+            initvarProblems: [],
+            episode: "",
+            drafts: [],
+            extractSkill: true,
+            notesEn: "",
+            notesZh: "",
+            entryCount: 0,
+          },
+          {
+            uid: "l1",
+            fileName: "book.json",
+            sourceName: "book.json",
+            kind: "lorebook",
+            jsonText: "{}",
+            entryCount: 2,
+          },
+        ],
+        metadata: {
+          id: "old-pack",
+          version: "0.1.0",
+          nameEn: "Old",
+          rulepackPatch: "resolution:\n  script: grade.js\n",
+          rulepackScriptName: "grade.js",
+          rulepackScriptSource: "function resolve() {}",
+        },
+        panels: {
+          yamlText:
+            "panels:\n  - id: hud\n    title: HUD\n    slot: sidebar\n    audience: keeper\n    blocks:\n      - {kind: meter, label: Fear, value: {$var: fear}, min: 0, max: 10}\n",
+          files: [],
+        },
+        manualSkills: [
+          {
+            slug: "pier",
+            nameEn: "",
+            descriptionEn: "",
+            descriptionZh: "",
+            hooks: ["on('x', () => {})"],
+            skillMd: "",
+          },
+        ],
+        prepScripts: [{ fileName: "setup.js", source: "plan('a', {})" }],
+        packPresets: [{ fileName: "keeper.json", jsonText: "{}" }],
+        episodes: [],
+        buildUpTo: 0,
+        outputDir: "/out",
+        writtenDir: "/out/old-pack",
+        installAfterBuild: true,
+        packResult: { path: "/out/old.lwpack", trust: { skills: 1 } },
+        builtPackPath: "/out/old.lwpack",
+      },
     }
     localStorage.setItem("loreweaver-studio-pack", JSON.stringify(stale))
     await usePackStore.persist.rehydrate()
+    const state = usePackStore.getState()
 
-    const metadata = usePackStore.getState().metadata
-    expect(metadata.id).toBe("")
-    // Every field the form declares is present and a string, so no render can
-    // trip over one — which is the whole promise being kept here.
-    expect(() => metadata.rulepackScriptSource.trim()).not.toThrow()
-    expect(metadata.rulepackScriptSource).toBe("")
-    expect(metadata.rulepackMode).toBe("patch")
+    expect(state.items.map((item) => item.fileName)).toEqual(["heavy.json"])
+    expect(state.items[0]).not.toHaveProperty("extractSkill")
+    expect(state.items[0]).not.toHaveProperty("entryCount")
+    expect(state.metadata).toEqual({
+      id: "old-pack",
+      version: "0.1.0",
+      nameEn: "Old",
+      nameZh: "",
+      descriptionEn: "",
+      descriptionZh: "",
+      authors: "",
+      license: "",
+      rulepackPatch: "resolution:\n  script: grade.js\n",
+      rulepackId: "",
+      rulepackMode: "patch",
+    })
+    expect(state.manualSkills).toEqual([
+      { slug: "pier", nameEn: "", descriptionEn: "", descriptionZh: "", skillMd: "" },
+    ])
+    expect(state.modules).toEqual([])
+    // The panels are 3.0 now: the variable reads through the variables view, keeper → admin.
+    expect(state.panels?.yamlText).toContain("$view: vars.module.fear.value")
+    expect(state.panels?.yamlText).toContain("vars: variables")
+    expect(state.panels?.yamlText).toContain("audience: admin")
+    // A 2.x build is not kept: it describes a pack 3.0 refuses.
+    expect(state.packResult).toBeNull()
+    expect(state.builtPackPath).toBeNull()
+    expect(state.writtenDir).toBeNull()
+    expect(state.outputDir).toBe("/out")
+    // …and the author is told what happened, once.
+    expect(state.migrationNotes.map((note) => note.key)).toEqual([
+      "pack.migration.lorebooks",
+      "pack.migration.cardHookSkills",
+      "pack.migration.rulepackScript",
+      "pack.migration.skillHooks",
+      "pack.migration.prepScripts",
+      "pack.migration.presets",
+      "pack.migration.panelsConverted",
+    ])
+    expect(state.migrationNotes[0].params).toEqual({ count: 1 })
+    usePackStore.getState().dismissMigrationNotes()
+    expect(usePackStore.getState().migrationNotes).toEqual([])
     localStorage.clear()
+  })
+
+  it("migrates a half-written older blob without leaving a field a render would trip over", async () => {
+    localStorage.setItem(
+      "loreweaver-studio-pack",
+      JSON.stringify({ state: { step: "nowhere", metadata: { id: 7 } }, version: 1 }),
+    )
+    await usePackStore.persist.rehydrate()
+    const state = usePackStore.getState()
+    expect(state.step).toBe("input")
+    expect(state.metadata.id).toBe("")
+    expect(() => state.metadata.rulepackPatch.trim()).not.toThrow()
+    expect(state.items).toEqual([])
+    expect(state.migrationNotes).toEqual([])
+    localStorage.clear()
+  })
+
+  it("flags the panels a migration could only partly convert", () => {
+    const migrated = migratePackSession(
+      {
+        panels: {
+          yamlText:
+            "panels:\n  - id: hud\n    title: HUD\n    slot: sidebar\n    blocks:\n      - {kind: stat, label: X, value: {$var: mvu.party.hp}}\n",
+          files: [],
+        },
+      },
+      2,
+    )
+    expect(migrated.migrationNotes.map((note) => note.key)).toEqual(["pack.migration.panelsLeftover"])
+    // Left exactly as written, for the author: a dotted id is a tree leaf no single path names.
+    expect(migrated.panels?.yamlText).toContain("$var: mvu.party.hp")
   })
 
   it("rehydrates a session of the CURRENT shape rather than discarding everything", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { deepseekProTemperatureConflict, matchProviderPreset, PROVIDER_PRESETS } from "./providerPresets"
+import { matchProviderPreset, PROVIDER_PRESETS } from "./providerPresets"
 
 describe("provider presets", () => {
   it("ships the documented endpoints", () => {
@@ -20,16 +20,5 @@ describe("provider presets", () => {
     expect(matchProviderPreset("https://api.deepseek.com/v1", "anthropic")).toBe("custom")
     expect(matchProviderPreset("https://my-proxy.local/v1", "openai")).toBe("custom")
     expect(matchProviderPreset("", "openai")).toBe("custom")
-  })
-})
-
-describe("deepseek v4-pro thinking-mode temperature conflict", () => {
-  it("warns only for the pro model with a pinned temperature", () => {
-    expect(deepseekProTemperatureConflict("deepseek-v4-pro", { temperature: 0.7 })).toBe(true)
-    expect(deepseekProTemperatureConflict("DeepSeek-V4-Pro", { temperature: 0 })).toBe(true)
-    expect(deepseekProTemperatureConflict("deepseek-v4-pro", {})).toBe(false)
-    expect(deepseekProTemperatureConflict("deepseek-v4-pro", undefined)).toBe(false)
-    expect(deepseekProTemperatureConflict("deepseek-v4-flash", { temperature: 0.7 })).toBe(false)
-    expect(deepseekProTemperatureConflict("claude-sonnet-5", { temperature: 0.7 })).toBe(false)
   })
 })

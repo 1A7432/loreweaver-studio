@@ -1,225 +1,65 @@
-# Export formats
+# Formats Studio writes
 
-The studio's card forge exports two flavors per the main repo's M14 draft
-("imported cards adapt to us; forged cards are born native and still play
-everywhere"). Validation mirrors the engine (`core/modvars.py`,
-`core/worldbook.py`): ids `^[a-z0-9_]{1,64}$`, ≤64 variables, enum ≤20 options
-of ≤50 chars, labels ≤50 chars, text defaults ≤200 chars, conditions ≤500 chars.
+Studio keeps **no copy of a format specification**. The formats are the engine's, specified in
+its LWF documents (CC BY 4.0) on the `v3` branch:
 
-## 1. Loreweaver native bundle — `*.lorecard.json`
+- [pack.md](https://github.com/1A7432/loreweaver/blob/v3/docs/lwf/formats/pack.md) — the
+  `.lwpack` container, manifest 3, every content kind, the trust card;
+- [panels.md](https://github.com/1A7432/loreweaver/blob/v3/docs/lwf/formats/panels.md) — panels
+  3.0;
+- [cards.md](https://github.com/1A7432/loreweaver/blob/v3/docs/lwf/formats/cards.md) — the native
+  lorecard and SillyTavern cards (where it and the engine's code disagree, the code wins);
+- the module SDK guide: [sdk/README.md](https://github.com/1A7432/loreweaver/blob/v3/sdk/README.md).
 
-Lossless authoring output, `format_version: 1` — the frozen M16 consolidation
-shape parsed by the engine's `core/lorecard.py`: typed variable specs exactly
-as `core.modvars.build_spec` emits them, worldbook entries exactly as
-`LoreEntry.from_dict` accepts them. v1 renamed the ST-copied prose fields
-(`opening` / `alternate_openings` / `dialogue_examples` / `author_notes`
-replace `first_mes` / `alternate_greetings` / `mes_example` / `creator_notes`)
-and made hook scripts the first-class top-level `hooks` list. v0 (the
-pre-freeze provisional shape) is dead on BOTH sides: the engine refuses it and
-the studio no longer reads it. A shape only the editor understands is drift the
-round-trip gate cannot pin — and the pre-adoption break window exists precisely
-so v0 does not have to survive anywhere.
+What this page records is how Studio maps onto them — which file in this repository writes what —
+and what it deliberately no longer writes. That Studio's output is accepted is not claimed here:
+it is proven on every CI run by the round-trip gate (`scripts/check_roundtrip.sh`), which builds,
+installs and reads Studio's output with the real engine.
 
-```jsonc
-{
-  "format": "loreweaver.card",
-  "format_version": 1,
-  "name": "…",
-  "description": "…",
-  "personality": "…",
-  "scenario": "…",
-  "opening": "…",
-  "dialogue_examples": "…",
-  "alternate_openings": ["…"],
-  "author_notes": "…",
-  "tags": ["…"],
-  "variables": [
-    {
-      "id": "suspicion",
-      "kind": "number",
-      "visibility": "player",
-      "labels": { "en": "Suspicion", "zh": "怀疑度" },
-      "default": 0,
-      "minimum": 0,
-      "maximum": 10,
-    },
-  ],
-  "worldbook": [
-    {
-      // Optional STABLE entry id — the cross-pack reference handle
-      // (`<pack-id>#<entry-id>`); carried verbatim, collisions warned about.
-      "id": "the-well",
-      "title": "…",
-      "content": "…",
-      "keys": ["…"],
-      "category": "lore",
-      "secret": false,
-      "constant": false,
-      "priority": 0,
-      "enabled": true,
-      "condition": "suspicion >= 5",
-      "secondary_keys": [],
-      "selective_logic": "and_any",
-      "probability": 100,
-      "case_sensitive": false,
-      "match_whole_words": false,
-      "scan_depth": 0,
-      "position": "",
-      "sticky": 0,
-      "cooldown": 0,
-      "delay": 0,
-    },
-  ],
-  // Top-level hook sources; the key is omitted when empty.
-  "hooks": ["…hooks.js source…"],
-  // The module's claimable investigator cast (`.pc list` / `.pc claim`), at
-  // most 8; sheets are built downstream from system defaults + these skill
-  // overrides — deterministic, no LLM. Omitted when empty.
-  "pregens": [
-    {
-      "name": "…", // ≤60 chars, required
-      "concept": "…", // ≤200 chars, optional
-      "notes": "…", // ≤400 chars, optional
-      "skills": { "侦查": 60 }, // ≤32 entries, integer values, optional
-    },
-  ],
-}
+## Cards (the forge)
+
+| Export                        | Writer                                 | Notes                                                                                                                                                |
+| ----------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `*.lorecard.json` (format v1) | `exporters.ts` `exportNativeBundle`    | Typed variables, worldbook with `secret` and `condition`, entry `id`s.                                                                               |
+| `*.st.json` (chara_card_v3)   | `exporters.ts` `exportSillyTavernCard` | Typed variables become an `[InitVar]` entry, a `condition` an `@@if` line. The safe flavor leaves secret entries out; the release flavor keeps them. |
+| `*.png`                       | `pngCard.ts` `embedCardIntoPng`        | The ST card in `chara` (v2 shell) and `ccv3` text chunks.                                                                                            |
+
+**No longer written:** a lorecard's `hooks` and `pregens` sections and an ST card's
+`extensions.loreweaver_hooks`. A 3.0 engine counts a card's hook scripts (which makes it a world
+card) and never runs them, and it imports no pregenerated cast. A bundle that still carries them
+imports into the forge without them, with a warning.
+
+A card's **kind** is detected the way the engine detects it (`split/cardSplit.ts`): variable
+declarations, typed variables, secret entries, EJS templates or hook scripts make a world card.
+
+## Packs (the pack bench)
+
+`split/packSource.ts` `buildPackSourcePlan` writes a source tree for the engine's builder:
+
+```
+<id>/
+├── pack.yaml               manifest_version: 3, engine: {protocol: "3.0"}
+├── src/<module>.ts         one entry per module (declared under `modules:`)
+├── cards/…                 each declared {path, kind, notes?}
+├── skills/<id>/SKILL.md
+├── rulepacks/<id>.yaml
+├── assets/…                dropped pictures and sounds, and the kit's media
+├── ui/panels.yaml          panels 3.0, plus pages (one HTML file each) and pictures under ui/
+├── ui/presentation.yaml    the presentation kit (version 2)
+└── CHANGELOG.md            serialized packs only; the builder never reads it
 ```
 
-Keeper-only variables and `secret` entries are kept — this file is the
-round-trippable source of truth.
+The builder (`loreweaver pack <dir> --out <file>`) bundles each module and writes the archive;
+Studio contains no zip writer.
 
-## 2. SillyTavern V3 card — `*.st.json`
+**No longer written:** `contents.lorebooks` (lore rides inside a world card), `contents.presets`,
+`contents.prep`, a rule pack's rules script, `skills/<id>/hooks.js`, the 2.x generated `files` and
+`trust` blocks. A stored 2.x draft is migrated on load (`store/pack.ts` `migratePackSession`).
 
-`{ spec: "chara_card_v3", spec_version: "3.0", data: { … } }` with every
-required V3 `data` field. Runs in stock SillyTavern _and_ imports back into
-Loreweaver through its ST importer (M12/M13):
+## Panels
 
-- **`[InitVar]` entry** (MVU community convention): a constant, keyless entry
-  whose content is `{ "<id>": [<initial>, "<label; range/options>"] }` for every
-  **player-visible** typed variable. Bounds/options ride in the description
-  string; Loreweaver re-imports these as `mvu.*` variables.
-- **`@@if` decorator**: an entry `condition` becomes a leading `@@if <expr>`
-  line on the content (ST-Prompt-Template convention; Loreweaver's importer
-  maps it back onto the typed `condition` field, fail-closed).
-- **ST trigger fields**: `secondary_keys` (+`selective`), `insertion_order`,
-  `position` (`before_char`/`after_char`), and `extensions` carrying numeric
-  `selectiveLogic` (0 and_any / 1 not_all / 2 not_any / 3 and_all — stock ST's
-  own mapping, confirmed against Loreweaver's `_SELECTIVE_LOGIC_INTS`),
-  `probability`/`useProbability`, `case_sensitive`, `match_whole_words`,
-  `scan_depth`, `sticky`, `cooldown`, `delay`.
-- **Hooks** ride `data.extensions.loreweaver_hooks` (stock ST ignores them;
-  Loreweaver installs them on import).
-- **Excluded on purpose**: keeper-only variables and `secret` entries — an ST
-  card is entirely player-visible, so they have no safe representation there.
-
-**PNG embedding** ships: `pngCard.ts::embedCardIntoPng` writes the `chara`
-(V2) and `ccv3` (V3) tEXt chunks together into a base image the author picks,
-wired into both export points (the forge toolbar and the wizard's finish).
-**Alternate greetings** ship too — `exporters.ts` emits `alternate_greetings`
-on the ST card and `alternate_openings` on the native bundle.
-
-Every ST/PNG export point names which FLAVOR it is writing (safe-to-circulate
-with keeper-only entries stripped, or release-with-secrets), because an ST card
-has no hidden half and the difference decides what a reader can see.
-
-Still not implemented: a token-count readout — the remaining table-stakes
-feature of the community editors (AICharED, Chub, RisuAI).
-
-## 3. Card split (拆卡) — what the studio detects and emits
-
-The split view and the pack wizard mirror the engine's `core/card_split.py`
-detection exactly (same regexes, same entry test, same stripping):
-
-- **World payloads** = `extensions.loreweaver_hooks` scripts + variable
-  declaration entries (`[InitVar]` / `[InitialVariables]` titles, or an
-  `@@initial_variables` decorator) + `<% … %>` EJS spans (a dangling `<%`
-  strips to end-of-text, fail closed).
-- **Character half** (player-safe): prose fields EJS-stripped, declaration
-  entries removed, hooks extension dropped. Exported as `*.clean.st.json`
-  (the original envelope with cleaned fields written back) or as a native
-  bundle / forge project.
-- **World half**: the ORIGINAL card, verbatim — the pack build DETECTS it as
-  `kind: world` (authors never declare kinds; the stamp lands in the built
-  manifest) because the admin's world import reads the full card. The
-  studio never rewrites world machinery; it only PROMOTES a copy of the
-  InitVar tree into typed VarSpecs (author-confirmed, `buildSpec`-validated)
-  and suggests `.var expose <prefix>` lines for the card's install notes.
-
-## 4. `.lwpack` source trees — planned here, built by the engine
-
-`buildPackSourcePlan` lays out `pack.yaml` + `cards/` + `lorebooks/` +
-`skills/<slug>/{SKILL.md,hooks.js}` + `rulepacks/*.yaml` (+ optional
-`ui/panels.yaml` and its files, and the M19 `ui/presentation.yaml` kit with
-its `assets/` media), mirroring `core/pack.py`'s **v2 author
-manifest** schema:
-
-- localized `name`/`description` (`{en, zh}`), `authors`, `license`, and an
-  `engine: {protocol: "2.0"}` minimum-version block (`protocol`/`server` are
-  the only keys the engine accepts; minimum-compare only);
-- card entries are bare paths or `{path, notes: {en, zh}}` mappings — authors
-  **never declare `kind`** (the engine rejects a declared kind outright).
-  Machinery — hooks / `[InitVar]` / EJS / `secret` lore, plus a native
-  bundle's typed `variables` specs (`core/pack.py:644-652`) — is DETECTED at
-  build time via `core.card_split.detect_world_payloads` and stamped into the
-  built manifest; install re-verifies the stamp against the real payload. The
-  wizard mirrors the same detection (a specs-only lorecard is `world`), so
-  its badges always agree with the engine's stamp;
-- no hand-written `trust` or `files` blocks and no `manifest_version` — the
-  build generates the trust summary and the complete file inventory
-  (`sha256`/`size` per member), and an omitted author-side
-  `manifest_version` means "current".
-
-Validation and the byte-deterministic zip are the ENGINE's job — the wizard
-shells out to `loreweaver-server --pack <dir> --out <file> --json` (or
-`python -m app --pack …`) and shows its output; the studio deliberately
-contains no zip writer. With `--json`, stdout carries exactly one machine
-object — `{"ok": true, "path", "id", "version", "sha256", "trust"}` on
-success, `{"ok": false, "error"}` on failure — while the human lines
-(including the localized trust card) stay on stderr. The wizard renders the
-trust card natively from that object (content counts, detected world-card
-count, hooks/EJS/rules-script flags, Stage Director subjects and the
-imagegen veto) and surfaces a failure's `error` prominently.
-
-## 5. Presentation kit — `ui/presentation.yaml` (M19, 演出资料包)
-
-The Stage Director's entire creative brief, authored as data and gated on its
-own existence: the Director stages beats **only** for rooms whose module ships
-a kit (kit-gating). The wizard's "Presentation" step edits this file as forms;
-the schema authority is the engine's `core/presentation.py` and the build
-re-parses it (`core/pack.py::_validate_pack_presentation`, at most one kit per
-pack, `.yaml` only). `contents.presentation: [ui/presentation.yaml]` declares
-it; every ref/cue file lives under `assets/` and MUST sit in the manifest
-`assets:` block (`core/pack.py::_enforce_kit_assets` — a ref must sniff as an
-image, a cue asset as audio).
-
-```yaml
-version: 2 # required; v1 files are refused (KIT_VERSION = 2)
-generation:
-  allow # allow | pack_only — pack_only is the 宁缺毋滥
-  # author veto: pack art only, no config overrides
-templates: [title_card, letter] # optional allowlist; omitted = all shapes
-style: # optional; carried on EVERY image request
-  keywords: { en: "ink wash, muted indigo", zh: "水墨, 靛青" } # ≤400 chars/locale
-  banned: [text overlays, modern clothing] # ≤24 entries, ≤400 chars each
-  palette: ["#16232e", "wet slate blue"] # optional; ≤8 hex or color words
-subjects: # ≤64; id is a slug ^[a-z0-9][a-z0-9-]{0,63}$
-  - id: gu-wantang
-    kind: npc # npc | location | item
-    name: { en: Gu Wantang, zh: 顾晚棠 } # ≥1 locale, ≤400 chars each
-    ref:
-      assets/gu-wantang.png # OPTIONAL per schema — but no ref →
-      # no portrait (ref-mandatory doctrine)
-    prompt: "a woman in her thirties, plain dark coat, wet hair" # ≤1000 chars
-audio: # ≤32 cues; asset is REQUIRED per cue
-  - { id: chao-yong, layer: bgm, asset: assets/chao-yong.mp3, title: 潮涌 }
-    # layer: bgm | ambience | sfx; title ≤400 chars
-```
-
-Doctrine (docs/specs/M19 in the engine repo): **ref-mandatory** — a subject
-without `ref` is nameable in captions but never generated; the ref + style
-keywords ride every image request. **宁缺毋滥** — `generation: pack_only` is
-the author's veto. **慢菜先备** (pre-generation) is a runtime concern; the kit
-only has to make subjects nameable. The trust card discloses the subject count
-(`trust.presentation`) and whether generation is licensed in practice
-(`trust.imagegen` = `allow` AND ≥1 subject ships a ref).
+`pack/panelsModel.ts` reads and writes `ui/panels.yaml`; `pack/panelsCheck.ts` mirrors the
+engine's reader (same problem codes and paths); `pack/panelsPreview.ts` turns a panel into what a
+viewer's `panels` view lists and evaluates it with the protocol package's `panelBlocks` — the
+evaluation play mode uses. Panels 1.x in a stored draft are converted where the mapping is
+mechanical (`pack/panelsMigrate.ts`); the rest is flagged.

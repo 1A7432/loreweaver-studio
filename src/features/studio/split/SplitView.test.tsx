@@ -74,7 +74,8 @@ describe("SplitView", () => {
     expect(state.projects).toHaveLength(1)
     expect(state.projects[0].name).toBe("深渊之主")
     expect(state.projects[0].variables).toHaveLength(1)
-    expect(state.projects[0].hooks).toContain("turn_start")
+    // The card's hook scripts stay with the card: the forge project has none.
+    expect(state.projects[0]).not.toHaveProperty("hooks")
     expect(state.projects[0].lorebook).toHaveLength(1)
   })
 

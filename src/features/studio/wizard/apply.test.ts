@@ -125,7 +125,7 @@ describe("applyStage: fields, palette assembly, variables", () => {
     expect(project.personality).toContain("accent: 嘴硬")
   })
 
-  it("variables promotes InitVar YAML into typed variables and drafts hooks from rules", () => {
+  it("variables promotes InitVar YAML into typed variables and compiles no hooks from rules", () => {
     const draft: StageDraft = {
       stage: "variables",
       initvarYaml: "理:\n  好感度: [0, '好感 [0,100]']\n  见过雾: [false, '旗标']\n",
@@ -137,12 +137,11 @@ describe("applyStage: fields, palette assembly, variables", () => {
     expect(meter?.kind).toBe("number")
     expect(meter?.minimum).toBe("0")
     expect(meter?.maximum).toBe("100")
-    expect(project.hooks).toContain("// 好感度:玩家帮忙 +5")
-    expect(project.hooks).toContain("on('reply_ready'")
-    // Real calls, against the full dotted path the InitVar tree gives the leaf
-    // — not the `// TODO` skeleton this stage used to emit.
-    expect(project.hooks).toContain(`incvar("理.好感度", 5)`)
-    expect(project.hooks).toContain(`setvar("理.见过雾", true)`)
+    // The update rules are prose for the Keeper: they ride the SillyTavern
+    // export as a lore entry, and compile into no hook code (a 3.0 engine runs
+    // none), so the project gains no `hooks` and the contract no `hooks` slot.
+    expect(project).not.toHaveProperty("hooks")
+    expect(contract.slots.some((s) => s.slot === "field:hooks")).toBe(false)
     expect(contract.slots.some((s) => s.slot.startsWith("var:"))).toBe(true)
 
     // Regeneration with one leaf gone: same-path uid survives, removed path is dropped.

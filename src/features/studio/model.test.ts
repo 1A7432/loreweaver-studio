@@ -2,16 +2,12 @@ import { describe, expect, it } from "vitest"
 import {
   buildSpec,
   MAX_OPTIONS,
-  MAX_PREGENS,
-  MAX_PREGEN_SKILLS,
   MAX_TEXT_LEN,
   MAX_VARS,
   newLoreEntry,
-  newPregen,
   newProject,
   newVariable,
   normalizeVarId,
-  parsePregenSkills,
   validateProject,
   type ForgeVariable,
 } from "./model"
@@ -164,43 +160,13 @@ describe("validateProject", () => {
   })
 })
 
-describe("pregens", () => {
-  it("parses skill lines, tolerating CJK names and negatives", () => {
-    const { skills, errors } = parsePregenSkills("侦查 60\n图书馆使用 55\n斗殴 -5\n\n")
-    expect(errors).toEqual([])
-    expect(skills).toEqual({ 侦查: 60, 图书馆使用: 55, 斗殴: -5 })
-  })
-
-  it("flags junk skill lines with the offending line", () => {
-    const { skills, errors } = parsePregenSkills("侦查\n斗殴 abc")
-    expect(skills).toEqual({})
-    expect(errors).toEqual([
-      { key: "pregenSkillInvalid", params: { line: "侦查" } },
-      { key: "pregenSkillInvalid", params: { line: "斗殴 abc" } },
-    ])
-  })
-
-  it("validates the cast: name required, caps enforced", () => {
+describe("the 3.0 project shape", () => {
+  it("has no hook scripts or pregenerated cast, and validates without them", () => {
     const project = newProject("x")
-    const nameless = newPregen()
-    const bloated = { ...newPregen(), name: "ok" }
-    bloated.skillsText = Array.from({ length: MAX_PREGEN_SKILLS + 1 }, (_, i) => `s${i} ${i}`).join("\n")
-    project.pregens = [nameless, bloated]
+    expect(project).not.toHaveProperty("hooks")
+    expect(project).not.toHaveProperty("pregens")
     const result = validateProject(project)
-    expect(result.pregens.get(nameless.uid)).toContainEqual({ key: "pregenNameRequired" })
-    expect(result.pregens.get(bloated.uid)).toContainEqual({
-      key: "pregenTooManySkills",
-      params: { max: MAX_PREGEN_SKILLS },
-    })
-
-    const crowded = newProject("x")
-    crowded.pregens = Array.from({ length: MAX_PREGENS + 1 }, (_, i) => ({
-      ...newPregen(),
-      name: `p${i}`,
-    }))
-    expect(validateProject(crowded).project).toContainEqual({
-      key: "tooManyPregens",
-      params: { max: MAX_PREGENS },
-    })
+    expect(result).not.toHaveProperty("pregens")
+    expect(result.project).toEqual([])
   })
 })

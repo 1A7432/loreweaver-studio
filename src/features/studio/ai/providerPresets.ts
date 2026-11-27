@@ -43,13 +43,3 @@ export function matchProviderPreset(baseUrl: string, kind: "openai" | "anthropic
   )
   return hit?.id ?? "custom"
 }
-
-/** deepseek v4-pro degrades its thinking mode when temperature is pinned —
- * the pairing deserves a warning, not a hard block. */
-export function deepseekProTemperatureConflict(
-  model: string,
-  sampling: { temperature?: number } | undefined,
-): boolean {
-  const id = model.trim().toLowerCase()
-  return id.includes("deepseek") && id.includes("pro") && sampling?.temperature !== undefined
-}

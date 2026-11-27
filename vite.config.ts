@@ -14,6 +14,11 @@ import pkg from "./package.json" with { type: "json" }
 const PROTOCOL_V3 = fileURLToPath(
   new URL("./node_modules/loreweaver-protocol/src/v3/index.ts", import.meta.url),
 )
+// The package ROOT (the same 3.0 surface plus the `visible_when` condition language the
+// authoring studio checks panels with), likewise from source.
+const PROTOCOL_ROOT = fileURLToPath(
+  new URL("./node_modules/loreweaver-protocol/src/index.ts", import.meta.url),
+)
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -21,7 +26,10 @@ const host = process.env.TAURI_DEV_HOST
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: [{ find: /^loreweaver-protocol\/v3$/, replacement: PROTOCOL_V3 }],
+    alias: [
+      { find: /^loreweaver-protocol\/v3$/, replacement: PROTOCOL_V3 },
+      { find: /^loreweaver-protocol$/, replacement: PROTOCOL_ROOT },
+    ],
   },
 
   // Tauri expects a fixed dev port and handles its own terminal output.

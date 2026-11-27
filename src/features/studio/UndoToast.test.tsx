@@ -29,6 +29,12 @@ describe("UndoToast", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Deleted a lore entry.")
   })
 
+  it("names a deleted pack module", () => {
+    useUndoStore.getState().push("module", "alarm", () => {})
+    render(<UndoToast />)
+    expect(screen.getByRole("status")).toHaveTextContent("Removed the module “alarm”.")
+  })
+
   it("dismisses without restoring", async () => {
     const restore = vi.fn()
     useUndoStore.getState().push("packItem", "cover.png", restore)
@@ -41,7 +47,7 @@ describe("UndoToast", () => {
   it("goes away once the offer has aged out", () => {
     vi.useFakeTimers()
     try {
-      useUndoStore.getState().push("pregen", "Hana", () => {})
+      useUndoStore.getState().push("module", "alarm", () => {})
       const { container } = render(<UndoToast />)
       expect(screen.getByRole("status")).toBeInTheDocument()
       act(() => vi.advanceTimersByTime(UNDO_WINDOW_MS + 1000))
@@ -56,7 +62,7 @@ describe("UndoToast", () => {
     // re-renders the app twice a second forever over a toast nobody can see.
     vi.useFakeTimers()
     try {
-      useUndoStore.getState().push("pregen", "Hana", () => {})
+      useUndoStore.getState().push("module", "alarm", () => {})
       render(<UndoToast />)
       act(() => vi.advanceTimersByTime(UNDO_WINDOW_MS + 1000))
       expect(vi.getTimerCount()).toBe(0)

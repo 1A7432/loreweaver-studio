@@ -6,7 +6,7 @@ import {
   exportSillyTavernCard,
   SELECTIVE_LOGIC_TO_INT,
 } from "./exporters"
-import { newLoreEntry, newPregen, newProject, validateProject, type ForgeVariable } from "./model"
+import { newLoreEntry, newProject, validateProject, type ForgeProject, type ForgeVariable } from "./model"
 import { newVariable } from "./model"
 import { EPISODE_FIELD, filterEpisodeContent, type PackEpisode } from "./split/episodes"
 import { embedCardIntoPng, pngChunk } from "./pngCard"
@@ -67,13 +67,12 @@ function project() {
       secret: true,
     },
   ]
-  p.hooks = "on('turn_start', () => {})"
   p.tags = "coc, horror"
   return p
 }
 
 describe("native bundle export", () => {
-  it("is lossless: keeper vars, secret lore, hooks, and trigger fields all ride", () => {
+  it("is lossless: keeper vars, secret lore, and trigger fields all ride", () => {
     const p = project()
     const { specs } = validateProject(p)
     const bundle = exportNativeBundle(p, specs) as Record<string, never>
@@ -96,8 +95,6 @@ describe("native bundle export", () => {
       probability: 80,
     })
     expect(worldbook[1]).toMatchObject({ secret: true })
-    // v1: hooks are the first-class top-level list, not an extensions key.
-    expect(bundle["hooks"]).toEqual(["on('turn_start', () => {})"])
     expect(bundle).not.toHaveProperty("extensions")
   })
 
@@ -115,12 +112,19 @@ describe("native bundle export", () => {
     }
   })
 
-  it("omits the hooks and pregens keys when empty", () => {
-    const p = project()
-    p.hooks = "  "
-    const bundle = exportNativeBundle(p, validateProject(p).specs)
+  it("writes no hooks or pregens section, even for a project saved before they were removed", () => {
+    // A stored project from the 2.x studio can still carry both; the 3.0 engine
+    // never runs a card's hooks and imports no cast, so the export drops them.
+    const legacy = {
+      ...project(),
+      hooks: "on('turn_start', () => {})",
+      pregens: [{ name: "林晚", concept: "放不下的退休刑警", notes: "", skillsText: "侦查 60" }],
+    } as unknown as ForgeProject
+    const bundle = exportNativeBundle(legacy, validateProject(legacy).specs)
     expect(bundle).not.toHaveProperty("hooks")
     expect(bundle).not.toHaveProperty("pregens")
+    expect(JSON.stringify(bundle)).not.toContain("turn_start")
+    expect(JSON.stringify(bundle)).not.toContain("林晚")
   })
 
   it("rides a non-empty stable entry id and omits it otherwise", () => {
@@ -130,31 +134,6 @@ describe("native bundle export", () => {
     const worldbook = bundle["worldbook"] as Record<string, unknown>[]
     expect(worldbook[0]["id"]).toBe("the-well")
     expect(worldbook[1]).not.toHaveProperty("id")
-  })
-
-  it("exports the pregen cast with parsed skill overrides", () => {
-    const p = project()
-    p.pregens = [
-      {
-        ...newPregen(),
-        name: "林晚",
-        concept: "放不下的退休刑警",
-        notes: "知道得太多。",
-        skillsText: "侦查 60\n图书馆使用 55\njunk line\n斗殴 -5",
-      },
-      { ...newPregen(), name: "阿灿" },
-    ]
-    const bundle = exportNativeBundle(p, validateProject(p).specs)
-    expect(bundle["pregens"]).toEqual([
-      {
-        name: "林晚",
-        concept: "放不下的退休刑警",
-        notes: "知道得太多。",
-        // The junk line drops out here; validateProject surfaces it instead.
-        skills: { 侦查: 60, 图书馆使用: 55, 斗殴: -5 },
-      },
-      { name: "阿灿" },
-    ])
   })
 })
 
@@ -180,7 +159,8 @@ describe("SillyTavern V3 export", () => {
     expect(card.spec).toBe("chara_card_v3")
     expect(card.spec_version).toBe("3.0")
     expect(card.data["name"]).toBe("Deep Pier")
-    expect(card.data["extensions"]).toEqual({ loreweaver_hooks: ["on('turn_start', () => {})"] })
+    // No hook scripts ride a 3.0 card: extensions stays empty.
+    expect(card.data["extensions"]).toEqual({})
 
     const book = card.data["character_book"] as { entries: Record<string, never>[] }
     // [InitVar] + The Well; the secret entry must be gone.
@@ -198,6 +178,14 @@ describe("SillyTavern V3 export", () => {
     expect(ext.selectiveLogic).toBe(SELECTIVE_LOGIC_TO_INT.not_all)
     expect(ext.probability).toBe(80)
     expect(JSON.stringify(card)).not.toContain("The priest did it")
+  })
+
+  it("writes no loreweaver_hooks extension, even for a project saved with hooks", () => {
+    const legacy = { ...project(), hooks: "on('turn_start', () => {})" } as unknown as ForgeProject
+    const { specs } = validateProject(legacy)
+    const card = exportSillyTavernCard(legacy, specs) as { data: { extensions: Record<string, unknown> } }
+    expect(card.data.extensions).toEqual({})
+    expect(JSON.stringify(card)).not.toContain("loreweaver_hooks")
   })
 
   it("omits the @@if line when there is no condition", () => {

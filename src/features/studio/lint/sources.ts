@@ -7,7 +7,7 @@
 
 import { normalizeVarId, type ForgeProject } from "../model"
 import type { PackMetadataForm, PackItem } from "../../../store/pack"
-import type { PackPanelsDraft, PackPresentationDraft, PackSkillDraft } from "../split/packSource"
+import type { PackPanelsDraft, PackPresentationDraft } from "../split/packSource"
 import { latestOrdinal, type PackEpisode } from "../split/episodes"
 import { isRecord, asText } from "../split/charcard"
 import type { LintLoreEntry, LintVariable, PackLintSource } from "./model"
@@ -21,8 +21,8 @@ function variableFrom(
   return { id, labelEn, labelZh, visibility }
 }
 
-/** The forge's own project: one card's variables, lorebook and hooks. There is
- * no pack around it yet, so the pack-level rules stay quiet (`meta: null`). */
+/** The forge's own project: one card's variables and lorebook. There is no pack
+ * around it yet, so the pack-level rules stay quiet (`meta: null`). */
 export function lintSourceFromProject(project: ForgeProject): PackLintSource {
   return {
     meta: null,
@@ -40,7 +40,6 @@ export function lintSourceFromProject(project: ForgeProject): PackLintSource {
       enabled: entry.enabled,
     })),
     panelsYaml: null,
-    code: project.hooks.trim() ? [{ origin: "hooks", source: project.hooks }] : [],
     // The forge edits one card; installments belong to a pack, so the episode
     // rules have nothing to say here.
     episodes: [],
@@ -51,9 +50,9 @@ export function lintSourceFromProject(project: ForgeProject): PackLintSource {
   }
 }
 
-/** Lore entries out of a dropped lorebook JSON. Tolerant on purpose: the
- * shapes in the wild are a ST world-info export (`{entries: {…}}` or
- * `{entries: […]}`) and a card's embedded `character_book`. Anything it cannot
+/** Lore entries out of a card's JSON. Tolerant on purpose: the shapes in the
+ * wild are a card's embedded `character_book` and a world-info export
+ * (`{entries: {…}}` or `{entries: […]}`). Anything it cannot
  * read contributes no entries rather than a finding — the engine's importer is
  * the authority on what parses. */
 export function loreFromJson(jsonText: string, fileName: string): LintLoreEntry[] {
@@ -95,7 +94,6 @@ export interface PackBenchLintInput {
   items: PackItem[]
   metadata: PackMetadataForm
   panels: PackPanelsDraft | null
-  manualSkills: PackSkillDraft[]
   presentation: PackPresentationDraft | null
   episodes?: PackEpisode[]
   buildUpTo?: number
@@ -105,15 +103,14 @@ export interface PackBenchLintInput {
 export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSource {
   const variables: LintVariable[] = []
   const lore: LintLoreEntry[] = []
-  const code: PackLintSource["code"] = []
   const shippedFiles: string[] = []
   const assetRefs: PackLintSource["assetRefs"] = []
   const taggedFiles: PackLintSource["taggedFiles"] = []
 
   for (const item of input.items) {
-    // The whole-file tag, for every kind. A card's or lorebook's tag also
-    // reaches the lore entries below, but an asset has no entries, and neither
-    // does a PNG card — so the file-level check is the only one they get.
+    // The whole-file tag, for every kind. A card's tag also reaches the lore
+    // entries below, but an asset has no entries, and neither does a PNG card —
+    // so the file-level check is the only one they get.
     if (item.episode.trim()) {
       taggedFiles.push({
         path: item.kind === "asset" ? `assets/${item.fileName}` : item.fileName,
@@ -121,16 +118,6 @@ export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSour
       })
     }
     if (item.kind === "asset") shippedFiles.push(`assets/${item.fileName}`)
-    if (item.kind === "lorebook" && item.jsonText !== null) {
-      // A file tagged to an installment tags everything it carries, unless an
-      // entry says otherwise.
-      lore.push(
-        ...loreFromJson(item.jsonText, item.fileName).map((entry) => ({
-          ...entry,
-          episode: entry.episode || item.episode || undefined,
-        })),
-      )
-    }
     if (item.kind !== "card") continue
     // A card's own embedded lorebook is content too — and the place a secret
     // entry with no trigger most often hides.
@@ -149,15 +136,6 @@ export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSour
       variables.push(
         variableFrom(id, draft.variable.labelEn, draft.variable.labelZh, draft.variable.visibility),
       )
-    }
-    for (const [index, hook] of item.hooks.entries()) {
-      code.push({ origin: `${item.fileName}#${index + 1}`, source: hook })
-    }
-  }
-
-  for (const skill of input.manualSkills) {
-    for (const [index, hook] of skill.hooks.entries()) {
-      if (hook.trim()) code.push({ origin: `${skill.slug || "skill"}#${index + 1}`, source: hook })
     }
   }
 
@@ -194,7 +172,6 @@ export function lintSourceFromPackBench(input: PackBenchLintInput): PackLintSour
     variables,
     lore,
     panelsYaml: input.panels?.yamlText.trim() ? input.panels.yamlText : null,
-    code,
     episodes: (input.episodes ?? []).map((episode) => ({
       id: episode.id,
       ordinal: episode.ordinal,

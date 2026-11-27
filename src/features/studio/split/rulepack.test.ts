@@ -62,18 +62,22 @@ describe("readRulepack", () => {
   })
 
   it("lists the rules scripts the YAML declares, from both places", () => {
-    // `core/pack.py::_rulepack_script_files`: resolution.script and every
-    // subsystems.*.script, deduped and sorted, each a bare name.
+    // resolution.script and every subsystems.*.script, deduped and sorted — each one a
+    // reason the engine refuses the rule pack.
     const reading = readRulepack(
       "resolution:\n  script: grade.js\nsubsystems:\n  chase:\n    script: chase.js\n  duel:\n    script: grade.js\n",
     )
     expect(reading.summary.scripts).toEqual(["chase.js", "grade.js"])
-    expect(reading.issues.map((issue) => issue.key)).not.toContain("rulepackScriptBareName")
+    expect(reading.issues.map((issue) => issue.key)).toEqual([
+      "rulepackScriptRefused",
+      "rulepackScriptRefused",
+    ])
   })
 
-  it("refuses a script name with a path in it", () => {
-    expect(keys("resolution:\n  script: ../grade.js\n")).toContain("rulepackScriptBareName")
-    expect(keys("subsystems:\n  chase:\n    script: sub/dir.js\n")).toContain("rulepackScriptBareName")
+  it("refuses every rules script: 3.0 has no rules-script lane", () => {
+    expect(keys("resolution:\n  script: grade.js\n")).toContain("rulepackScriptRefused")
+    expect(keys("resolution:\n  script: ../grade.js\n")).toContain("rulepackScriptRefused")
+    expect(keys("subsystems:\n  chase:\n    script: sub/dir.js\n")).toContain("rulepackScriptRefused")
   })
 
   it("accepts the patch shape the pack bench has always emitted", () => {

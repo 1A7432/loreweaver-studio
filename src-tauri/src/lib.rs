@@ -49,6 +49,8 @@ pub fn run() {
             files::write_pack_source,
             engine::probe_engine_cli,
             engine::run_engine_cli,
+            engine::make_scratch_dir,
+            engine::remove_scratch_dir,
             host_local::host_local_start,
             host_local::host_local_stop,
             host_local::host_local_status,

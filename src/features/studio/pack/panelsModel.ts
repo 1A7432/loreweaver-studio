@@ -1,47 +1,36 @@
-// The `ui/panels.yaml` document as an editable model: parse it, edit it, write it
-// back, and say what is wrong with it before the build does.
+// The `ui/panels.yaml` document (panels 3.0) as an editable model: parse it, edit it,
+// write it back.
 //
-// The schema authority is the ENGINE (`core/panels.py`); this is a mirror, and it
-// mirrors the one thing an editor needs that a validator does not — the FIELD TABLE.
-// `BLOCK_FIELDS` below is the whole vocabulary in one place, so the editor renders a
-// form per block kind without a line of per-kind UI, and a rule system's new block
-// type reaches the editor by adding a row.
+// The format is the engine's (`docs/lwf/formats/panels.md` in the engine repository):
+// a panel declares the VIEWS it reads under short handles (`views: {me: me, tide:
+// harbor/tide}`), a field reads a path inside one (`{$view: me.character.name}`), a
+// `repeat` walks a list inside a view, `visible_when` tests paths, a `choices` option runs a
+// command, and a page is one self-contained HTML file with a template `fallback`. The checks
+// are `panelsCheck.ts`, a mirror of the engine's reader; what a panel SHOWS is the protocol
+// package's `panelBlocks`, the one evaluation every client uses (see `panelsPreview.ts`).
 //
-// Deliberately NOT a second validator: `problemsFor` catches what an author can fix
-// while typing (a missing required field, a binding to a variable the pack never
-// declared, a max below a min). `--pack` remains the gate a release passes.
+// `BLOCK_FIELDS` is the whole block vocabulary in one table, so the editor renders a form
+// per block kind without per-kind UI code.
 //
-// Two things this model refuses to lose. Tier 2 panels — the ones that ship their own
-// HTML/JS (`entry`/`assets`/`fallback`) — sit in the SAME `panels` list as modeled
-// ones, carried through UNTOUCHED, in place. And a BLOCK this table does not model
-// (a kind the engine grew after this file, or one written in a shape the form cannot
-// hold) is carried through as an opaque block, verbatim, in place — never dropped.
-// Unknown slots, audiences, and extra keys are kept as written, not rewritten to a
-// default. An editor that silently ate an author's work on save would be the worst
-// bug it can have.
+// Two things this model refuses to lose. A BLOCK it cannot hold (a kind the engine grew
+// after this file, a 1.x binding the migration could not translate) is carried through
+// verbatim, in place — never dropped — and the checks say what is wrong with it. And keys it
+// does not model are written back as they were. An editor that silently ate an author's
+// work on save would be the worst bug it can have.
 
-import type {
-  PanelRepeatBlock,
-  PanelSlot as ProtocolPanelSlot,
-  PanelTemplateBlock,
-} from "@loreweaver/protocol"
+import { PANEL_SLOTS as PROTOCOL_PANEL_SLOTS, type PanelSlot as ProtocolPanelSlot } from "loreweaver-protocol"
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
+import { MAX_OPTIONS, PANEL_AUDIENCES as CHECK_AUDIENCES } from "./panelsCheck"
 
-/** `core/panels.py` `PANEL_SLOTS`, pinned to the protocol package's pack-panel
- * `PanelSlot` (the engine's tests pin THAT to the engine). Not the hook `ui`
- * FRAME's `inline|sidebar` — that is a different vocabulary, for a different thing. */
-export const PANEL_SLOTS = ["sidebar", "tray", "modal"] as const satisfies readonly ProtocolPanelSlot[]
-export const PANEL_AUDIENCES = ["all", "player", "keeper"] as const
+export const PANEL_SLOTS: readonly ProtocolPanelSlot[] = PROTOCOL_PANEL_SLOTS
+export const PANEL_AUDIENCES = CHECK_AUDIENCES
 export const BADGE_TONES = ["info", "warn", "danger"] as const
 export const TEXT_STYLES = ["quote", "warning"] as const
-/** `core/hooks.py` `MAX_UI_OPTIONS`: the engine refuses a `choices` block past this. */
-export const MAX_CHOICE_OPTIONS = 12
+export const MAX_CHOICE_OPTIONS = MAX_OPTIONS
+/** The repeat element's handle when the author names none (`DEFAULT_REPEAT_AS`). */
+export const DEFAULT_REPEAT_AS = "item"
 
-export type PanelSlot = (typeof PANEL_SLOTS)[number]
-/** Every authored block kind — the key set `BLOCK_FIELDS` must cover exactly.
- * `PanelRepeatBlock` is a wrapper, not a kind; the hook `ui` frame's `UiBlock` is a
- * different vocabulary (resolved hashes, already-localized strings). */
-export type BlockKind = Exclude<PanelTemplateBlock, PanelRepeatBlock>["kind"]
+export type PanelSlot = ProtocolPanelSlot
 export type PanelAudience = (typeof PANEL_AUDIENCES)[number]
 
 export function isPanelSlot(value: string): value is PanelSlot {
@@ -58,33 +47,31 @@ export interface Localized {
   zh: string
 }
 
-/** What a LOCALIZED field may hold. Inside a `repeat`, the schema lets a binding
- * stand where a label would — `{$leaf: label}` is how one instance names itself —
- * so a model that only understood the text pair would erase that on the next save. */
-export type LocalizedField = Localized | Scalar
+/** A field read from a view: `{$view: <path>}`. */
+export interface ViewBinding {
+  mode: "view"
+  path: string
+}
+
+/** A scalar field: a literal as the file wrote it (string / number / boolean), or a binding. */
+export type Scalar = { mode: "literal"; value: string | number | boolean } | ViewBinding
+
+/** What a localized field may hold: text, or a binding. */
+export type LocalizedField = Localized | ViewBinding
 
 export function isLocalized(value: FieldValue): value is Localized {
   return "en" in value
 }
 
-export const LEAF_PARTS = ["id", "label", "value"] as const
-export type LeafPart = (typeof LEAF_PARTS)[number]
-
-/** A scalar field: a literal as the file wrote it (string / number / boolean), a
- * live binding to a variable, or — inside a `repeat` — one part of the variable
- * the current instance stands for. The serializer does not guess types. */
-export type Scalar =
-  | { mode: "literal"; value: string | number | boolean }
-  | { mode: "var"; path: string }
-  | { mode: "leaf"; leaf: LeafPart }
-
-/** One option of a `choices` block: what the client shows, and the input it sends
- * when picked. The label may bind, like any localized field. */
+/** One option of a `choices` block: what the client shows, and the command it runs. */
 export interface ChoiceOptionDraft {
   uid: string
   id: string
   label: LocalizedField
-  input: string
+  /** A command id: `help`, `rules.sanity_check`, `<module>/<command>`. */
+  command: string
+  /** The command's arguments as JSON text (an object), "" for none. */
+  argsText: string
 }
 
 export interface OptionsField {
@@ -96,11 +83,9 @@ export function isOptions(value: FieldValue): value is OptionsField {
   return "mode" in value && value.mode === "options"
 }
 
-/** Everything a block field may hold. */
-export type FieldValue = LocalizedField | OptionsField
+export type FieldValue = LocalizedField | Scalar | OptionsField
 
-/** `localized`/`scalar` may hold a binding; `path` and `enum` are plain strings to the
- * engine (`_validated_asset_path`, `style not in UI_TEXT_STYLES`) — no binding there. */
+/** `localized`/`scalar` may bind; `path` (`src`) and `enum` style are plain values. */
 export type FieldType = "localized" | "scalar" | "path" | "enum" | "options"
 
 export interface FieldSpec {
@@ -109,12 +94,24 @@ export interface FieldSpec {
   required: boolean
   /** enum fields only. */
   options?: readonly string[]
+  /** A bindable enum (`badge.tone`). */
+  bindable?: boolean
 }
 
-/** Every Tier-1 block kind and its fields, mirroring `core/panels.py`'s own table
- * (`_validate_block`). Order is render order in the form. Typed over the protocol
- * package's block union, so a kind the engine grows (or drops) fails to COMPILE here
- * rather than silently becoming an opaque block. */
+export type BlockKind =
+  | "divider"
+  | "meter"
+  | "stat"
+  | "badge"
+  | "text"
+  | "choices"
+  | "image"
+  | "letter"
+  | "clipping"
+  | "title_card"
+  | "map_pin"
+
+/** Every block kind and its fields (`panels.md` §5). Order is render order in the form. */
 export const BLOCK_FIELDS: Record<BlockKind, readonly FieldSpec[]> = {
   divider: [],
   meter: [
@@ -129,7 +126,7 @@ export const BLOCK_FIELDS: Record<BlockKind, readonly FieldSpec[]> = {
   ],
   badge: [
     { name: "label", type: "localized", required: true },
-    { name: "tone", type: "enum", required: false, options: BADGE_TONES },
+    { name: "tone", type: "enum", required: false, options: BADGE_TONES, bindable: true },
   ],
   text: [
     { name: "text", type: "localized", required: true },
@@ -172,7 +169,6 @@ export const BLOCK_FIELDS: Record<BlockKind, readonly FieldSpec[]> = {
 
 export const BLOCK_KINDS = Object.keys(BLOCK_FIELDS)
 
-/** The same table, indexable by an arbitrary string (a kind read from a file). */
 const FIELD_TABLE: Record<string, readonly FieldSpec[] | undefined> = BLOCK_FIELDS
 
 /** The field specs of `kind`, or undefined for a kind this table does not model. */
@@ -180,31 +176,34 @@ export function fieldsFor(kind: string): readonly FieldSpec[] | undefined {
   return FIELD_TABLE[kind]
 }
 
-/** Whether a field of this type may hold a `$var` / `$leaf` binding at all. */
-export function fieldMayBind(type: FieldType): boolean {
-  return type === "localized" || type === "scalar"
+/** Whether a field may hold a `{$view}` binding. */
+export function fieldMayBind(spec: Pick<FieldSpec, "type" | "bindable">): boolean {
+  return spec.type === "localized" || spec.type === "scalar" || spec.bindable === true
+}
+
+/** `repeat: {each, as, prefix?, block}` around a block, with the repeat's own gate. */
+export interface RepeatDraft {
+  /** A path to a list inside a view (`me.character.resources`). */
+  each: string
+  /** The element's handle inside the block (default `item`). */
+  as: string
+  /** Keep only the elements whose key starts with this ("" for all). */
+  prefix: string
+  /** A condition on the whole list, read outside the element. */
+  visibleWhen: string
 }
 
 export interface BlockDraft {
   /** Stable across edits so React keys and reorders do not fight the array index. */
   uid: string
   kind: string
-  /** Field name → value. A localized field holds text OR a binding; the rest a `Scalar`,
-   * or an option list for a `choices` block. Empty for an opaque block. */
   fields: Record<string, FieldValue>
-  /** A `core.condexpr` condition the CLIENT evaluates; empty means always shown.
-   * Inside a repeat this is the per-INSTANCE condition. */
+  /** A condition over paths; empty means always shown. Inside a repeat it decides each instance. */
   visibleWhen: string
-  /** `{repeat: {prefix, block}}` — one instance per visible variable with this
-   * prefix. Empty means the block renders once. Repeat does not nest. */
-  repeatPrefix: string
-  /** A condition on the repeat WRAPPER — gates the whole repeat, not one instance.
-   * Only meaningful with `repeatPrefix`; the engine accepts `visible_when` on both. */
-  repeatVisibleWhen: string
-  /** Set when this table does not model the block: the entry exactly as written.
-   * Written back verbatim; the form shows it as opaque instead of eating it. */
+  repeat: RepeatDraft | null
+  /** Set when this table does not model the block: the entry exactly as written. */
   raw?: unknown
-  /** Keys this table does not model, written back as-is so an extra field is not eaten. */
+  /** Keys this table does not model, written back as-is. */
   rest?: Record<string, unknown>
 }
 
@@ -212,36 +211,34 @@ export function isOpaqueBlock(block: BlockDraft): boolean {
   return block.raw !== undefined
 }
 
+/** One `views` entry: a handle and the view it names. */
+export interface ViewDecl {
+  uid: string
+  handle: string
+  view: string
+}
+
 export interface PanelDraft {
   uid: string
   id: string
   title: Localized
-  /** Written back as-is. Unknown values stay unknown — they are not rewritten to `sidebar`. */
+  /** Written back as-is: unknown values stay unknown. */
   slot: string
-  /** Written back as-is. Unknown values stay unknown — they are not rewritten to `all`. */
   audience: string
+  views: ViewDecl[]
+  kind: "template" | "page"
+  /** A template's blocks. */
   blocks: BlockDraft[]
-  /** Keys this editor does not model (`icon`, …), written back as-is. */
+  /** A page's HTML file (pack path). */
+  entry: string
+  /** A page's fallback: blocks, or `null` for "needs a rich client". */
+  fallback: BlockDraft[] | null
+  /** Keys this editor does not model, written back as-is (the checks flag them). */
   rest?: Record<string, unknown>
 }
 
-/** A tier-2 panel (or anything else this editor does not model), kept verbatim. */
-export interface OpaquePanel {
-  uid: string
-  id: string
-  raw: Record<string, unknown>
-}
-
-/** One list, in file order. Splitting modeled and opaque into two arrays
- * reordered the file on save (tier-2 panels were appended). */
-export type PanelEntry = PanelDraft | OpaquePanel
-
 export interface PanelsDocument {
-  panels: PanelEntry[]
-}
-
-export function isOpaquePanel(panel: PanelEntry): panel is OpaquePanel {
-  return !("blocks" in panel)
+  panels: PanelDraft[]
 }
 
 let uidCounter = 0
@@ -258,8 +255,12 @@ export function literal(value: string | number | boolean = ""): Scalar {
   return { mode: "literal", value }
 }
 
-/** The editor's box is text. Coerce here — not in the serializer — so an
- * untouched `true` / `12` / `"true"` round-trips as whatever the file had. */
+export function binding(path = ""): ViewBinding {
+  return { mode: "view", path }
+}
+
+/** The editor's box is text. Coerce here — not in the serializer — so an untouched
+ * `true` / `12` round-trips as whatever the file had. */
 export function parseLiteralInput(text: string): Scalar {
   const trimmed = text.trim()
   if (trimmed === "true") return literal(true)
@@ -271,7 +272,7 @@ export function parseLiteralInput(text: string): Scalar {
 }
 
 export function newOption(): ChoiceOptionDraft {
-  return { uid: nextUid(), id: "", label: emptyLocalized(), input: "" }
+  return { uid: nextUid(), id: "", label: emptyLocalized(), command: "", argsText: "" }
 }
 
 export function emptyFieldValue(type: FieldType): FieldValue {
@@ -280,16 +281,18 @@ export function emptyFieldValue(type: FieldType): FieldValue {
   return literal()
 }
 
-export function isLocalizedField(kind: string, field: string): boolean {
-  return fieldsFor(kind)?.find((spec) => spec.name === field)?.type === "localized"
-}
-
 export function newBlock(kind: string): BlockDraft {
   const fields: Record<string, FieldValue> = {}
-  for (const spec of fieldsFor(kind) ?? []) {
-    fields[spec.name] = emptyFieldValue(spec.type)
-  }
-  return { uid: nextUid(), kind, fields, visibleWhen: "", repeatPrefix: "", repeatVisibleWhen: "" }
+  for (const spec of fieldsFor(kind) ?? []) fields[spec.name] = emptyFieldValue(spec.type)
+  return { uid: nextUid(), kind, fields, visibleWhen: "", repeat: null }
+}
+
+export function newRepeat(): RepeatDraft {
+  return { each: "", as: DEFAULT_REPEAT_AS, prefix: "", visibleWhen: "" }
+}
+
+export function newViewDecl(handle = "", view = ""): ViewDecl {
+  return { uid: nextUid(), handle, view }
 }
 
 export function newPanel(): PanelDraft {
@@ -299,28 +302,61 @@ export function newPanel(): PanelDraft {
     title: emptyLocalized(),
     slot: "sidebar",
     audience: "all",
+    views: [],
+    kind: "template",
     blocks: [],
+    entry: "",
+    fallback: null,
   }
 }
 
 // --- reading ---------------------------------------------------------------
 
-function readPlainLocalized(raw: unknown): Localized {
-  const value = readLocalized(raw)
-  return isLocalized(value) ? value : emptyLocalized()
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function readLocalized(raw: unknown): LocalizedField {
+function isViewBindingShape(raw: unknown): raw is { $view: string } {
+  return isRecord(raw) && Object.keys(raw).length === 1 && typeof raw.$view === "string"
+}
+
+/** A localized field; null when the value is neither text nor a well-formed binding. */
+function readLocalized(raw: unknown): LocalizedField | null {
   if (typeof raw === "string") return { en: raw, zh: "" }
-  if (raw && typeof raw === "object") {
-    const map = raw as Record<string, unknown>
-    if ("$var" in map || "$leaf" in map) return readScalar(raw)
-    return {
-      en: typeof map.en === "string" ? map.en : "",
-      zh: typeof map.zh === "string" ? map.zh : "",
-    }
+  if (isViewBindingShape(raw)) return binding(raw.$view)
+  if (isRecord(raw) && Object.keys(raw).every((key) => key === "en" || key === "zh")) {
+    return { en: typeof raw.en === "string" ? raw.en : "", zh: typeof raw.zh === "string" ? raw.zh : "" }
   }
-  return emptyLocalized()
+  return null
+}
+
+function readScalar(raw: unknown): Scalar | null {
+  if (isViewBindingShape(raw)) return binding(raw.$view)
+  if (raw === null || raw === undefined) return literal()
+  if (typeof raw === "boolean" || typeof raw === "string") return literal(raw)
+  if (typeof raw === "number" && Number.isFinite(raw)) return literal(raw)
+  return null
+}
+
+function readOptions(raw: unknown): OptionsField | null {
+  if (!Array.isArray(raw)) return null
+  const options: ChoiceOptionDraft[] = []
+  for (const entry of raw) {
+    if (!isRecord(entry)) return null
+    // A 1.x `input`, or a key this table does not know: the block stays verbatim.
+    if (Object.keys(entry).some((key) => !["id", "label", "command", "args"].includes(key))) return null
+    const label = readLocalized(entry.label)
+    if (label === null) return null
+    if (entry.args !== undefined && !isRecord(entry.args)) return null
+    options.push({
+      uid: nextUid(),
+      id: typeof entry.id === "string" ? entry.id : "",
+      label,
+      command: typeof entry.command === "string" ? entry.command : "",
+      argsText: entry.args === undefined ? "" : JSON.stringify(entry.args),
+    })
+  }
+  return { mode: "options", options }
 }
 
 function leftovers(
@@ -337,227 +373,192 @@ function leftovers(
   return any ? rest : undefined
 }
 
-function readScalar(raw: unknown): Scalar {
-  if (raw && typeof raw === "object") {
-    const map = raw as Record<string, unknown>
-    if ("$var" in map) {
-      return { mode: "var", path: typeof map.$var === "string" ? map.$var : "" }
-    }
-    // `{$leaf: id|label|value}` is the repeat instance's own variable. Reading it as
-    // anything else stringifies it to "[object Object]" and destroys the block on the
-    // next save — an editor eating a working panel is the worst bug it can have.
-    if ("$leaf" in map) {
-      const leaf = map.$leaf
-      return {
-        mode: "leaf",
-        leaf: LEAF_PARTS.includes(leaf as LeafPart) ? (leaf as LeafPart) : "value",
-      }
-    }
-  }
-  if (raw === null || raw === undefined) return literal()
-  if (typeof raw === "boolean") return literal(raw)
-  if (typeof raw === "number" && Number.isFinite(raw)) return literal(raw)
-  return literal(String(raw))
-}
-
-function readOptions(raw: unknown): OptionsField {
-  const options: ChoiceOptionDraft[] = []
-  for (const entry of Array.isArray(raw) ? raw : []) {
-    if (!entry || typeof entry !== "object") continue
-    const map = entry as Record<string, unknown>
-    options.push({
-      uid: nextUid(),
-      id: typeof map.id === "string" ? map.id : "",
-      label: readLocalized(map.label),
-      input: typeof map.input === "string" ? map.input : "",
-    })
-  }
-  return { mode: "options", options }
-}
-
-function readField(spec: FieldSpec, raw: unknown): FieldValue {
-  if (spec.type === "localized") return readLocalized(raw)
-  if (spec.type === "options") return readOptions(raw)
-  return readScalar(raw)
-}
-
-/** A block this table cannot hold, kept exactly as written. `kind` is only a name
- * for the form to show. */
 function opaqueBlock(raw: unknown): BlockDraft {
-  const map = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null
+  const map = isRecord(raw) ? raw : null
   let kind = map && typeof map.kind === "string" ? map.kind : ""
-  if (!kind && map && map.repeat && typeof map.repeat === "object") {
-    const inner = (map.repeat as Record<string, unknown>).block
-    const innerKind = inner && typeof inner === "object" ? (inner as Record<string, unknown>).kind : ""
+  if (!kind && map && isRecord(map.repeat) && isRecord(map.repeat.block)) {
+    const innerKind = map.repeat.block.kind
     kind = typeof innerKind === "string" ? innerKind : ""
   }
-  return {
-    uid: nextUid(),
-    kind: kind || "?",
-    fields: {},
-    visibleWhen: "",
-    repeatPrefix: "",
-    repeatVisibleWhen: "",
-    raw,
-  }
+  return { uid: nextUid(), kind: kind || "?", fields: {}, visibleWhen: "", repeat: null, raw }
 }
 
 function readModeledBlock(raw: unknown): BlockDraft | null {
-  if (!raw || typeof raw !== "object") return null
-  const map = raw as Record<string, unknown>
-  const kind = typeof map.kind === "string" ? map.kind : ""
+  if (!isRecord(raw)) return null
+  const kind = typeof raw.kind === "string" ? raw.kind : ""
   const specs = fieldsFor(kind)
   if (specs === undefined) return null
   const block = newBlock(kind)
   for (const spec of specs) {
-    if (!(spec.name in map)) continue
-    block.fields[spec.name] = readField(spec, map[spec.name])
+    if (!(spec.name in raw)) continue
+    const value = raw[spec.name]
+    const read =
+      spec.type === "localized"
+        ? readLocalized(value)
+        : spec.type === "options"
+          ? readOptions(value)
+          : readScalar(value)
+    if (read === null) return null
+    block.fields[spec.name] = read
   }
-  if (typeof map.visible_when === "string") block.visibleWhen = map.visible_when
-  const rest = leftovers(map, ["kind", "visible_when", ...specs.map((spec) => spec.name)])
+  if (raw.visible_when !== undefined) {
+    if (typeof raw.visible_when !== "string") return null
+    block.visibleWhen = raw.visible_when
+  }
+  const rest = leftovers(raw, ["kind", "visible_when", ...specs.map((spec) => spec.name)])
   if (rest) block.rest = rest
   return block
 }
 
 function readBlock(raw: unknown): BlockDraft {
-  if (raw && typeof raw === "object") {
-    const map = raw as Record<string, unknown>
-    // `{repeat: {prefix, block}}` unwraps into the block plus its prefix; the editor
-    // shows it as one block with "repeat over" filled in, since repeat cannot nest.
-    // A `visible_when` on the WRAPPER gates the whole repeat and is kept apart from
-    // the inner block's per-instance one — the engine accepts both.
-    if (map.repeat && typeof map.repeat === "object") {
-      const repeat = map.repeat as Record<string, unknown>
-      const inner = readModeledBlock(repeat.block)
-      // Extra keys on the wrapper or the `repeat` object itself cannot sit on the
-      // inner block without colliding, so the whole wrapper stays opaque.
-      const extra = leftovers(map, ["repeat", "visible_when"]) || leftovers(repeat, ["prefix", "block"])
-      if (inner !== null && typeof repeat.prefix === "string" && extra === undefined) {
-        return {
-          ...inner,
-          repeatPrefix: repeat.prefix,
-          repeatVisibleWhen: typeof map.visible_when === "string" ? map.visible_when : "",
-        }
+  if (isRecord(raw) && isRecord(raw.repeat)) {
+    const repeat = raw.repeat
+    const inner = readModeledBlock(repeat.block)
+    // Extra keys on the wrapper or the `repeat` itself cannot sit on the inner block
+    // without colliding, so such a wrapper stays verbatim.
+    const extra =
+      leftovers(raw, ["repeat", "visible_when"]) || leftovers(repeat, ["each", "as", "prefix", "block"])
+    const stringOrAbsent = (value: unknown) => value === undefined || typeof value === "string"
+    if (
+      inner !== null &&
+      extra === undefined &&
+      typeof repeat.each === "string" &&
+      stringOrAbsent(repeat.as) &&
+      stringOrAbsent(repeat.prefix) &&
+      stringOrAbsent(raw.visible_when)
+    ) {
+      return {
+        ...inner,
+        repeat: {
+          each: repeat.each,
+          as: typeof repeat.as === "string" ? repeat.as : DEFAULT_REPEAT_AS,
+          prefix: typeof repeat.prefix === "string" ? repeat.prefix : "",
+          visibleWhen: typeof raw.visible_when === "string" ? raw.visible_when : "",
+        },
       }
-      return opaqueBlock(raw)
     }
-    const block = readModeledBlock(raw)
-    if (block !== null) return block
+    return opaqueBlock(raw)
   }
-  return opaqueBlock(raw)
+  return readModeledBlock(raw) ?? opaqueBlock(raw)
+}
+
+function readBlocks(raw: unknown): BlockDraft[] {
+  return Array.isArray(raw) ? raw.map(readBlock) : []
+}
+
+function readTitle(raw: unknown): Localized {
+  const value = readLocalized(raw)
+  return value !== null && isLocalized(value) ? value : emptyLocalized()
+}
+
+function readViews(raw: unknown): ViewDecl[] {
+  if (!isRecord(raw)) return []
+  return Object.entries(raw).map(([handle, view]) =>
+    newViewDecl(handle, typeof view === "string" ? view : ""),
+  )
 }
 
 export interface ParseResult {
   document: PanelsDocument
   /** A YAML or shape error the editor cannot recover from; the document is empty. */
   error: string | null
-  /** Blocks carried through as opaque because this table does not model them. */
-  opaqueBlocks: number
 }
 
 export function parsePanelsYaml(text: string): ParseResult {
-  const empty: PanelsDocument = { panels: [] }
-  if (!text.trim()) return { document: empty, error: null, opaqueBlocks: 0 }
+  if (!text.trim()) return { document: { panels: [] }, error: null }
   try {
     return documentFromRaw(parseYaml(text))
   } catch (error) {
-    return { document: empty, error: String(error), opaqueBlocks: 0 }
+    return { document: { panels: [] }, error: String(error) }
   }
 }
 
-/** The same reader over an already-parsed value — YAML from a file, JSON from a
- * model. One reader, so a drafted panel and a hand-written one are read alike. */
+/** The same reader over an already-parsed value — YAML from a file, JSON from a model. */
 export function documentFromRaw(raw: unknown): ParseResult {
-  const empty: PanelsDocument = { panels: [] }
-  if (!raw || typeof raw !== "object" || !Array.isArray((raw as Record<string, unknown>).panels)) {
-    return {
-      document: empty,
-      error: "panels.yaml root must be a mapping with a `panels` list",
-      opaqueBlocks: 0,
-    }
+  if (!isRecord(raw) || !Array.isArray(raw.panels)) {
+    return { document: { panels: [] }, error: "panels.yaml root must be a mapping with a `panels` list" }
   }
-  const panels: PanelEntry[] = []
-  let opaqueBlocks = 0
-  for (const entry of (raw as { panels: unknown[] }).panels) {
-    if (!entry || typeof entry !== "object") continue
-    const map = entry as Record<string, unknown>
-    const id = typeof map.id === "string" ? map.id : ""
-    if ("entry" in map) {
-      panels.push({ uid: nextUid(), id, raw: map })
-      continue
-    }
-    const blocks: BlockDraft[] = []
-    for (const rawBlock of Array.isArray(map.blocks) ? map.blocks : []) {
-      const block = readBlock(rawBlock)
-      if (isOpaqueBlock(block)) opaqueBlocks += 1
-      blocks.push(block)
-    }
-    const rest = leftovers(map, ["id", "title", "slot", "audience", "blocks"])
+  const panels: PanelDraft[] = []
+  for (const entry of raw.panels) {
+    if (!isRecord(entry)) continue
+    const page = "entry" in entry
+    const rest = leftovers(entry, ["id", "title", "slot", "audience", "views", "blocks", "entry", "fallback"])
+    // Keys a page does not take (`blocks`) or a template does not take (`fallback`) are kept as written.
+    const extra: Record<string, unknown> = { ...(rest ?? {}) }
+    if (page && "blocks" in entry) extra.blocks = entry.blocks
+    if (!page && "fallback" in entry) extra.fallback = entry.fallback
     panels.push({
       uid: nextUid(),
-      id,
-      // A panel TITLE is strictly text — the schema forbids a binding there
-      // ("must be a plain string or en/zh mapping (no bindings)").
-      title: readPlainLocalized(map.title),
-      slot: typeof map.slot === "string" ? map.slot : "sidebar",
-      audience: typeof map.audience === "string" ? map.audience : "all",
-      blocks,
-      ...(rest ? { rest } : {}),
+      id: typeof entry.id === "string" ? entry.id : "",
+      title: readTitle(entry.title),
+      slot: typeof entry.slot === "string" ? entry.slot : "sidebar",
+      audience: typeof entry.audience === "string" ? entry.audience : "all",
+      views: readViews(entry.views),
+      kind: page ? "page" : "template",
+      blocks: page ? [] : readBlocks(entry.blocks),
+      entry: page && typeof entry.entry === "string" ? entry.entry : "",
+      fallback: page
+        ? entry.fallback === null || entry.fallback === undefined
+          ? null
+          : readBlocks(entry.fallback)
+        : null,
+      ...(Object.keys(extra).length > 0 ? { rest: extra } : {}),
     })
   }
-  return { document: { panels }, error: null, opaqueBlocks }
+  return { document: { panels }, error: null }
 }
 
 // --- writing ---------------------------------------------------------------
 
-/** Mirrors the engine's `_localized`: a plain string is `en`; a mapping carries any
- * NON-EMPTY subset of `en`/`zh`. An empty locale must be OMITTED, not written blank —
- * `{en: "", zh: 水}` is refused by the build ("title.en: must be a non-empty string"). */
+/** A plain string is `en`; a mapping carries the NON-EMPTY locales only — a blank locale is
+ * refused by the engine (`title.en: bad_field`), so it is omitted, never written blank. */
 function writeLocalized(value: LocalizedField): unknown {
-  if (!isLocalized(value)) return writeScalar(value)
+  if (!isLocalized(value)) return { $view: value.path }
   const hasEn = value.en.trim() !== ""
   const hasZh = value.zh.trim() !== ""
   if (hasEn && hasZh) return { en: value.en, zh: value.zh }
   if (hasZh) return { zh: value.zh }
-  // en-only (or blank — a required blank is a problem `problemsFor` names, not
-  // something the serializer papers over).
   return value.en
 }
 
 function writeScalar(value: Scalar): unknown {
-  if (value.mode === "var") return { $var: value.path }
-  if (value.mode === "leaf") return { $leaf: value.leaf }
-  return value.value
+  return value.mode === "view" ? { $view: value.path } : value.value
+}
+
+/** The args text as an object; undefined when blank or not a JSON object (the checks flag it). */
+export function parseArgsText(text: string): Record<string, unknown> | null | undefined {
+  if (!text.trim()) return undefined
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 function writeOptions(value: OptionsField): unknown {
-  return value.options.map((option) => ({
-    id: option.id,
-    label: writeLocalized(option.label),
-    input: option.input,
-  }))
+  return value.options.map((option) => {
+    const out: Record<string, unknown> = {
+      id: option.id,
+      label: writeLocalized(option.label),
+      command: option.command,
+    }
+    const args = parseArgsText(option.argsText)
+    // Unparseable args are written as the text they are, so the checks (and the build) say so
+    // instead of the editor silently dropping what the author typed.
+    if (args !== undefined) out.args = args === null ? option.argsText : args
+    return out
+  })
 }
 
 function fieldBlank(value: FieldValue): boolean {
   if (isOptions(value)) return value.options.length === 0
   if (isLocalized(value)) return !value.en.trim() && !value.zh.trim()
-  if (value.mode === "var") return !value.path.trim()
-  if (value.mode === "leaf") return false
+  if (value.mode === "view") return !value.path.trim()
   return typeof value.value === "string" && !value.value.trim()
 }
 
-/**
- * Keys this table does not model are written back AFTER the ones it does, in
- * the author's own order. Spreading them first put them ahead of `kind` and
- * `id` — an author's `icon:` jumping to the top of every mapping it appears
- * in — which is the kind of churn the round-trip is supposed to avoid.
- * `leftovers` never collects a known key, so nothing here can be shadowed.
- */
-function writeRest(out: Record<string, unknown>, rest: Record<string, unknown> | undefined): void {
-  if (rest) Object.assign(out, rest)
-}
-
-function writeBlock(block: BlockDraft): unknown {
+export function writeBlock(block: BlockDraft): unknown {
   if (block.raw !== undefined) return block.raw
   const out: Record<string, unknown> = { kind: block.kind }
   for (const spec of fieldsFor(block.kind) ?? []) {
@@ -565,139 +566,52 @@ function writeBlock(block: BlockDraft): unknown {
     if (value === undefined) continue
     if (!spec.required && fieldBlank(value)) continue
     if (isOptions(value)) out[spec.name] = writeOptions(value)
-    else if (spec.type === "localized") out[spec.name] = writeLocalized(value)
+    else if (spec.type === "localized") out[spec.name] = writeLocalized(value as LocalizedField)
     else out[spec.name] = writeScalar(value as Scalar)
   }
   if (block.visibleWhen.trim()) out.visible_when = block.visibleWhen.trim()
-  writeRest(out, block.rest)
-  if (block.repeatPrefix.trim()) {
-    const wrapper: Record<string, unknown> = {
-      repeat: { prefix: block.repeatPrefix.trim(), block: out },
-    }
-    if (block.repeatVisibleWhen.trim()) wrapper.visible_when = block.repeatVisibleWhen.trim()
+  if (block.rest) Object.assign(out, block.rest)
+  if (block.repeat !== null) {
+    const repeat: Record<string, unknown> = { each: block.repeat.each.trim() }
+    const as = block.repeat.as.trim()
+    if (as && as !== DEFAULT_REPEAT_AS) repeat.as = as
+    if (block.repeat.prefix !== "") repeat.prefix = block.repeat.prefix
+    repeat.block = out
+    const wrapper: Record<string, unknown> = { repeat }
+    if (block.repeat.visibleWhen.trim()) wrapper.visible_when = block.repeat.visibleWhen.trim()
     return wrapper
   }
   return out
 }
 
-function writePanel(panel: PanelDraft): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    id: panel.id,
-    title: writeLocalized(panel.title),
-    slot: panel.slot,
-  }
+export function writePanel(panel: PanelDraft): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: panel.id, title: writeLocalized(panel.title), slot: panel.slot }
   if (panel.audience !== "all") out.audience = panel.audience
-  out.blocks = panel.blocks.map(writeBlock)
-  writeRest(out, panel.rest)
+  if (panel.views.length > 0) {
+    const views: Record<string, string> = {}
+    for (const decl of panel.views) views[decl.handle] = decl.view
+    out.views = views
+  }
+  if (panel.kind === "page") {
+    out.entry = panel.entry
+    out.fallback = panel.fallback === null ? null : panel.fallback.map(writeBlock)
+  } else {
+    out.blocks = panel.blocks.map(writeBlock)
+  }
+  if (panel.rest) Object.assign(out, panel.rest)
   return out
-}
-
-function writeEntry(entry: PanelEntry): Record<string, unknown> {
-  return isOpaquePanel(entry) ? entry.raw : writePanel(entry)
 }
 
 export function serializePanelsYaml(document: PanelsDocument): string {
   if (document.panels.length === 0) return ""
-  return stringifyYaml({ panels: document.panels.map(writeEntry) }, { lineWidth: 0 })
+  return stringifyYaml({ panels: document.panels.map(writePanel) }, { lineWidth: 0 })
 }
 
-// --- checking --------------------------------------------------------------
-
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
-
-/** What an author can fix while typing. Message strings are i18n keys with params,
- * so the panel renders them in the studio's language. */
-export interface PanelProblem {
-  key: string
-  params?: Record<string, string | number>
-}
-
-export function problemsFor(document: PanelsDocument, declaredVars: Set<string>): PanelProblem[] {
-  const problems: PanelProblem[] = []
-  const seen = new Set<string>()
-  const knownVar = (path: string): boolean => {
-    if (declaredVars.size === 0) return true
-    const root = path.split(".")[0]
-    return declaredVars.has(path) || declaredVars.has(root)
-  }
-  const checkBinding = (at: string, field: string, value: FieldValue, type: FieldType, inRepeat: boolean) => {
-    if (isOptions(value) || isLocalized(value) || value.mode === "literal") return
-    if (!fieldMayBind(type)) {
-      problems.push({ key: "bindingNotAllowed", params: { at, field } })
-      return
-    }
-    // A `$leaf` names the repeat instance's own variable — outside a repeat there is
-    // no instance, and the engine refuses it at build time.
-    if (value.mode === "leaf") {
-      if (!inRepeat) problems.push({ key: "leafOutsideRepeat", params: { at, field } })
-      return
-    }
-    // A binding that resolves to nothing DROPS the whole block at render time,
-    // so an undeclared path is a silent blank panel, not a visible error.
-    if (value.path.trim() && !knownVar(value.path))
-      problems.push({ key: "unknownVar", params: { at, path: value.path } })
-  }
-
+/** Every opaque block, across templates and fallbacks. */
+export function opaqueBlockCount(document: PanelsDocument): number {
+  let count = 0
   for (const panel of document.panels) {
-    const where = panel.id || "(unnamed)"
-    if (isOpaquePanel(panel)) {
-      if (panel.id && seen.has(panel.id)) problems.push({ key: "duplicateId", params: { panel: panel.id } })
-      if (panel.id) seen.add(panel.id)
-      continue
-    }
-    if (!SLUG_RE.test(panel.id)) problems.push({ key: "badId", params: { panel: where } })
-    else if (seen.has(panel.id)) problems.push({ key: "duplicateId", params: { panel: panel.id } })
-    seen.add(panel.id)
-    if (!isPanelSlot(panel.slot))
-      problems.push({ key: "unknownSlot", params: { panel: where, slot: panel.slot } })
-    if (!isPanelAudience(panel.audience))
-      problems.push({ key: "unknownAudience", params: { panel: where, audience: panel.audience } })
-    // Kept as written (never eaten), but the engine's `_require_keys` refuses them
-    // at build — say so here, not first at `--pack`.
-    if (panel.rest)
-      problems.push({ key: "unknownKeys", params: { at: where, keys: Object.keys(panel.rest).join(", ") } })
-    if (!panel.title.en.trim() && !panel.title.zh.trim())
-      problems.push({ key: "noTitle", params: { panel: where } })
-    if (panel.blocks.length === 0) problems.push({ key: "noBlocks", params: { panel: where } })
-
-    for (const [index, block] of panel.blocks.entries()) {
-      if (isOpaqueBlock(block)) continue // kept verbatim; the build is its judge
-      const at = `${where} #${index + 1}`
-      const inRepeat = block.repeatPrefix.trim() !== ""
-      if (block.rest)
-        problems.push({ key: "unknownKeys", params: { at, keys: Object.keys(block.rest).join(", ") } })
-      for (const spec of fieldsFor(block.kind) ?? []) {
-        const value = block.fields[spec.name]
-        const blank = value === undefined || fieldBlank(value)
-        if (spec.required && blank) {
-          problems.push({ key: "missingField", params: { at, field: spec.name } })
-          continue
-        }
-        if (value === undefined) continue
-        if (isOptions(value)) {
-          if (value.options.length > MAX_CHOICE_OPTIONS)
-            problems.push({ key: "tooManyOptions", params: { at, max: MAX_CHOICE_OPTIONS } })
-          for (const [optionIndex, option] of value.options.entries()) {
-            const optionAt = `${at} option ${optionIndex + 1}`
-            if (!option.id.trim() || !option.input.trim() || fieldBlank(option.label))
-              problems.push({ key: "optionIncomplete", params: { at: optionAt } })
-            checkBinding(optionAt, "label", option.label, "localized", inRepeat)
-          }
-          continue
-        }
-        checkBinding(at, spec.name, value, spec.type, inRepeat)
-      }
-      if (block.kind === "meter") {
-        const min = block.fields.min as Scalar | undefined
-        const max = block.fields.max as Scalar | undefined
-        if (min?.mode === "literal" && max?.mode === "literal") {
-          const low = typeof min.value === "number" ? min.value : Number(min.value)
-          const high = typeof max.value === "number" ? max.value : Number(max.value)
-          if (Number.isFinite(low) && Number.isFinite(high) && high <= low)
-            problems.push({ key: "meterRange", params: { at } })
-        }
-      }
-    }
+    for (const block of [...panel.blocks, ...(panel.fallback ?? [])]) if (isOpaqueBlock(block)) count += 1
   }
-  return problems
+  return count
 }

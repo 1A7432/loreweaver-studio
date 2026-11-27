@@ -3,17 +3,15 @@ import { persist } from "zustand/middleware"
 import { guardedLocalStorage } from "../lib/persistStorage"
 import {
   newLoreEntry,
-  newPregen,
   newProject,
   newVariable,
   type ForgeLoreEntry,
-  type ForgePregen,
   type ForgeProject,
   type ForgeVariable,
 } from "../features/studio/model"
 import { useUndoStore } from "./undo"
 
-export type StudioTab = "card" | "variables" | "worldbook" | "pregens" | "hooks"
+export type StudioTab = "card" | "variables" | "worldbook"
 
 /** Studio sub-views: the forge editor, the co-creation wizard, the card
  * splitter, the pack wizard. */
@@ -35,7 +33,7 @@ interface StudioState {
   replaceProject: (project: ForgeProject) => void
   deleteProject: (uid: string) => void
   selectProject: (uid: string) => void
-  updateProject: (patch: Partial<Omit<ForgeProject, "uid" | "variables" | "lorebook" | "pregens">>) => void
+  updateProject: (patch: Partial<Omit<ForgeProject, "uid" | "variables" | "lorebook">>) => void
 
   addVariable: () => void
   updateVariable: (uid: string, patch: Partial<ForgeVariable>) => void
@@ -45,10 +43,6 @@ interface StudioState {
   updateLoreEntry: (uid: string, patch: Partial<ForgeLoreEntry>) => void
   removeLoreEntry: (uid: string) => void
   selectLoreEntry: (uid: string | null) => void
-
-  addPregen: () => void
-  updatePregen: (uid: string, patch: Partial<ForgePregen>) => void
-  removePregen: (uid: string) => void
 }
 
 function touch(project: ForgeProject): ForgeProject {
@@ -194,45 +188,31 @@ export const useStudioStore = create<StudioState>()(
         },
 
         selectLoreEntry: (uid) => set({ selectedEntryUid: uid }),
-
-        addPregen: () => mutateActive((p) => ({ ...p, pregens: [...(p.pregens ?? []), newPregen()] })),
-
-        updatePregen: (uid, patch) =>
-          mutateActive((p) => ({
-            ...p,
-            pregens: (p.pregens ?? []).map((g) => (g.uid === uid ? { ...g, ...patch } : g)),
-          })),
-
-        removePregen: (uid) => {
-          const owner = get().activeUid
-          const project = get().projects.find((p) => p.uid === owner)
-          const index = (project?.pregens ?? []).findIndex((g) => g.uid === uid)
-          const removed = index < 0 ? undefined : project?.pregens[index]
-          mutateActive((p) => ({ ...p, pregens: (p.pregens ?? []).filter((g) => g.uid !== uid) }))
-          if (removed === undefined) return
-          useUndoStore.getState().push("pregen", removed.name, () => {
-            set((s) => ({
-              projects: s.projects.map((p) =>
-                p.uid === owner
-                  ? {
-                      ...p,
-                      pregens: [
-                        ...(p.pregens ?? []).slice(0, index),
-                        removed,
-                        ...(p.pregens ?? []).slice(index),
-                      ],
-                    }
-                  : p,
-              ),
-            }))
-          })
-        },
       }
     },
     {
       name: "loreweaver-studio-projects",
       storage: guardedLocalStorage,
       partialize: (s) => ({ projects: s.projects, activeUid: s.activeUid }),
+      // 1: hook scripts and the pregenerated cast left the project. A 3.0 engine counts a
+      // card's hook scripts and never runs them (and they make it a world card), and reads no
+      // pregens, so Studio stopped writing either; a stored project sheds both on load.
+      version: 1,
+      migrate: (stored) => {
+        const state = (stored ?? {}) as { projects?: unknown; activeUid?: unknown }
+        const projects = Array.isArray(state.projects)
+          ? state.projects.map((project) => {
+              const kept: Record<string, unknown> = { ...(project as Record<string, unknown>) }
+              delete kept.hooks
+              delete kept.pregens
+              return kept as unknown as ForgeProject
+            })
+          : []
+        return {
+          projects,
+          activeUid: typeof state.activeUid === "string" ? state.activeUid : null,
+        } as unknown as StudioState
+      },
     },
   ),
 )

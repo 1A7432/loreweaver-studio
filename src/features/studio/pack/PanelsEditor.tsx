@@ -1,46 +1,37 @@
-// The panels step's editor: forms instead of a YAML box, and a way to draft the
-// whole thing from a sentence.
+// The panels step's editor (panels 3.0): forms instead of a YAML box, a live preview, and a
+// way to draft panels from a sentence.
 //
-// `ui/panels.yaml` stays the source of truth on disk — this edits a parsed model and
-// writes the file back, so a hand-written panels file opens here and an edited one
-// still reads as ordinary YAML. The YAML tab is always there for the author who
-// prefers it (and for anything this editor does not model, which it carries through
-// untouched rather than eating).
+// `ui/panels.yaml` stays the source of truth on disk — this edits a parsed model and writes
+// the file back, so a hand-written file opens here and an edited one still reads as ordinary
+// YAML. The YAML tab is always there (and for anything the forms do not model, which they
+// carry through untouched rather than eating).
 //
-// Every form field comes from `BLOCK_FIELDS`: there is no per-block-kind UI code, so
-// a new block kind reaches this editor by adding a row to that table.
+// A panel reads VIEWS: it declares them under handles, and every field may read a path
+// inside one. The paths a built-in view's schema declares are offered as you type; the
+// preview evaluates the panel with the protocol package's `panelBlocks` — the SAME evaluation
+// play mode runs — over sample view values you can edit.
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
+import type { Block as WireBlock } from "loreweaver-protocol"
 import type { LintVariable } from "../lint/model"
-import { useActivePreset } from "../ai/presetStore"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { StreamPreview } from "../ai/StreamPreview"
 import { useDraftStream } from "../ai/useDraftStream"
-import { assembleSystemPrompt, toLlmSampling } from "../ai/stPreset"
+import { Block } from "../../play/UiBlocks"
 import { gatePanelsDraft, panelsSystemPrompt } from "./panelsAi"
+import { checkPanelsText } from "./panelsCheck"
 import {
   BLOCK_KINDS,
-  LEAF_PARTS,
   PANEL_AUDIENCES,
   PANEL_SLOTS,
-  type BlockDraft,
-  type ChoiceOptionDraft,
-  type FieldSpec,
-  type FieldValue,
-  type LeafPart,
-  type Localized,
-  type LocalizedField,
-  type OpaquePanel,
-  type PanelDraft,
-  type PanelsDocument,
+  binding,
   emptyFieldValue,
   emptyLocalized,
   fieldMayBind,
   fieldsFor,
   isLocalized,
   isOpaqueBlock,
-  isOpaquePanel,
   isOptions,
   isPanelAudience,
   isPanelSlot,
@@ -48,173 +39,187 @@ import {
   newBlock,
   newOption,
   newPanel,
+  newRepeat,
+  newViewDecl,
   nextUid,
+  opaqueBlockCount,
+  parseArgsText,
   parseLiteralInput,
   parsePanelsYaml,
-  problemsFor,
   serializePanelsYaml,
+  type BlockDraft,
+  type ChoiceOptionDraft,
+  type FieldSpec,
+  type FieldValue,
+  type Localized,
+  type PanelDraft,
+  type PanelsDocument,
+  type Scalar,
+  type ViewDecl,
 } from "./panelsModel"
+import {
+  bindablePaths,
+  commandIds,
+  previewBlocks,
+  sampleViewValue,
+  viewNames,
+  type SchemaPath,
+} from "./panelsPreview"
 
 interface Props {
   yamlText: string
   onChange: (yamlText: string) => void
-  /** The pack's own declared variables — the closed set a binding may name. */
+  /** The pack's declared variables, for the drafting prompt (`variables` view paths). */
   variables: LintVariable[]
+  /** The pack's module ids: `<module>/<view>` and `<module>/<command>` are offered. */
+  moduleIds: string[]
+  /** The panel files the pack ships (pack paths): a page's HTML, pictures. */
+  files: string[]
 }
 
 const EMPTY_DOC: PanelsDocument = { panels: [] }
 
-/** ONE control for every localized-or-scalar field. The three sources such a field
- * may have — text an author types, a live variable binding, and (inside a `repeat`)
- * the current instance's own leaf — are the schema's, not the editor's, so offering
- * them uniformly is what keeps a hand-written panels file editable here without
- * loss. Which sources are OFFERED follows the schema too: a `path` or `enum` field is
- * a plain string to the engine (no binding), and `$leaf` exists only inside a repeat. */
+/** A datalist, keyed by an id unique to its options. */
+function Options({ id, values }: { id: string; values: readonly string[] }) {
+  return (
+    <datalist id={id}>
+      {values.map((value) => (
+        <option key={value} value={value} />
+      ))}
+    </datalist>
+  )
+}
+
+/** ONE control for every field: text an author types (or a literal), or a binding that reads
+ * a path. Which sources are OFFERED follows the format: `src` and `style` never bind. */
 function FieldInput({
   label,
   spec,
   value,
   onChange,
-  variables,
-  inRepeat,
+  paths,
+  files,
 }: {
   label: string
   spec: FieldSpec
-  value: LocalizedField
-  onChange: (next: LocalizedField) => void
-  variables: LintVariable[]
-  inRepeat: boolean
+  value: FieldValue
+  onChange: (next: FieldValue) => void
+  paths: SchemaPath[]
+  files: string[]
 }) {
   const { t } = useTranslation()
+  const listId = useMemo(() => `panel-paths-${nextUid()}`, [])
   const localized = spec.type === "localized"
-  const mode = isLocalized(value) ? "text" : value.mode
-  const Field = spec.name === "body" ? "textarea" : "input"
-  const mayBind = fieldMayBind(spec.type)
-
-  const setMode = (next: string) => {
-    if (next === "var") onChange({ mode: "var", path: "" })
-    else if (next === "leaf") onChange({ mode: "leaf", leaf: "value" })
+  const bound = !isOptions(value) && !isLocalized(value) && value.mode === "view"
+  const Field = spec.name === "body" || spec.name === "text" ? "textarea" : "input"
+  const setMode = (mode: string) => {
+    if (mode === "view") onChange(binding(""))
     else onChange(localized ? emptyLocalized() : literal(""))
   }
-
   return (
     <div className="panel-field">
       <span className="panel-field-name">{label}</span>
-      {mayBind ? (
+      {fieldMayBind(spec) ? (
         <select
           aria-label={t("studio.panels.field.mode", { field: label })}
-          value={mode}
+          value={bound ? "view" : "text"}
           onChange={(e) => setMode(e.target.value)}
         >
-          <option value={localized ? "text" : "literal"}>
+          <option value="text">
             {localized ? t("studio.panels.field.text") : t("studio.panels.field.literal")}
           </option>
-          <option value="var">{t("studio.panels.field.binding")}</option>
-          {inRepeat ? <option value="leaf">{t("studio.panels.field.leaf")}</option> : null}
+          <option value="view">{t("studio.panels.field.binding")}</option>
         </select>
       ) : null}
-      {isLocalized(value) ? (
-        localized ? (
-          <>
-            <Field
-              aria-label={`${label} en`}
-              value={value.en}
-              onChange={(e: { target: { value: string } }) => onChange({ ...value, en: e.target.value })}
-              placeholder="en"
-            />
-            <Field
-              aria-label={`${label} zh`}
-              value={value.zh}
-              onChange={(e: { target: { value: string } }) => onChange({ ...value, zh: e.target.value })}
-              placeholder="zh"
-            />
-          </>
-        ) : null
-      ) : value.mode === "literal" ? (
-        spec.type === "enum" ? (
-          <select
-            aria-label={label}
-            value={String(value.value)}
-            onChange={(e) => onChange(literal(e.target.value))}
-          >
-            <option value="">—</option>
-            {(spec.options ?? []).map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        ) : (
+      {bound ? (
+        <>
           <input
             aria-label={label}
-            value={String(value.value)}
-            // Only a `scalar` field may hold a number or boolean; a `path` is a
-            // string to the engine (`_validated_asset_path`) even when it looks like `12`.
-            onChange={(e) =>
-              onChange(spec.type === "scalar" ? parseLiteralInput(e.target.value) : literal(e.target.value))
-            }
-            placeholder={spec.type === "path" ? "assets/map.png" : undefined}
-            spellCheck={spec.type === "path" ? false : undefined}
+            list={listId}
+            value={(value as { path: string }).path}
+            onChange={(e) => onChange(binding(e.target.value))}
+            placeholder="me.character.name"
+            spellCheck={false}
           />
-        )
-      ) : value.mode === "leaf" ? (
+          <Options id={listId} values={paths.map((entry) => entry.path)} />
+        </>
+      ) : isLocalized(value as FieldValue) ? (
+        <>
+          <Field
+            aria-label={`${label} en`}
+            value={(value as Localized).en}
+            onChange={(e: { target: { value: string } }) =>
+              onChange({ ...(value as Localized), en: e.target.value })
+            }
+            placeholder="en"
+          />
+          <Field
+            aria-label={`${label} zh`}
+            value={(value as Localized).zh}
+            onChange={(e: { target: { value: string } }) =>
+              onChange({ ...(value as Localized), zh: e.target.value })
+            }
+            placeholder="zh"
+          />
+        </>
+      ) : spec.type === "enum" ? (
         <select
           aria-label={label}
-          value={value.leaf}
-          onChange={(e) => onChange({ mode: "leaf", leaf: e.target.value as LeafPart })}
-        >
-          {LEAF_PARTS.map((part) => (
-            <option key={part} value={part}>
-              {part}
-            </option>
-          ))}
-        </select>
-      ) : variables.length > 0 ? (
-        <select
-          aria-label={label}
-          value={value.path}
-          onChange={(e) => onChange({ mode: "var", path: e.target.value })}
+          value={String((value as Scalar & { value: unknown }).value ?? "")}
+          onChange={(e) => onChange(literal(e.target.value))}
         >
           <option value="">—</option>
-          {variables.map((variable) => (
-            <option key={variable.id} value={variable.id}>
-              {variable.id}
+          {(spec.options ?? []).map((option) => (
+            <option key={option} value={option}>
+              {option}
             </option>
           ))}
         </select>
+      ) : spec.type === "path" ? (
+        <>
+          <input
+            aria-label={label}
+            list={listId}
+            value={String((value as { value: unknown }).value ?? "")}
+            onChange={(e) => onChange(literal(e.target.value))}
+            placeholder="ui/map.png"
+            spellCheck={false}
+          />
+          <Options id={listId} values={files} />
+        </>
       ) : (
         <input
           aria-label={label}
-          value={value.path}
-          onChange={(e) => onChange({ mode: "var", path: e.target.value })}
-          placeholder={t("studio.panels.field.noVariables")}
+          value={String((value as { value: unknown }).value ?? "")}
+          onChange={(e) => onChange(parseLiteralInput(e.target.value))}
         />
       )}
     </div>
   )
 }
 
-/** The option list of a `choices` block: each row is what the client shows and the
- * input it sends when picked. The label is an ordinary localized field. */
+/** A `choices` block's options: what the client shows, and the command each one runs. */
 function OptionsInput({
   label,
   options,
   onChange,
-  variables,
-  inRepeat,
+  paths,
+  commands,
 }: {
   label: string
   options: ChoiceOptionDraft[]
   onChange: (next: ChoiceOptionDraft[]) => void
-  variables: LintVariable[]
-  inRepeat: boolean
+  paths: SchemaPath[]
+  commands: string[]
 }) {
   const { t } = useTranslation()
+  const listId = useMemo(() => `panel-commands-${nextUid()}`, [])
   const set = (index: number, next: ChoiceOptionDraft) =>
     onChange(options.map((option, i) => (i === index ? next : option)))
   return (
     <div className="panel-options">
       <span className="panel-field-name">{label}</span>
+      <Options id={listId} values={commands} />
       <ul className="panel-option-list">
         {options.map((option, index) => (
           <li key={option.uid} className="panel-option">
@@ -226,12 +231,14 @@ function OptionsInput({
                 onChange={(e) => set(index, { ...option, id: e.target.value })}
                 spellCheck={false}
               />
-              <span className="panel-field-name">{t("studio.panels.field.input")}</span>
+              <span className="panel-field-name">{t("studio.panels.field.command")}</span>
               <input
-                aria-label={`${t("studio.panels.field.input")} ${index + 1}`}
-                value={option.input}
-                onChange={(e) => set(index, { ...option, input: e.target.value })}
-                placeholder={t("studio.panels.field.inputPlaceholder")}
+                aria-label={`${t("studio.panels.field.command")} ${index + 1}`}
+                list={listId}
+                value={option.command}
+                onChange={(e) => set(index, { ...option, command: e.target.value })}
+                placeholder="roll"
+                spellCheck={false}
               />
               <button
                 type="button"
@@ -246,10 +253,24 @@ function OptionsInput({
               spec={{ name: "label", type: "localized", required: true }}
               label={`${t("studio.panels.field.label")} ${index + 1}`}
               value={option.label}
-              onChange={(next) => set(index, { ...option, label: next })}
-              variables={variables}
-              inRepeat={inRepeat}
+              onChange={(next) => set(index, { ...option, label: next as ChoiceOptionDraft["label"] })}
+              paths={paths}
+              files={[]}
             />
+            <div className="panel-field">
+              <span className="panel-field-name">{t("studio.panels.field.args")}</span>
+              <input
+                aria-label={`${t("studio.panels.field.args")} ${index + 1}`}
+                value={option.argsText}
+                onChange={(e) => set(index, { ...option, argsText: e.target.value })}
+                // i18n-exempt: a JSON sample — code.
+                placeholder={'{"expr": "1d100"}'}
+                spellCheck={false}
+              />
+              {parseArgsText(option.argsText) === null ? (
+                <span className="studio-hint panels-error">{t("studio.panels.argsInvalid")}</span>
+              ) : null}
+            </div>
           </li>
         ))}
       </ul>
@@ -260,52 +281,83 @@ function OptionsInput({
   )
 }
 
-/** A panel TITLE: text only, because the schema forbids a binding there. */
-function TitleInput({
-  label,
-  value,
+/** A panel's `views`: handle → view name. */
+function ViewsInput({
+  views,
   onChange,
+  names,
 }: {
-  label: string
-  value: Localized
-  onChange: (next: Localized) => void
+  views: ViewDecl[]
+  onChange: (next: ViewDecl[]) => void
+  names: string[]
 }) {
+  const { t } = useTranslation()
+  const listId = useMemo(() => `panel-views-${nextUid()}`, [])
+  const set = (index: number, next: ViewDecl) => onChange(views.map((decl, i) => (i === index ? next : decl)))
   return (
-    <div className="panel-field">
-      <span className="panel-field-name">{label}</span>
-      <input
-        aria-label={`${label} en`}
-        value={value.en}
-        onChange={(e) => onChange({ ...value, en: e.target.value })}
-        placeholder="en"
-      />
-      <input
-        aria-label={`${label} zh`}
-        value={value.zh}
-        onChange={(e) => onChange({ ...value, zh: e.target.value })}
-        placeholder="zh"
-      />
+    <div className="panel-options">
+      <span className="panel-field-name">{t("studio.panels.views")}</span>
+      <Options id={listId} values={names} />
+      <ul className="panel-option-list">
+        {views.map((decl, index) => (
+          <li key={decl.uid} className="panel-field">
+            <input
+              aria-label={`${t("studio.panels.viewHandle")} ${index + 1}`}
+              value={decl.handle}
+              onChange={(e) => set(index, { ...decl, handle: e.target.value })}
+              placeholder="me"
+              spellCheck={false}
+            />
+            <span aria-hidden="true">→</span>
+            <input
+              aria-label={`${t("studio.panels.viewName")} ${index + 1}`}
+              list={listId}
+              value={decl.view}
+              onChange={(e) => set(index, { ...decl, view: e.target.value })}
+              placeholder="me"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => onChange(views.filter((_, i) => i !== index))}
+              aria-label={t("studio.panels.removeView")}
+            >
+              ✕
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button type="button" className="ghost-button" onClick={() => onChange([...views, newViewDecl()])}>
+        {t("studio.panels.addView")}
+      </button>
     </div>
   )
 }
 
 function BlockCard({
   block,
-  variables,
+  views,
+  files,
+  commands,
   onChange,
   onRemove,
   onMove,
 }: {
   block: BlockDraft
-  variables: LintVariable[]
+  views: ViewDecl[]
+  files: string[]
+  commands: string[]
   onChange: (next: BlockDraft) => void
   onRemove: () => void
   onMove: (delta: number) => void
 }) {
   const { t } = useTranslation()
+  const listId = useMemo(() => `panel-lists-${nextUid()}`, [])
   const fields = fieldsFor(block.kind) ?? []
   const opaque = isOpaqueBlock(block)
-  const inRepeat = block.repeatPrefix.trim() !== ""
+  const paths = useMemo(() => bindablePaths(views, block.repeat), [views, block.repeat])
+  const listPaths = useMemo(() => bindablePaths(views).filter((entry) => entry.list), [views])
   const setField = (name: string, next: FieldValue) =>
     onChange({ ...block, fields: { ...block.fields, [name]: next } })
   return (
@@ -317,7 +369,7 @@ function BlockCard({
           <select
             aria-label={t("studio.panels.blockKind")}
             value={block.kind}
-            onChange={(e) => onChange({ ...newBlock(e.target.value), uid: block.uid })}
+            onChange={(e) => onChange({ ...newBlock(e.target.value), uid: block.uid, repeat: block.repeat })}
           >
             {BLOCK_KINDS.map((kind) => (
               <option key={kind} value={kind}>
@@ -352,8 +404,7 @@ function BlockCard({
         </button>
       </div>
       {opaque ? (
-        // A block this table does not model — kept exactly as written, and said so,
-        // rather than silently rewritten or dropped.
+        // A block the forms do not model — kept exactly as written, and said so.
         <p className="studio-hint">{t("studio.panels.opaqueBlock")}</p>
       ) : (
         <>
@@ -367,8 +418,8 @@ function BlockCard({
                   label={label}
                   options={value.options}
                   onChange={(options) => setField(spec.name, { mode: "options", options })}
-                  variables={variables}
-                  inRepeat={inRepeat}
+                  paths={paths}
+                  commands={commands}
                 />
               )
             }
@@ -379,8 +430,8 @@ function BlockCard({
                 label={label}
                 value={value}
                 onChange={(next) => setField(spec.name, next)}
-                variables={variables}
-                inRepeat={inRepeat}
+                paths={paths}
+                files={files}
               />
             )
           })}
@@ -390,31 +441,61 @@ function BlockCard({
               aria-label={t("studio.panels.visibleWhen")}
               value={block.visibleWhen}
               onChange={(e) => onChange({ ...block, visibleWhen: e.target.value })}
-              placeholder="day >= 3"
+              placeholder="me.character.resources.hp.value > 0"
               spellCheck={false}
             />
           </div>
-          <div className="panel-field">
-            <span className="panel-field-name">{t("studio.panels.repeat")}</span>
+          <label className="pack-checkbox">
             <input
-              aria-label={t("studio.panels.repeat")}
-              value={block.repeatPrefix}
-              onChange={(e) => onChange({ ...block, repeatPrefix: e.target.value })}
-              placeholder={t("studio.panels.repeatPlaceholder")}
-              spellCheck={false}
+              type="checkbox"
+              checked={block.repeat !== null}
+              onChange={(e) => onChange({ ...block, repeat: e.target.checked ? newRepeat() : null })}
             />
-          </div>
-          {inRepeat ? (
-            <div className="panel-field">
-              <span className="panel-field-name">{t("studio.panels.repeatVisibleWhen")}</span>
-              <input
-                aria-label={t("studio.panels.repeatVisibleWhen")}
-                value={block.repeatVisibleWhen}
-                onChange={(e) => onChange({ ...block, repeatVisibleWhen: e.target.value })}
-                placeholder="day >= 3"
-                spellCheck={false}
-              />
-            </div>
+            {t("studio.panels.repeat")}
+          </label>
+          {block.repeat !== null ? (
+            <>
+              <div className="panel-field">
+                <span className="panel-field-name">{t("studio.panels.repeatEach")}</span>
+                <input
+                  aria-label={t("studio.panels.repeatEach")}
+                  list={listId}
+                  value={block.repeat.each}
+                  onChange={(e) => onChange({ ...block, repeat: { ...block.repeat!, each: e.target.value } })}
+                  placeholder="me.character.resources"
+                  spellCheck={false}
+                />
+                <Options id={listId} values={listPaths.map((entry) => entry.path)} />
+                <span className="panel-field-name">{t("studio.panels.repeatAs")}</span>
+                <input
+                  aria-label={t("studio.panels.repeatAs")}
+                  value={block.repeat.as}
+                  onChange={(e) => onChange({ ...block, repeat: { ...block.repeat!, as: e.target.value } })}
+                  spellCheck={false}
+                />
+                <span className="panel-field-name">{t("studio.panels.repeatPrefix")}</span>
+                <input
+                  aria-label={t("studio.panels.repeatPrefix")}
+                  value={block.repeat.prefix}
+                  onChange={(e) =>
+                    onChange({ ...block, repeat: { ...block.repeat!, prefix: e.target.value } })
+                  }
+                  placeholder={t("studio.panels.repeatPrefixPlaceholder")}
+                  spellCheck={false}
+                />
+              </div>
+              <div className="panel-field">
+                <span className="panel-field-name">{t("studio.panels.repeatVisibleWhen")}</span>
+                <input
+                  aria-label={t("studio.panels.repeatVisibleWhen")}
+                  value={block.repeat.visibleWhen}
+                  onChange={(e) =>
+                    onChange({ ...block, repeat: { ...block.repeat!, visibleWhen: e.target.value } })
+                  }
+                  spellCheck={false}
+                />
+              </div>
+            </>
           ) : null}
         </>
       )}
@@ -422,29 +503,215 @@ function BlockCard({
   )
 }
 
+/** An ordered list of blocks with add / move / remove: a template, or a page's fallback. */
+function BlockList({
+  blocks,
+  views,
+  files,
+  commands,
+  onChange,
+}: {
+  blocks: BlockDraft[]
+  views: ViewDecl[]
+  files: string[]
+  commands: string[]
+  onChange: (next: BlockDraft[]) => void
+}) {
+  const { t } = useTranslation()
+  const move = (index: number, delta: number) => {
+    const target = index + delta
+    if (target < 0 || target >= blocks.length) return
+    const next = [...blocks]
+    const [moved] = next.splice(index, 1)
+    next.splice(target, 0, moved)
+    onChange(next)
+  }
+  return (
+    <>
+      <ul className="panel-blocks">
+        {blocks.map((block, index) => (
+          <BlockCard
+            key={block.uid}
+            block={block}
+            views={views}
+            files={files}
+            commands={commands}
+            onChange={(next) => onChange(blocks.map((entry, i) => (i === index ? next : entry)))}
+            onRemove={() => onChange(blocks.filter((_, i) => i !== index))}
+            onMove={(delta) => move(index, delta)}
+          />
+        ))}
+      </ul>
+      <select
+        aria-label={t("studio.panels.addBlock")}
+        value=""
+        onChange={(e) => {
+          if (e.target.value) onChange([...blocks, newBlock(e.target.value)])
+        }}
+      >
+        <option value="">{t("studio.panels.addBlock")}</option>
+        {BLOCK_KINDS.map((kind) => (
+          <option key={kind} value={kind}>
+            {t(`studio.panels.kind.${kind}`)}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+}
+
+/** One preview block. A picture shows its pack path: the preview has the file names, not a
+ * server's media store. Everything else is play mode's own block view, its choices inert. */
+function PreviewBlock({ block }: { block: WireBlock }) {
+  const { t } = useTranslation()
+  if (block.kind === "image" || block.kind === "map_pin") {
+    const caption = block.kind === "image" ? (block.caption ?? block.alt) : block.label
+    return (
+      <figure className="ui-image">
+        <p className="ui-image-fallback">{t("studio.panels.previewPicture", { path: block.hash })}</p>
+        {caption ? <figcaption className="ui-image-caption">{caption}</figcaption> : null}
+      </figure>
+    )
+  }
+  return <Block block={block} online={false} />
+}
+
+/** The live preview of one panel, over sample values of the views it reads. */
+function PanelPreview({
+  panel,
+  samples,
+  onSample,
+  locale,
+}: {
+  panel: PanelDraft
+  samples: Record<string, string>
+  onSample: (view: string, text: string) => void
+  locale: string
+}) {
+  const { t } = useTranslation()
+  const role =
+    panel.audience === "admin" || panel.views.some((decl) => decl.view.startsWith("admin/"))
+      ? "admin"
+      : "player"
+  const names = [...new Set(panel.views.map((decl) => decl.view).filter(Boolean))]
+  const values = new Map<string, unknown>()
+  const broken: string[] = []
+  for (const name of names) {
+    const text = samples[name] ?? JSON.stringify(sampleViewValue(name, role), null, 2)
+    try {
+      values.set(name, JSON.parse(text))
+    } catch {
+      broken.push(name)
+    }
+  }
+  const blocks = previewBlocks(panel, locale, values)
+  return (
+    <div className="panel-preview" aria-label={t("studio.panels.preview")}>
+      <h4>{t("studio.panels.preview")}</h4>
+      <div className="ui-blocks">
+        {blocks === null ? (
+          <p className="studio-hint">{t("studio.panels.previewNeedsRich")}</p>
+        ) : blocks.length === 0 ? (
+          <p className="studio-hint">{t("studio.panels.previewEmpty")}</p>
+        ) : (
+          blocks.map((block, index) => <PreviewBlock key={index} block={block} />)
+        )}
+      </div>
+      {names.length > 0 ? (
+        <details>
+          <summary>{t("studio.panels.samples")}</summary>
+          <p className="studio-hint">{t("studio.panels.samplesHint")}</p>
+          {names.map((name) => (
+            <label key={name} className="field field-wide">
+              {name}
+              <textarea
+                className="wizard-yaml"
+                rows={6}
+                value={samples[name] ?? JSON.stringify(sampleViewValue(name, role), null, 2)}
+                onChange={(e) => onSample(name, e.target.value)}
+                spellCheck={false}
+              />
+              {broken.includes(name) ? (
+                <span className="studio-hint panels-error">{t("studio.panels.sampleInvalid")}</span>
+              ) : null}
+            </label>
+          ))}
+        </details>
+      ) : null}
+    </div>
+  )
+}
+
+function TitleInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: Localized
+  onChange: (next: Localized) => void
+}) {
+  return (
+    <div className="panel-field">
+      <span className="panel-field-name">{label}</span>
+      <input
+        aria-label={`${label} en`}
+        value={value.en}
+        onChange={(e) => onChange({ ...value, en: e.target.value })}
+        placeholder="en"
+      />
+      <input
+        aria-label={`${label} zh`}
+        value={value.zh}
+        onChange={(e) => onChange({ ...value, zh: e.target.value })}
+        placeholder="zh"
+      />
+    </div>
+  )
+}
+
 function PanelCard({
   panel,
-  variables,
+  names,
+  files,
+  commands,
+  samples,
+  onSample,
+  locale,
   onChange,
   onRemove,
 }: {
   panel: PanelDraft
-  variables: LintVariable[]
+  names: string[]
+  files: string[]
+  commands: string[]
+  samples: Record<string, string>
+  onSample: (view: string, text: string) => void
+  locale: string
   onChange: (next: PanelDraft) => void
   onRemove: () => void
 }) {
   const { t } = useTranslation()
-  const setBlock = (index: number, next: BlockDraft) =>
-    onChange({ ...panel, blocks: panel.blocks.map((block, i) => (i === index ? next : block)) })
-  const move = (index: number, delta: number) => {
-    const target = index + delta
-    if (target < 0 || target >= panel.blocks.length) return
-    const blocks = [...panel.blocks]
-    const [moved] = blocks.splice(index, 1)
-    blocks.splice(target, 0, moved)
-    onChange({ ...panel, blocks })
+  const listId = useMemo(() => `panel-pages-${nextUid()}`, [])
+  const pages = files.filter((file) => /\.html?$/i.test(file))
+  const setKind = (kind: "template" | "page") => {
+    // A key only the other kind takes would make the panel refused; switching drops it.
+    const rest = panel.rest === undefined ? undefined : { ...panel.rest }
+    if (rest) {
+      delete rest.blocks
+      delete rest.fallback
+    }
+    onChange({
+      ...panel,
+      kind,
+      ...(rest && Object.keys(rest).length > 0 ? { rest } : { rest: undefined }),
+      blocks: kind === "template" && panel.blocks.length === 0 ? (panel.fallback ?? []) : panel.blocks,
+      fallback:
+        kind === "page"
+          ? (panel.fallback ?? (panel.blocks.length > 0 ? panel.blocks : null))
+          : panel.fallback,
+    })
   }
-
   return (
     <section className="panel-card">
       <div className="panel-field">
@@ -456,6 +723,15 @@ function PanelCard({
           placeholder="tide-board"
           spellCheck={false}
         />
+        <span className="panel-field-name">{t("studio.panels.panelKind")}</span>
+        <select
+          aria-label={t("studio.panels.panelKind")}
+          value={panel.kind}
+          onChange={(e) => setKind(e.target.value as "template" | "page")}
+        >
+          <option value="template">{t("studio.panels.kindTemplate")}</option>
+          <option value="page">{t("studio.panels.kindPage")}</option>
+        </select>
       </div>
       <TitleInput
         label={t("studio.panels.title")}
@@ -490,35 +766,54 @@ function PanelCard({
           )}
         </select>
       </div>
+      <ViewsInput views={panel.views} onChange={(views) => onChange({ ...panel, views })} names={names} />
 
-      <ul className="panel-blocks">
-        {panel.blocks.map((block, index) => (
-          <BlockCard
-            key={block.uid}
-            block={block}
-            variables={variables}
-            onChange={(next) => setBlock(index, next)}
-            onRemove={() => onChange({ ...panel, blocks: panel.blocks.filter((_, i) => i !== index) })}
-            onMove={(delta) => move(index, delta)}
-          />
-        ))}
-      </ul>
+      {panel.kind === "template" ? (
+        <BlockList
+          blocks={panel.blocks}
+          views={panel.views}
+          files={files}
+          commands={commands}
+          onChange={(blocks) => onChange({ ...panel, blocks })}
+        />
+      ) : (
+        <>
+          <div className="panel-field">
+            <span className="panel-field-name">{t("studio.panels.entry")}</span>
+            <input
+              aria-label={t("studio.panels.entry")}
+              list={listId}
+              value={panel.entry}
+              onChange={(e) => onChange({ ...panel, entry: e.target.value })}
+              placeholder="ui/chart.html"
+              spellCheck={false}
+            />
+            <Options id={listId} values={pages} />
+          </div>
+          <p className="studio-hint">{t("studio.panels.pageHint")}</p>
+          <label className="pack-checkbox">
+            <input
+              type="checkbox"
+              checked={panel.fallback !== null}
+              onChange={(e) => onChange({ ...panel, fallback: e.target.checked ? [] : null })}
+            />
+            {t("studio.panels.fallbackBlocks")}
+          </label>
+          {panel.fallback !== null ? (
+            <BlockList
+              blocks={panel.fallback}
+              views={panel.views}
+              files={files}
+              commands={commands}
+              onChange={(fallback) => onChange({ ...panel, fallback })}
+            />
+          ) : (
+            <p className="studio-hint">{t("studio.panels.fallbackNull")}</p>
+          )}
+        </>
+      )}
+      <PanelPreview panel={panel} samples={samples} onSample={onSample} locale={locale} />
       <div className="chip-row">
-        <select
-          aria-label={t("studio.panels.addBlock")}
-          value=""
-          onChange={(e) => {
-            if (!e.target.value) return
-            onChange({ ...panel, blocks: [...panel.blocks, newBlock(e.target.value)] })
-          }}
-        >
-          <option value="">{t("studio.panels.addBlock")}</option>
-          {BLOCK_KINDS.map((kind) => (
-            <option key={kind} value={kind}>
-              {t(`studio.panels.kind.${kind}`)}
-            </option>
-          ))}
-        </select>
         <button type="button" className="ghost-button" onClick={onRemove}>
           {t("studio.panels.removePanel")}
         </button>
@@ -527,34 +822,20 @@ function PanelCard({
   )
 }
 
-function OpaquePanelCard({ panel, onRemove }: { panel: OpaquePanel; onRemove: () => void }) {
-  const { t } = useTranslation()
-  return (
-    <section className="panel-card">
-      <p className="studio-hint">{t("studio.panels.opaquePanel", { id: panel.id || "?" })}</p>
-      <button type="button" className="ghost-button" onClick={onRemove}>
-        {t("studio.panels.removePanel")}
-      </button>
-    </section>
-  )
-}
-
-export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
-  const { t } = useTranslation()
+export default function PanelsEditor({ yamlText, onChange, variables, moduleIds, files }: Props) {
+  const { t, i18n } = useTranslation()
   const [document, setDocument] = useState<PanelsDocument>(EMPTY_DOC)
   const [parseError, setParseError] = useState<string | null>(null)
   const [mode, setMode] = useState<"visual" | "yaml">("visual")
   const [description, setDescription] = useState("")
   const [drafting, setDrafting] = useState(false)
+  const [samples, setSamples] = useState<Record<string, string>>({})
   const stream = useDraftStream()
   const [draftProblems, setDraftProblems] = useState<string[]>([])
   const aiSettings = useAiStore()
-  const activePreset = useActivePreset()
-  // The text this editor itself last wrote up. The parent stores it and hands it
-  // straight back as `yamlText`; re-parsing our own serialization would rebuild the
-  // model with fresh uids under the author's cursor — every card remounts and the
-  // focused input is destroyed after one keystroke. So the file is re-read only when
-  // the text is NOT ours: on mount, and when the YAML tab (or anything else) changed it.
+  // The text this editor itself last wrote. Re-parsing our own serialization would rebuild
+  // the model with fresh uids under the author's cursor, so the file is re-read only when the
+  // text is NOT ours: on mount, and when the YAML tab (or anything else) changed it.
   const lastEmitted = useRef<string | null>(null)
 
   useEffect(() => {
@@ -572,16 +853,11 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
     onChange(text)
   }
 
-  const declared = useMemo(() => new Set(variables.map((variable) => variable.id)), [variables])
-  const problems = useMemo(() => problemsFor(document, declared), [document, declared])
-  const opaqueBlocks = useMemo(
-    () =>
-      document.panels.reduce(
-        (n, panel) => n + (isOpaquePanel(panel) ? 0 : panel.blocks.filter(isOpaqueBlock).length),
-        0,
-      ),
-    [document],
-  )
+  const names = useMemo(() => viewNames(moduleIds), [moduleIds])
+  const commands = useMemo(() => commandIds(moduleIds), [moduleIds])
+  const imageFiles = useMemo(() => files.filter((file) => !/\.html?$/i.test(file)), [files])
+  const problems = useMemo(() => (yamlText.trim() ? checkPanelsText(yamlText).problems : []), [yamlText])
+  const opaqueBlocks = useMemo(() => opaqueBlockCount(document), [document])
 
   const draft = async () => {
     const text = description.trim()
@@ -589,33 +865,22 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
     setDrafting(true)
     setDraftProblems([])
     try {
-      // Same assembly as every other AI lane: an active preset's text LEADS and the
-      // built-in contract follows, so a studio-wide preset shapes the voice while the
-      // deterministic gate below stays enforceable either way.
-      const builtin = panelsSystemPrompt(variables)
-      const assembled =
-        activePreset === null ? null : assembleSystemPrompt(activePreset, activePreset.overrides, {})
-      const system =
-        assembled === null || assembled.system === "" ? builtin : `${assembled.system}\n\n${builtin}`
-      const sampling = activePreset === null ? undefined : toLlmSampling(activePreset.sampling)
       const result = await draftWithRetries<PanelsDocument>(
-        system,
+        panelsSystemPrompt(variables, moduleIds),
         [{ role: "user", content: text }],
-        (parsed) => gatePanelsDraft(parsed, variables),
+        (parsed) => gatePanelsDraft(parsed),
         3,
-        sampling && Object.keys(sampling).length > 0 ? sampling : undefined,
+        undefined,
         stream.onStream,
       )
-      const drafted = result.value
-      if (drafted === null) {
+      if (result.value === null) {
         setDraftProblems(result.problems)
         return
       }
-      // Drafted panels are APPENDED with fresh uids — a draft adds to the author's
-      // work, it never silently replaces what they already wrote.
-      const additions = drafted.panels.filter((entry): entry is PanelDraft => !isOpaquePanel(entry))
+      // Drafted panels are APPENDED with fresh uids — a draft adds to the author's work, it
+      // never silently replaces what they already wrote.
       commit({
-        panels: [...document.panels, ...additions.map((panel) => ({ ...panel, uid: nextUid() }))],
+        panels: [...document.panels, ...result.value.panels.map((panel) => ({ ...panel, uid: nextUid() }))],
       })
       setDescription("")
     } catch (error) {
@@ -675,9 +940,8 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
         </button>
       </div>
 
-      {/* Field editing round-trips the file through parse + stringify, so the
-          first edit it commits REPRINTS the whole document: comments, blank
-          lines and quoting style are gone. Say so where the choice is made. */}
+      {/* Field editing round-trips the file through parse + stringify, so the first edit it
+          commits REPRINTS the whole document: comments and quoting style are gone. */}
       <p className="studio-hint">{t("studio.panels.rewriteNotice")}</p>
 
       {mode === "yaml" ? (
@@ -694,27 +958,22 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
         <p className="studio-hint panels-error">{t("studio.panels.unparseable", { error: parseError })}</p>
       ) : (
         <>
-          {document.panels.map((panel, index) =>
-            isOpaquePanel(panel) ? (
-              <OpaquePanelCard
-                key={panel.uid}
-                panel={panel}
-                onRemove={() => commit({ panels: document.panels.filter((_, i) => i !== index) })}
-              />
-            ) : (
-              <PanelCard
-                key={panel.uid}
-                panel={panel}
-                variables={variables}
-                onChange={(next) =>
-                  commit({
-                    panels: document.panels.map((entry, i) => (i === index ? next : entry)),
-                  })
-                }
-                onRemove={() => commit({ panels: document.panels.filter((_, i) => i !== index) })}
-              />
-            ),
-          )}
+          {document.panels.map((panel, index) => (
+            <PanelCard
+              key={panel.uid}
+              panel={panel}
+              names={names}
+              files={imageFiles.concat(files.filter((file) => /\.html?$/i.test(file)))}
+              commands={commands}
+              samples={samples}
+              onSample={(view, text) => setSamples((current) => ({ ...current, [view]: text }))}
+              locale={i18n.language}
+              onChange={(next) =>
+                commit({ panels: document.panels.map((entry, i) => (i === index ? next : entry)) })
+              }
+              onRemove={() => commit({ panels: document.panels.filter((_, i) => i !== index) })}
+            />
+          ))}
           <button
             type="button"
             className="ghost-button"
@@ -731,8 +990,11 @@ export default function PanelsEditor({ yamlText, onChange, variables }: Props) {
       {problems.length > 0 ? (
         <ul className="issue-list">
           {problems.map((problem, index) => (
-            <li key={`${problem.key}-${index}`}>
-              {t(`studio.panels.problem.${problem.key}`, problem.params ?? {})}
+            <li key={`${problem.code}-${index}`}>
+              {t(`studio.panels.problem.${problem.code}`, {
+                at: problem.path || "panels.yaml",
+                detail: problem.detail ?? "",
+              })}
             </li>
           ))}
         </ul>

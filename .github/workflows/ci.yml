@@ -55,14 +55,14 @@ jobs:
       - run: bun run build
 
   roundtrip:
-    name: Cross-repo round-trip gate (live connect to a 3.0 server)
+    name: Cross-repo round-trip gate (3.0 pack build, install, cards, panels, live connect)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # The gate starts the engine's REAL protocol 3.0 server (Bun, `serve
-      # --local`) and dials it through the real Rust link, so the engine's v3
-      # branch must sit at the script's default sibling path ../trpg_kp. Its
-      # four static 2.x stages are parked (see scripts/check_roundtrip.sh).
+      # The gate runs the engine's REAL 3.0 code on what Studio writes: its pack
+      # builder and installer, its card and panels readers, and its server
+      # (`serve --local`, dialled through the real Rust link). The engine's v3
+      # branch must sit at the script's default sibling path ../trpg_kp.
       - name: Clone the loreweaver engine (v3)
         run: git clone --depth 1 --branch v3 https://github.com/1A7432/loreweaver.git ../trpg_kp
       - uses: oven-sh/setup-bun@v2

@@ -9,7 +9,6 @@ import { newLoreEntry, type ForgeLoreEntry, type ForgeProject } from "../model"
 import { flattenLeaves, parseInitvar } from "../split/mvu"
 import { promoteLeaves } from "../split/promote"
 import { emptyContract, type CardContract, type ContractSlot } from "./contract"
-import { hooksFromUpdateRules } from "./updateRules"
 import type { StageDraft, StageId, WizardLoreDraft } from "./stages"
 
 export interface ApplyResult {
@@ -164,19 +163,16 @@ function applyVariables(
   )
   variables = variables.filter((variable) => !removedTargets.has(variable.uid))
 
-  let next: ForgeProject = { ...project, variables }
-  let nextContract: CardContract = {
+  const next: ForgeProject = { ...project, variables }
+  const nextContract: CardContract = {
     ...contract,
     slots: contract.slots
       .filter((s) => !(s.stage === "variables" && s.kind === "variable"))
       .concat(nextSlots),
   }
-  if (draft.updateRules.trim()) {
-    // Real setvar/incvar calls, compiled from the rules the author entered —
-    // only the triggers stay a draft, because only they are prose.
-    next = { ...next, hooks: hooksFromUpdateRules(draft.updateRules, draft.initvarYaml) }
-    nextContract = recordFieldSlots(nextContract, "variables", ["hooks"], "InitVar")
-  }
+  // The update rules are prose for the Keeper: they ride the SillyTavern export as a lore entry
+  // (`exportSillyTavernCard`'s `updateRules`). They no longer compile into hook code — a 3.0
+  // engine runs no card hooks.
   return { project: next, contract: nextContract }
 }
 

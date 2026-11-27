@@ -94,6 +94,8 @@ describe("splitToProject", () => {
     expect(project.name).toBe("Mara")
     expect(project.lorebook).toHaveLength(1)
     expect(project.variables).toHaveLength(1) // the list stays in the MVU tree
-    expect(project.hooks).toBe("on('turn_start', f)")
+    // The card's hook scripts stay with the card; the project has no place for them.
+    expect(project).not.toHaveProperty("hooks")
+    expect(split.hooks).toEqual(["on('turn_start', f)"])
   })
 })

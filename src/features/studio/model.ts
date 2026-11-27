@@ -8,13 +8,6 @@ export const MAX_LABEL_LEN = 50
 export const MAX_OPTIONS = 20
 export const MAX_OPTION_LEN = 50
 export const MAX_CONDITION_LEN = 500
-/** Pregen-cast limits, mirroring the engine's `core/lorecard.py` parse caps
- * (MAX_LORECARD_PREGENS / the per-pregen skills truncation). */
-export const MAX_PREGENS = 8
-export const MAX_PREGEN_SKILLS = 32
-export const MAX_PREGEN_NAME_LEN = 60
-export const MAX_PREGEN_CONCEPT_LEN = 200
-export const MAX_PREGEN_NOTES_LEN = 400
 /** ASCII fast-path shape. The FULL rule is `isValidVarId` — the engine's
  * `core.modvars._valid_id` accepts non-ASCII ids (CJK like `理智` is
  * first-class since M14) and only rejects separator/control characters. */
@@ -97,21 +90,6 @@ export interface ForgeLoreEntry {
   delay: number
 }
 
-/** Raw form state for one pregenerated investigator (the module's claimable
- * cast). Sheets are built downstream from system defaults + these skill
- * overrides — deterministic, no LLM. */
-export interface ForgePregen {
-  uid: string
-  /** Serialized-module tag; see {@link ForgeLoreEntry.episode}. */
-  episode?: string
-  name: string
-  concept: string
-  notes: string
-  /** Skill overrides, one `名称 60` per line; parsed to `{name: int}` on
-   * export. Junk lines surface as validation issues. */
-  skillsText: string
-}
-
 export interface ForgeProject {
   uid: string
   name: string
@@ -127,10 +105,6 @@ export interface ForgeProject {
   tags: string
   variables: ForgeVariable[]
   lorebook: ForgeLoreEntry[]
-  /** Pregenerated investigator cast (lorecard v1 `pregens`). Projects
-   * persisted before this field existed lack it — always read through `?? []`. */
-  pregens: ForgePregen[]
-  hooks: string
   updatedAt: number
 }
 
@@ -181,30 +155,6 @@ function parseIntStrict(raw: string): number | null {
   const trimmed = raw.trim()
   if (!INT_RE.test(trimmed)) return null
   return Number.parseInt(trimmed, 10)
-}
-
-/** One pregen skill-override line: `<name> <integer>` (name may contain
- * spaces; the value is the LAST whitespace-separated token). */
-const SKILL_LINE_RE = /^(.*\S)\s+(-?\d+)$/
-
-/** Parse the skills textarea into the native `{name: int}` mapping. Every
- * non-empty line that does not parse surfaces as an issue (author-actionable
- * junk), mirroring the engine's skip-and-warn tolerance. */
-export function parsePregenSkills(text: string): { skills: Record<string, number>; errors: Issue[] } {
-  const skills: Record<string, number> = {}
-  const errors: Issue[] = []
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const match = SKILL_LINE_RE.exec(line)
-    if (match === null) {
-      errors.push({ key: "pregenSkillInvalid", params: { line } })
-      continue
-    }
-    const name = match[1].trim().slice(0, MAX_PREGEN_NAME_LEN)
-    skills[name] = Number.parseInt(match[2], 10)
-  }
-  return { skills, errors }
 }
 
 /** Engine `coerce_bool`: bool words, on/off, yes/no, 0/1. */
@@ -325,8 +275,6 @@ export interface ProjectValidation {
   variables: Map<string, Issue[]>
   /** Per-entry issues keyed by uid. */
   lorebook: Map<string, Issue[]>
-  /** Per-pregen issues keyed by uid. */
-  pregens: Map<string, Issue[]>
   project: Issue[]
   /** Specs for every clean variable, in declaration order. */
   specs: ModvarSpec[]
@@ -336,16 +284,12 @@ export interface ProjectValidation {
 export function validateProject(project: ForgeProject): ProjectValidation {
   const variables = new Map<string, Issue[]>()
   const lorebook = new Map<string, Issue[]>()
-  const pregens = new Map<string, Issue[]>()
   const projectIssues: Issue[] = []
   const specs: ModvarSpec[] = []
 
   if (!project.name.trim()) projectIssues.push({ key: "nameRequired" })
   if (project.variables.length > MAX_VARS) {
     projectIssues.push({ key: "tooManyVariables", params: { max: MAX_VARS } })
-  }
-  if ((project.pregens ?? []).length > MAX_PREGENS) {
-    projectIssues.push({ key: "tooManyPregens", params: { max: MAX_PREGENS } })
   }
 
   const seenIds = new Set<string>()
@@ -379,38 +323,11 @@ export function validateProject(project: ForgeProject): ProjectValidation {
     if (issues.length > 0) lorebook.set(entry.uid, issues)
   }
 
-  for (const pregen of project.pregens ?? []) {
-    const issues: Issue[] = []
-    if (!pregen.name.trim()) issues.push({ key: "pregenNameRequired" })
-    const { skills, errors } = parsePregenSkills(pregen.skillsText)
-    issues.push(...errors)
-    if (Object.keys(skills).length > MAX_PREGEN_SKILLS) {
-      issues.push({ key: "pregenTooManySkills", params: { max: MAX_PREGEN_SKILLS } })
-    }
-    if (issues.length > 0) pregens.set(pregen.uid, issues)
-  }
-
   let issueCount = projectIssues.length
   for (const list of variables.values()) issueCount += list.length
   for (const list of lorebook.values()) issueCount += list.length
-  for (const list of pregens.values()) issueCount += list.length
-  return { variables, lorebook, pregens, project: projectIssues, specs, issueCount }
+  return { variables, lorebook, project: projectIssues, specs, issueCount }
 }
-
-export const DEFAULT_HOOKS = `// Loreweaver room hooks — sandboxed, event-driven (see docs/plugins.md).
-// Events, with the payload each one carries:
-//   turn_start        {user_message, actor}
-//   reply_ready       {reply}
-//   dice_rolled       {rolls: [{tool, result}]}
-//   variables_changed {writes: [{path, op}]}
-//   clock_advanced    {from, to, delta}
-//   tool_use          {tool, arguments}
-// APIs:   on(event, fn) · inject(text) · narrate(text) · rewriteReply(text)
-//         emitUI(blocks, opts) · log(text) · getvar/setvar/incvar · variables · _
-on('turn_start', (event) => {
-  // narrate('The wind rises.')
-})
-`
 
 export function newVariable(): ForgeVariable {
   return {
@@ -451,16 +368,6 @@ export function newLoreEntry(): ForgeLoreEntry {
   }
 }
 
-export function newPregen(): ForgePregen {
-  return {
-    uid: uid(),
-    name: "",
-    concept: "",
-    notes: "",
-    skillsText: "",
-  }
-}
-
 export function newProject(name: string): ForgeProject {
   return {
     uid: uid(),
@@ -475,8 +382,6 @@ export function newProject(name: string): ForgeProject {
     tags: "",
     variables: [],
     lorebook: [],
-    pregens: [],
-    hooks: DEFAULT_HOOKS,
     updatedAt: 0,
   }
 }

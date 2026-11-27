@@ -1,7 +1,8 @@
-// The auto-import pipeline wizard (③): files in → deterministic classify /
-// split → promotion → AI-drafted metadata (human-confirmed) → source tree on
-// disk → the ENGINE builds (and optionally installs) the .lwpack. Every step
-// can be paused, edited, or re-done — the pipeline is glass, not a black box.
+// The pack bench wizard: files in → deterministic classify / split → promotion → AI-drafted
+// metadata (human-confirmed) → modules, panels, presentation kit → a 3.0 pack source tree on
+// disk → the ENGINE builds the .lwpack and its own installer verifies it in a scratch data
+// directory. Every step can be paused, edited, or re-done — the pipeline is glass, not a
+// black box. Playing the pack needs a running 3.0 server, which Studio does not host here.
 
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -19,9 +20,8 @@ import {
   type EngineCandidate,
   type PickedFile,
 } from "../../../lib/native"
-import { formatInstallCommand, installDataDir, installPack } from "../../../lib/packInstall"
+import { formatInstallCommand } from "../../../lib/packInstall"
 import { isTauri } from "../../../lib/transport"
-import { useHostLocalStore } from "../../../store/hostLocal"
 import {
   buildDraftFromState,
   packExposeLines,
@@ -36,25 +36,20 @@ import { PACK_METADATA_SYSTEM } from "../ai/prompts"
 import { aiReady, draftWithRetries, useAiStore } from "../ai/provider"
 import { draftToPackMetadata } from "../ai/schemas"
 import { isTestDriveErrorKey, useTestDriveStore } from "../../../store/testDrive"
-import type { TestDriveMode } from "./testDrive"
+import { nextSteps } from "./testDrive"
 import LintPanel from "../lint/LintPanel"
 import { lintPack } from "../lint/packLint"
 import PanelsEditor from "./PanelsEditor"
 import { lintSourceFromPackBench } from "../lint/sources"
-import { parsePackBuildJson, type PackBuildSuccess } from "./buildResult"
+import { parsePackBuildJson, type EngineRefusal, type PackBuildSuccess, type PackTrust } from "./buildResult"
 import {
   buildPackSourcePlan,
-  MAX_PREP_OPERATIONS,
-  MAX_PREP_SCRIPT_CHARS,
-  MAX_RULES_SCRIPT_CHARS,
-  PREP_DIR,
+  MODULE_DIR,
+  MODULE_SOURCE_EXTENSIONS,
+  moduleIdMentioned,
   presentationSummary,
-  readPrepScript,
-  safeFileName,
-  sanitizePresetId,
+  SDK_GUIDE_URL,
 } from "../split/packSource"
-import { usePresetStore } from "../ai/presetStore"
-import { presetToStJson } from "../ai/stPreset"
 import { readRulepack } from "../split/rulepack"
 import { latestOrdinal, suggestedVersion, versionMatchesConvention } from "../split/episodes"
 import PresentationStage from "./PresentationStage"
@@ -76,9 +71,8 @@ function ItemRow({ item }: { item: PackItem }) {
   return (
     <div className="pack-item">
       {item.needsBytes ? (
-        // The session came back from storage with everything except this file's
-        // bytes. Nothing else was lost, and the build stays blocked until it
-        // returns rather than shipping an empty file under the right name.
+        // Everything but this file's bytes came back from storage; the build stays blocked
+        // until they return rather than shipping an empty file under the right name.
         <p className="studio-notice split-error" role="alert">
           {t("studio.pack.needsBytes", { name: item.sourceName, size: item.size })}{" "}
           <button type="button" className="ghost-button" onClick={() => void reattach()}>
@@ -97,13 +91,10 @@ function ItemRow({ item }: { item: PackItem }) {
           disabled={item.card !== null}
         >
           <option value="card">{t("studio.pack.kinds.card")}</option>
-          <option value="lorebook">{t("studio.pack.kinds.lorebook")}</option>
           <option value="asset">{t("studio.pack.kinds.asset")}</option>
         </select>
         {item.kind === "card" ? (
-          // Manifest v2: the kind is a DETECTED readout, never an author
-          // choice — the build stamps it from the real payload and install
-          // re-verifies the stamp.
+          // What the card IS — written as `kind:`, and checked by the engine against the card.
           <span
             className={item.cardKind === "world" ? "split-badge world" : "split-badge"}
             title={t("studio.pack.detectedKindHint")}
@@ -128,11 +119,12 @@ function ItemRow({ item }: { item: PackItem }) {
           {` · ${t(item.cardKind === "world" ? "studio.pack.detectedWorld" : "studio.pack.detectedCharacter")}`}
         </p>
       ) : null}
-      {item.kind === "lorebook" ? (
-        <p className="studio-hint">{t("studio.pack.lorebookEntries", { n: item.entryCount })}</p>
+      {item.kind === "card" && item.hooks.length > 0 ? (
+        <p className="studio-hint pack-warn">
+          {t("studio.pack.cardHooksNeverRun", { count: item.hooks.length })}
+        </p>
       ) : null}
       {item.initvarProblems.length > 0 ? (
-        // The card imported; these blocks contributed no variables.
         <ul className="issue-list">
           {item.initvarProblems.map((problem, index) => (
             <li key={index} className="split-error">
@@ -167,19 +159,6 @@ function ItemRow({ item }: { item: PackItem }) {
       </div>
       {item.kind === "card" ? (
         <>
-          {item.hooks.length > 0 && item.jsonText !== null ? (
-            <label className="pack-checkbox">
-              <input
-                type="checkbox"
-                checked={item.extractSkill}
-                onChange={(e) => updateItem(item.uid, { extractSkill: e.target.checked })}
-              />
-              {t("studio.pack.extractSkill")}
-            </label>
-          ) : null}
-          {item.hooks.length > 0 && item.jsonText === null ? (
-            <p className="studio-hint">{t("studio.pack.pngHooksStay")}</p>
-          ) : null}
           <label className="field">
             {t("studio.pack.notesZh")}
             <textarea
@@ -202,151 +181,214 @@ function ItemRow({ item }: { item: PackItem }) {
   )
 }
 
-/** The engine-generated trust card (from the `--pack --json` object): pack
- * composition, detected world-card count, and every code-carrying flag — the
- * same disclosure the CLI prints before install, rendered natively. */
-function TrustCard({ result }: { result: PackBuildSuccess }) {
+function megabytes(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(2)
+}
+
+/** The trust card as the engine computed it: what installing the pack means. Whether it runs
+ * code comes first, as the engine's own card puts it. */
+export function TrustCard({ trust, sha256 }: { trust: PackTrust; sha256: string }) {
   const { t } = useTranslation()
-  const trust = result.trust
-  if (trust === null) return null
-  const megabytes = (trust.asset_bytes / (1024 * 1024)).toFixed(1)
   return (
     <section className="pack-output pack-trust" aria-label={t("studio.pack.trust.title")}>
       <h3>{t("studio.pack.trust.title")}</h3>
       <p className="studio-hint">
-        {`${result.id}@${result.version} · ${t("studio.pack.trust.sha", { hash: result.sha256.slice(0, 16) })}`}
+        {`${trust.id}@${trust.version} · ${trust.license} · ${t("studio.pack.trust.sha", { hash: sha256.slice(0, 16) })}`}
       </p>
+      {trust.runsCode ? (
+        <div className="studio-notice split-error" role="alert">
+          <strong>{t("studio.pack.trust.runsCode")}</strong>
+          <ul className="issue-list">
+            {trust.modules.map((module) => (
+              <li key={module.id}>
+                {t("studio.pack.trust.module", {
+                  id: module.id,
+                  entry: module.entry,
+                  kb: (module.bytes / 1024).toFixed(1),
+                  hash: module.sha256.slice(0, 12),
+                })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="studio-notice" role="status">
+          {t("studio.pack.trust.noCode")}
+        </p>
+      )}
       <ul className="issue-list">
-        <li>
-          {t("studio.pack.trust.counts", {
-            skills: trust.skills,
-            rulepacks: trust.rulepacks,
-            cards: trust.cards,
-            lorebooks: trust.lorebooks,
-            assets: trust.assets,
-            mb: megabytes,
-            panels: trust.panels,
-          })}
-        </li>
-        {trust.world_cards > 0 ? (
-          <li>{t("studio.pack.trust.worldCards", { count: trust.world_cards })}</li>
-        ) : null}
-        <li>{t(trust.has_hooks ? "studio.pack.trust.hooksYes" : "studio.pack.trust.hooksNo")}</li>
-        <li>{t(trust.has_ejs ? "studio.pack.trust.ejsYes" : "studio.pack.trust.ejsNo")}</li>
-        <li>{t(trust.has_rules_script ? "studio.pack.trust.scriptYes" : "studio.pack.trust.scriptNo")}</li>
-        {trust.prep_scripts > 0 ? (
-          <li>{t("studio.pack.trust.prepScripts", { count: trust.prep_scripts })}</li>
-        ) : null}
-        {trust.presets > 0 ? <li>{t("studio.pack.trust.presets", { count: trust.presets })}</li> : null}
-        {trust.presentation > 0 ? (
+        {trust.ruleSystems.map((system) => (
+          <li key={`rule-${system.id}`}>
+            {system.extends === null
+              ? t("studio.pack.trust.ruleSystem", { id: system.id })
+              : t("studio.pack.trust.ruleSystemExtends", { id: system.id, base: system.extends })}
+          </li>
+        ))}
+        {trust.skills.map((skill) => (
+          <li key={`skill-${skill.id}`}>
+            {t("studio.pack.trust.skill", { id: skill.id, name: skill.name })}
+            {skill.tools.length > 0
+              ? ` · ${t("studio.pack.trust.skillTools", { tools: skill.tools.join(", ") })}`
+              : ""}
+            {skill.mature ? ` · ${t("studio.pack.trust.skillMature")}` : ""}
+          </li>
+        ))}
+        {trust.cards.map((card) => (
+          <li key={`card-${card.path}`}>
+            {t(card.kind === "world" ? "studio.pack.trust.worldCard" : "studio.pack.trust.characterCard", {
+              path: card.path,
+              name: card.name,
+            })}
+            {card.kind === "world"
+              ? ` · ${t("studio.pack.trust.machinery", {
+                  declarations: card.machinery.variableDeclarations,
+                  templates: card.machinery.templates,
+                  secret: card.machinery.secretEntries,
+                  variables: card.machinery.moduleVariables,
+                  hooks: card.machinery.hooks,
+                })}`
+              : ""}
+          </li>
+        ))}
+        {trust.panels.map((panel) => (
+          <li key={`panel-${panel.id}`}>
+            {t(panel.kind === "page" ? "studio.pack.trust.pagePanel" : "studio.pack.trust.templatePanel", {
+              id: panel.id,
+              audience: t(`studio.panels.audienceName.${panel.audience}`),
+              views: panel.views.join(", ") || "—",
+              page: panel.page?.path ?? "",
+            })}
+          </li>
+        ))}
+        {trust.presentation !== null ? (
           <li>
             {t("studio.pack.trust.presentation", {
-              subjects: trust.presentation,
-              imagegen: t(
-                trust.imagegen ? "studio.pack.trust.imagegenAllowed" : "studio.pack.trust.imagegenPackOnly",
+              subjects: trust.presentation.subjects,
+              cues: trust.presentation.cues,
+              generation: t(
+                trust.presentation.generation === "allow"
+                  ? "studio.pack.trust.imagegenAllowed"
+                  : "studio.pack.trust.imagegenPackOnly",
               ),
             })}
           </li>
         ) : null}
+        <li>
+          {t("studio.pack.trust.sizes", {
+            assets: trust.assets.count,
+            assetMb: megabytes(trust.assets.bytes),
+            files: trust.files.count,
+            fileMb: megabytes(trust.files.bytes),
+          })}
+        </li>
+        {trust.ignored.map((entry) => (
+          <li key={`ignored-${entry.path}`} className="pack-warn">
+            {t("studio.pack.trust.ignored", { path: entry.path, reason: entry.reason })}
+          </li>
+        ))}
       </ul>
     </section>
   )
 }
 
-/** The end of the author loop: install into the local server's own data dir,
- * bring that server up, join as keeper, and issue the pack's import commands —
- * the sequence the author used to run by hand across two views. */
-function TestDrivePanel({
-  candidate,
-  result,
-  packPath,
-  sourceDir,
-}: {
-  candidate: EngineCandidate | null
-  result: PackBuildSuccess
-  packPath: string
-  sourceDir: string | null
-}) {
+/** A refusal as the engine gave it: its code and path, and every problem it listed. */
+export function RefusalView({ refusal, titleKey }: { refusal: EngineRefusal; titleKey: string }) {
   const { t } = useTranslation()
-  const drive = useTestDriveStore()
-  const [mode, setMode] = useState<TestDriveMode>("install-then-import")
-  const busy = drive.phase !== "idle" && drive.phase !== "ready" && drive.phase !== "error"
-
   return (
-    <section className="pack-output" aria-label={t("studio.pack.testDrive.title")}>
-      <h3>{t("studio.pack.testDrive.title")}</h3>
-      <div className="dialog-row">
-        <label className="field field-narrow">
-          {t("studio.pack.testDrive.mode")}
-          <select value={mode} onChange={(e) => setMode(e.target.value as TestDriveMode)}>
-            <option value="install-then-import">{t("studio.pack.testDrive.modeInstall")}</option>
-            <option value="mount-source" disabled={sourceDir === null}>
-              {t("studio.pack.testDrive.modeMount")}
-            </option>
-          </select>
-        </label>
-      </div>
-      <p className="studio-hint">
-        {t(mode === "mount-source" ? "studio.pack.testDrive.mountHint" : "studio.pack.testDrive.hint")}
-      </p>
-      <div className="dialog-row">
-        <button
-          type="button"
-          className="primary-button"
-          disabled={(candidate === null && mode !== "mount-source") || busy}
-          onClick={() =>
-            void drive.run({
-              candidate: candidate!,
-              packPath,
-              packId: result.id,
-              packVersion: result.version,
-              sourceDir: sourceDir ?? undefined,
-              mode,
-              // Skills and rulepacks are registered at server startup, so a
-              // pack carrying either needs the server restarted, not just the
-              // install re-run.
-              carriesSkillsOrRulepacks: (result.trust?.skills ?? 0) > 0 || (result.trust?.rulepacks ?? 0) > 0,
-            })
-          }
-        >
-          {busy ? t(`studio.pack.testDrive.phase.${drive.phase}`) : t("studio.pack.testDrive.run")}
-        </button>
-        {drive.phase !== "idle" ? (
-          <button type="button" className="ghost-button" onClick={() => drive.reset()} disabled={busy}>
-            {t("studio.pack.testDrive.clear")}
-          </button>
-        ) : null}
-      </div>
-      {drive.dataDir !== null ? (
-        <p className="studio-hint">{t("studio.pack.testDrive.dataDir", { dir: drive.dataDir })}</p>
-      ) : null}
-      {drive.commands.length > 0 ? (
-        <>
-          <p className="studio-hint">
-            {t("studio.pack.testDrive.commands", { sent: drive.sent, total: drive.commands.length })}
-          </p>
-          <pre className="split-code pack-command">{drive.commands.join("\n")}</pre>
-        </>
-      ) : null}
-      {drive.phase === "ready" ? (
-        <p className="studio-notice" role="status">
-          {t("studio.pack.testDrive.ready")}
+    <section className="studio-notice split-error" role="alert">
+      <strong>{t(titleKey, { code: refusal.code })}</strong>
+      {refusal.path !== undefined || refusal.detail !== undefined ? (
+        <p>
+          <code>{[refusal.path, refusal.detail].filter(Boolean).join(" · ")}</code>
         </p>
       ) : null}
-      {drive.phase === "error" && drive.error !== null ? (
-        <p className="studio-notice split-error" role="alert">
-          {isTestDriveErrorKey(drive.error) ? t(`studio.pack.${drive.error}`) : drive.error}
-        </p>
+      {refusal.problems.length > 0 ? (
+        <ul className="issue-list">
+          {refusal.problems.map((problem, index) => (
+            <li key={index}>
+              <code>{problem.code}</code> {problem.path}
+              {problem.detail ? ` — ${problem.detail}` : ""}
+            </li>
+          ))}
+        </ul>
       ) : null}
     </section>
   )
 }
 
-// i18n-exempt: a YAML sample — code, identical in every locale. It is also a
-// sample the engine ACCEPTS: `core/resolution.py::compile_resolution` requires a
-// `roll:` expression and a non-empty `ranks:` ladder and rejects unknown keys,
-// and `_parse_initiative_section` requires the mapping below rather than a bare
-// dice string. A starter the build refuses teaches the wrong shape twice.
+/** After a build: the engine's own installer on the built file, into a scratch data
+ * directory; then the exact commands that put the pack in front of a table. */
+function VerifyPanel({ candidate, result }: { candidate: EngineCandidate | null; result: PackBuildSuccess }) {
+  const { t } = useTranslation()
+  const verify = useTestDriveStore()
+  const busy = verify.phase === "verifying"
+  const install = verify.verification?.install
+  const steps = nextSteps(result.trust)
+  return (
+    <section className="pack-output" aria-label={t("studio.pack.verify.title")}>
+      <h3>{t("studio.pack.verify.title")}</h3>
+      <p className="studio-hint">{t("studio.pack.verify.hint")}</p>
+      <div className="dialog-row">
+        <button
+          type="button"
+          className="primary-button"
+          disabled={candidate === null || busy}
+          onClick={() => candidate !== null && void verify.run({ candidate, packPath: result.out })}
+        >
+          {busy ? t("studio.pack.verify.running") : t("studio.pack.verify.run")}
+        </button>
+        {verify.phase !== "idle" && !busy ? (
+          <button type="button" className="ghost-button" onClick={() => verify.reset()}>
+            {t("studio.pack.verify.clear")}
+          </button>
+        ) : null}
+      </div>
+      {verify.phase === "verified" && install?.ok ? (
+        <div className="studio-notice" role="status">
+          <p>
+            {t("studio.pack.verify.installed", { id: install.result.id, version: install.result.version })}
+            {verify.verification?.listed
+              ? ` · ${t("studio.pack.verify.listed", {
+                  packs:
+                    verify.verification.listed.map((pack) => `${pack.id}@${pack.version}`).join(", ") || "—",
+                })}`
+              : ""}
+          </p>
+          {install.result.shadowed.ruleSystems.length + install.result.shadowed.skills.length > 0 ? (
+            <p className="pack-warn">
+              {t("studio.pack.verify.shadowed", {
+                ids: [...install.result.shadowed.ruleSystems, ...install.result.shadowed.skills].join(", "),
+              })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {verify.phase === "refused" && install && !install.ok ? (
+        <RefusalView refusal={install.refusal} titleKey="studio.pack.verify.refused" />
+      ) : null}
+      {verify.phase === "error" && verify.error !== null ? (
+        <p className="studio-notice split-error" role="alert">
+          {isTestDriveErrorKey(verify.error) ? t(`studio.pack.${verify.error}`) : verify.error}
+        </p>
+      ) : null}
+
+      <h4>{t("studio.pack.verify.nextTitle")}</h4>
+      <p className="studio-hint">{t("studio.pack.verify.hostingNote")}</p>
+      <p className="studio-hint">{t("studio.pack.verify.operator")}</p>
+      <pre className="split-code pack-command">{formatInstallCommand(candidate, result.out)}</pre>
+      <p className="studio-hint">{t("studio.pack.verify.admin")}</p>
+      <pre className="split-code pack-command">{steps.admin.join("\n")}</pre>
+      {steps.players.length > 0 ? (
+        <>
+          <p className="studio-hint">{t("studio.pack.verify.players")}</p>
+          <pre className="split-code pack-command">{steps.players.join("\n")}</pre>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
+// i18n-exempt: a YAML sample — code, identical in every locale.
 const FULL_RULEPACK_SAMPLE = `names: [My System]
 set_keys: [mysys]
 defaults:
@@ -372,52 +414,17 @@ initiative:
 const PATCH_RULEPACK_SAMPLE = `extends: coc7
 defaults:
   San: 60`
-// i18n-exempt: emitted JavaScript, read by the author's editor and the engine.
-// The contract is `core/rules_script.py` + `core/resolution.py`, not invention:
-// the sandbox calls ONE named function (`resolve` for a resolution script,
-// `flow` for a subsystem), hands it the rolled input, and `validate_rank_result`
-// accepts EXACTLY `{rank: {id, tier, success?, critical?, fumble?}, margin?}` —
-// a flat rank object, or any extra key, is rejected outright.
-const RULES_SCRIPT_SAMPLE = `// Stage-E resolution script: the engine rolls, this grades.
-// input:  {roll, dice, total, target, raw_target, modifier,
-//          successes, ones, variant, difficulty}
-// return: {rank: {id, tier, success?, critical?, fumble?}, margin?}
-function resolve(input) {
-  if (input.roll === 1) return {rank: {id: 'crit', tier: 3, success: true, critical: true}}
-  if (input.roll === 100) return {rank: {id: 'fumble', tier: 0, fumble: true}}
-  var hit = input.target !== null && input.roll <= input.target
-  return {
-    rank: hit ? {id: 'success', tier: 2, success: true} : {id: 'fail', tier: 1},
-    margin: input.target === null ? null : input.target - input.roll,
-  }
-}`
 
-/** The rulepack editor. Two modes over ONE artifact: a `patch` is an `extends:`
- * over a built-in system (what the bench has always offered), a `full` pack is
- * a whole rule system authored here. Both emit `rulepacks/<id>.yaml` and the
- * engine does not distinguish them — the mode changes the editor and the
- * advice, not the file. Validation is advisory: `core/rulepacks.py` parses this
- * again at build time and its verdict is the only one that counts. */
+/** The rule-pack editor. Two modes over ONE artifact: a `patch` is an `extends:` over a
+ * built-in system, a `full` pack a whole rule system authored here. Both emit
+ * `rulepacks/<id>.yaml`. Validation is advisory except where 3.0 refuses outright (a rules
+ * script): the engine compiles the file again at build and its verdict is the one that counts. */
 function RulepackSection() {
   const { t } = useTranslation()
   const metadata = usePackStore((s) => s.metadata)
   const setMetadata = usePackStore((s) => s.setMetadata)
   const full = metadata.rulepackMode === "full"
   const reading = readRulepack(metadata.rulepackPatch)
-  // The engine reads a rules script from NEXT TO the YAML, under the name the
-  // YAML declares — so the YAML is what decides whether this pack has a script
-  // lane at all, and the editor follows it rather than the other way round.
-  const declaredScript = reading.summary.scripts[0]
-  const scriptIssues: Issue[] = []
-  if (declaredScript !== undefined && !metadata.rulepackScriptSource.trim()) {
-    scriptIssues.push({ key: "rulepackScriptMissing", params: { file: declaredScript } })
-  }
-  if (declaredScript === undefined && metadata.rulepackScriptSource.trim()) {
-    scriptIssues.push({ key: "rulepackScriptOrphan" })
-  }
-  if (metadata.rulepackScriptSource.length > MAX_RULES_SCRIPT_CHARS) {
-    scriptIssues.push({ key: "rulepackScriptTooLong", params: { max: MAX_RULES_SCRIPT_CHARS } })
-  }
 
   const loadFromFile = async () => {
     const files = await pickAnyFiles()
@@ -425,17 +432,8 @@ function RulepackSection() {
     setMetadata({
       rulepackPatch: new TextDecoder("utf-8").decode(files[0].bytes),
       rulepackMode: "full",
-      // The file stem IS the system id players type in `.set`, so adopt it.
+      // The file stem IS the rule system's id, so adopt it.
       rulepackId: metadata.rulepackId || files[0].name.replace(/\.[^.]*$/, ""),
-    })
-  }
-
-  const loadScriptFromFile = async () => {
-    const files = await pickAnyFiles()
-    if (files.length === 0) return
-    setMetadata({
-      rulepackScriptSource: new TextDecoder("utf-8").decode(files[0].bytes),
-      rulepackScriptName: files[0].name,
     })
   }
 
@@ -482,31 +480,9 @@ function RulepackSection() {
           })}
         </p>
       ) : null}
-      {declaredScript !== undefined ? (
-        <div className="pack-extra-block">
-          <h4>{t("studio.pack.rulepack.scriptTitle", { file: declaredScript })}</h4>
-          <p className="studio-hint">{t("studio.pack.rulepack.scriptHint")}</p>
-          <div className="dialog-row">
-            <button type="button" className="ghost-button" onClick={() => void loadScriptFromFile()}>
-              {t("studio.pack.rulepack.scriptLoad")}
-            </button>
-          </div>
-          <label className="field field-wide">
-            {t("studio.pack.rulepack.scriptSource")}
-            <textarea
-              className="wizard-yaml"
-              rows={14}
-              value={metadata.rulepackScriptSource}
-              onChange={(e) => setMetadata({ rulepackScriptSource: e.target.value })}
-              placeholder={RULES_SCRIPT_SAMPLE}
-              spellCheck={false}
-            />
-          </label>
-        </div>
-      ) : null}
-      {reading.issues.length > 0 || scriptIssues.length > 0 ? (
+      {reading.issues.length > 0 ? (
         <ul className="issue-list">
-          {[...reading.issues, ...scriptIssues].map((issue, index) => (
+          {reading.issues.map((issue, index) => (
             <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params ?? {})}</li>
           ))}
         </ul>
@@ -516,100 +492,98 @@ function RulepackSection() {
   )
 }
 
-/** The prep-script editor (M20 F). A prep script PLANS bulk setup — forty NPCs
- * from a list, a family of variables — and the engine applies the plan through
- * the ordinary tool path after a keeper previews it whole. It never runs at
- * install, or at any other time, by itself.
- *
- * Checks here are the engine's BUILD checks (extension, size) plus an advisory
- * read of what the source reaches for. Deliberately not a syntax check: the
- * engine's own build is static too, so packs build identically on machines
- * without the optional QuickJS extra, and a syntax error surfaces at preview. */
-function PrepScriptSection() {
+/** The modules step: a pack's code. Honest about what Studio does with it — it writes the
+ * source into the pack tree under `src/` and declares it; it does not type-check, bundle or
+ * run it (the engine's builder bundles it; a room that enables the pack runs it). */
+function ModulesStep({ issues }: { issues: Issue[] }) {
   const { t } = useTranslation()
-  const scripts = usePackStore((s) => s.prepScripts)
-  const add = usePackStore((s) => s.addPrepScript)
-  const update = usePackStore((s) => s.updatePrepScript)
-  const remove = usePackStore((s) => s.removePrepScript)
-  const packId = usePackStore((s) => s.metadata.id)
-  const [apiOpen, setApiOpen] = useState(false)
+  const modules = usePackStore((s) => s.modules)
+  const addModule = usePackStore((s) => s.addModule)
+  const updateModule = usePackStore((s) => s.updateModule)
+  const removeModule = usePackStore((s) => s.removeModule)
+
+  const loadSource = async (uid: string) => {
+    const files = await pickAnyFiles()
+    if (files.length === 0) return
+    updateModule(uid, { source: new TextDecoder("utf-8").decode(files[0].bytes) })
+  }
 
   return (
-    <section className="pack-extra-section">
-      <div className="dialog-row">
-        <h3>{t("studio.pack.prep.title")}</h3>
-        <div className="header-spacer" />
-        <button type="button" className="ghost-button" onClick={() => setApiOpen(!apiOpen)}>
-          {t(apiOpen ? "studio.pack.prep.hideApi" : "studio.pack.prep.showApi")}
-        </button>
-      </div>
-      <p className="studio-hint">{t("studio.pack.prep.hint")}</p>
-      {apiOpen ? (
-        <ul className="pack-doctrine">
-          <li>{t("studio.pack.prep.apiPlan")}</li>
-          <li>
-            {t("studio.pack.prep.apiLimits", { chars: MAX_PREP_SCRIPT_CHARS, ops: MAX_PREP_OPERATIONS })}
-          </li>
-          <li>{t("studio.pack.prep.apiGating")}</li>
-          <li>{t("studio.pack.prep.apiUnreachable")}</li>
-          <li>{t("studio.pack.prep.apiPreview")}</li>
-        </ul>
-      ) : null}
-      {scripts.map((script, index) => {
-        const reading = readPrepScript(script.source)
-        return (
-          <div className="pack-item" key={index}>
-            <div className="pack-item-head">
-              <label className="field field-narrow">
-                {t("studio.pack.prep.fileName")}
-                <input
-                  value={script.fileName}
-                  onChange={(e) => update(index, { fileName: e.target.value })}
-                  placeholder="setup.js"
-                  spellCheck={false}
-                />
-              </label>
-              <span className="split-badge">{`${PREP_DIR}/${script.fileName}`}</span>
-              <div className="header-spacer" />
-              <button type="button" className="ghost-button" onClick={() => remove(index)}>
-                {t("studio.remove")}
-              </button>
-            </div>
-            <label className="field field-wide">
-              {t("studio.pack.prep.source")}
-              <textarea
-                className="wizard-yaml"
-                rows={16}
-                value={script.source}
-                onChange={(e) => update(index, { source: e.target.value })}
+    <div className="pack-panel">
+      <h3>{t("studio.pack.modules.title")}</h3>
+      <p className="studio-hint">{t("studio.pack.modules.hint")}</p>
+      <p className="studio-notice" role="note">
+        {t("studio.pack.modules.honest")}
+      </p>
+      <p className="studio-hint">
+        {t("studio.pack.modules.guide")}{" "}
+        <a href={SDK_GUIDE_URL} target="_blank" rel="noreferrer">
+          {SDK_GUIDE_URL}
+        </a>
+      </p>
+      {modules.map((module) => (
+        <div className="pack-item" key={module.uid}>
+          <div className="pack-item-head">
+            <label className="field field-narrow">
+              {t("studio.pack.modules.id")}
+              <input
+                value={module.id}
+                onChange={(e) => updateModule(module.uid, { id: e.target.value })}
+                placeholder="tally"
                 spellCheck={false}
               />
             </label>
-            <p className="studio-hint">
-              {t("studio.pack.prep.reading", {
-                chars: reading.chars,
-                max: MAX_PREP_SCRIPT_CHARS,
-                calls: reading.literalPlanCalls,
-              })}
-              {reading.hasLoop ? ` · ${t("studio.pack.prep.readingLoop", { ops: MAX_PREP_OPERATIONS })}` : ""}
-            </p>
-            {reading.forbidden.length > 0 ? (
-              <p className="studio-hint pack-warn">
-                {t("studio.pack.prep.forbidden", { names: reading.forbidden.join(", ") })}
-              </p>
-            ) : null}
-            <p className="studio-hint">
-              {t("studio.pack.prep.invoke", {
-                ref: `${packId || "<packId>"}/${PREP_DIR}/${script.fileName}`,
-              })}
-            </p>
+            <label className="field field-narrow">
+              {t("studio.pack.modules.fileName")}
+              <input
+                value={module.fileName}
+                onChange={(e) => updateModule(module.uid, { fileName: e.target.value })}
+                placeholder="tally.ts"
+                spellCheck={false}
+              />
+            </label>
+            <span className="split-badge">{`${MODULE_DIR}/${module.fileName}`}</span>
+            <div className="header-spacer" />
+            <button type="button" className="ghost-button" onClick={() => void loadSource(module.uid)}>
+              {t("studio.pack.modules.load")}
+            </button>
+            <button type="button" className="ghost-button" onClick={() => removeModule(module.uid)}>
+              {t("studio.remove")}
+            </button>
           </div>
-        )
-      })}
-      <button type="button" className="ghost-button" onClick={() => add()}>
-        {t("studio.pack.prep.add")}
+          <label className="field field-wide">
+            {t("studio.pack.modules.source")}
+            <textarea
+              className="wizard-yaml module-source"
+              rows={18}
+              value={module.source}
+              onChange={(e) => updateModule(module.uid, { source: e.target.value })}
+              spellCheck={false}
+              aria-label={t("studio.pack.modules.sourceFor", { id: module.id || "?" })}
+            />
+          </label>
+          {!moduleIdMentioned(module.source, module.id) ? (
+            <p className="studio-hint pack-warn">{t("studio.pack.modules.idMismatch", { id: module.id })}</p>
+          ) : null}
+          <p className="studio-hint">
+            {t("studio.pack.modules.names", {
+              id: module.id || "?",
+              extensions: MODULE_SOURCE_EXTENSIONS.join(" "),
+            })}
+          </p>
+        </div>
+      ))}
+      <button type="button" className="ghost-button" onClick={() => addModule()}>
+        {t("studio.pack.modules.add")}
       </button>
-    </section>
+      {issues.length > 0 ? (
+        <ul className="issue-list">
+          {issues.map((issue, index) => (
+            <li key={index}>{t(`studio.pack.err.${issue.key}`, issue.params ?? {})}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 
@@ -735,84 +709,10 @@ function ReleaseHorizon() {
   )
 }
 
-/** Prompt presets shipped with the pack (`contents.presets`).
- *
- * The source is the studio's OWN preset library — the presets already imported
- * for the card forge — because that is where an author's keeper style already
- * lives; making them re-import the same file to ship it would be busywork.
- * What ships is the document as IMPORTED, reassembled losslessly, not the
- * studio's preview state: the preset-manager's per-entry overrides are a
- * reading aid and deliberately stay out of the pack.
- *
- * Install lands each file in the SHARED store at `data_dir/presets/<id>.json`,
- * where the id is the sanitized filename stem — so the section shows that id,
- * since it is what a keeper will type into `.preset enable`. Install is not
- * enable: nothing turns on by itself. */
-function PackPresetsSection() {
-  const { t } = useTranslation()
-  const library = usePresetStore((s) => s.presets)
-  const packPresets = usePackStore((s) => s.packPresets)
-  const addPackPreset = usePackStore((s) => s.addPackPreset)
-  const removePackPreset = usePackStore((s) => s.removePackPreset)
-  const updatePackPreset = usePackStore((s) => s.updatePackPreset)
-  const [choice, setChoice] = useState("")
-
-  const ship = () => {
-    const stored = library.find((preset) => preset.id === choice)
-    if (stored === undefined) return
-    addPackPreset({
-      fileName: `${safeFileName(stored.name, "preset")}.json`,
-      jsonText: presetToStJson(stored),
-    })
-    setChoice("")
-  }
-
-  return (
-    <section className="pack-extra-section">
-      <h3>{t("studio.pack.presets.title")}</h3>
-      <p className="studio-hint">{t("studio.pack.presets.hint")}</p>
-      <div className="dialog-row">
-        <label className="field">
-          {t("studio.pack.presets.fromLibrary")}
-          <select value={choice} onChange={(e) => setChoice(e.target.value)}>
-            <option value="">{t("studio.pack.presets.pick")}</option>
-            {library.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" className="ghost-button" disabled={choice === ""} onClick={ship}>
-          {t("studio.pack.presets.add")}
-        </button>
-        {library.length === 0 ? (
-          <span className="studio-hint">{t("studio.pack.presets.libraryEmpty")}</span>
-        ) : null}
-      </div>
-      {packPresets.map((preset, index) => (
-        <div className="pack-item" key={preset.fileName}>
-          <div className="pack-item-head">
-            <label className="field">
-              {t("studio.pack.presets.fileName")}
-              <input
-                value={preset.fileName}
-                onChange={(e) => updatePackPreset(index, { fileName: e.target.value })}
-                spellCheck={false}
-              />
-            </label>
-            <span className="split-badge">
-              {t("studio.pack.presets.storeId", { id: sanitizePresetId(preset.fileName) || "?" })}
-            </span>
-            <div className="header-spacer" />
-            <button type="button" className="ghost-button" onClick={() => removePackPreset(index)}>
-              {t("studio.remove")}
-            </button>
-          </div>
-        </div>
-      ))}
-    </section>
-  )
+/** Studio's own name for a candidate, for the engine picker. */
+function candidateLabel(candidate: EngineCandidate): string {
+  const where = candidate.kind === "binary" ? candidate.program : `bun ${candidate.args[0] ?? ""}`
+  return candidate.version === null ? where : `${where} (${candidate.version})`
 }
 
 export default function PackWizard() {
@@ -822,16 +722,8 @@ export default function PackWizard() {
   const [busy, setBusy] = useState(false)
   const [aiProblems, setAiProblems] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [refusal, setRefusal] = useState<EngineRefusal | null>(null)
   const [panelDir, setPanelDir] = useState("")
-  // The install target is the local server's data dir, and the author's own
-  // server-folder override decides which one that is.
-  const hostHome = useHostLocalStore((s) => s.homeOverride)
-  const [installDir, setInstallDir] = useState("")
-  useEffect(() => {
-    void installDataDir(hostHome)
-      .then(setInstallDir)
-      .catch(() => setInstallDir(""))
-  }, [hostHome])
   const dropRef = useRef<HTMLDivElement | null>(null)
 
   const addPanelAssets = async () => {
@@ -898,12 +790,11 @@ export default function PackWizard() {
             name: item.card?.name ?? "",
             creator_notes: item.card?.creatorNotes.slice(0, 400) ?? "",
             tags: item.card?.tags ?? [],
-            hooks: item.hooks.length,
             variable_leaves: item.leaves.length,
             existing_notes: { en: item.notesEn, zh: item.notesZh },
           })),
-        lorebooks: store.items.filter((item) => item.kind === "lorebook").map((item) => item.fileName),
         assets: store.items.filter((item) => item.kind === "asset").map((item) => item.fileName),
+        modules: store.modules.map((module) => module.id),
         expose_commands: packExposeLines(store.items),
       }
       const result = await draftWithRetries(
@@ -963,9 +854,8 @@ export default function PackWizard() {
     if (dir !== null) store.setOutputDir(dir)
   }
 
-  /** Adopt a source tree that already exists on disk (an earlier session's, or
-   * a hand-edited one) so build+install work WITHOUT re-dropping every file —
-   * the iteration loop a module author actually lives in. */
+  /** Adopt a source tree that already exists on disk (an earlier session's, or a hand-edited
+   * one) so the build works WITHOUT re-dropping every file. */
   const adoptSourceDir = async () => {
     const dir = await pickDirectory()
     if (dir === null) return
@@ -987,27 +877,28 @@ export default function PackWizard() {
       store.setOutputDir(parent)
       store.setWritten(dir)
       store.setBuiltPackPath(null)
+      store.setPackResult(null)
       store.setRunResult(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
   }
 
+  const draftInput = {
+    items: store.items,
+    metadata: store.metadata,
+    panels: store.panels,
+    manualSkills: store.manualSkills,
+    modules: store.modules,
+    presentation: store.presentation,
+    episodes: store.episodes,
+    buildUpTo: store.buildUpTo,
+  }
+
   const writeSource = async () => {
     if (store.outputDir === null) return
     setError(null)
-    const draft = buildDraftFromState(
-      store.items,
-      store.metadata,
-      store.panels,
-      store.manualSkills,
-      store.presentation,
-      store.prepScripts,
-      store.episodes,
-      store.buildUpTo,
-      store.packPresets,
-    )
-    const plan = buildPackSourcePlan(draft)
+    const plan = buildPackSourcePlan(buildDraftFromState(draftInput))
     const root = `${store.outputDir}/${plan.dirName}`
     try {
       await writePackSource(root, { files: plan.files, binaries: plan.binaries }, false)
@@ -1037,51 +928,39 @@ export default function PackWizard() {
   }
 
   const candidate = store.candidates[store.selectedCandidate] ?? null
+  const outPath =
+    store.outputDir !== null
+      ? `${store.outputDir}/${store.metadata.id}-${store.metadata.version}.lwpack`
+      : null
   const packArgs =
-    store.writtenDir !== null && store.outputDir !== null
-      ? [
-          "--pack",
-          store.writtenDir,
-          "--out",
-          `${store.outputDir}/${store.metadata.id}-${store.metadata.version}.lwpack`,
-          "--json",
-        ]
-      : ["--pack", `<${t("studio.pack.sourceDirPlaceholder")}>`, "--json"]
+    store.writtenDir !== null && outPath !== null
+      ? ["pack", store.writtenDir, "--out", outPath]
+      : ["pack", `<${t("studio.pack.sourceDirPlaceholder")}>`]
 
   const runPack = async () => {
-    if (candidate === null || store.writtenDir === null || store.outputDir === null) return
+    if (candidate === null || store.writtenDir === null || outPath === null) return
     store.setRunning(true)
     store.setRunResult(null)
     store.setPackResult(null)
+    store.setBuiltPackPath(null)
+    useTestDriveStore.getState().reset()
+    setRefusal(null)
     setError(null)
     try {
-      const outPath = `${store.outputDir}/${store.metadata.id}-${store.metadata.version}.lwpack`
-      // `--json`: stdout is exactly ONE machine object; human lines (the
-      // localized trust card included) stay on stderr for the terminal below.
-      const result = await runEngineCli(candidate, ["--pack", store.writtenDir, "--out", outPath, "--json"])
+      const result = await runEngineCli(candidate, ["pack", store.writtenDir, "--out", outPath])
       store.setRunResult(result)
-      const parsed = parsePackBuildJson(result.stdout)
-      if (parsed?.ok === false) {
-        // The engine validated and refused: surface its reason prominently —
-        // the stderr detail stays visible in the terminal for full context.
-        setError(t("studio.pack.buildFailed", { detail: parsed.error }))
+      const parsed = parsePackBuildJson(result.stdout, result.stderr)
+      if (parsed === null) {
+        setError(t("studio.pack.noJson"))
         return
       }
-      if (result.code === 0) {
-        if (parsed?.ok === true) store.setPackResult(parsed.result)
-        // Prefer the engine-reported path; fall back to the requested --out
-        // when stdout wasn't the machine shape (older engine).
-        const builtPath = parsed?.ok === true ? parsed.result.path : outPath
-        store.setBuiltPackPath(builtPath)
-        if (store.installAfterBuild) {
-          // Same target as every other install path: the local server's own
-          // data dir, which is the only one the studio can promise anything
-          // about (see `lib/packInstall.ts`).
-          const install = await installPack(candidate, builtPath, hostHome)
-          store.setInstalledTo(install.dataDir)
-          store.setRunResult(install.result)
-        }
+      if (!parsed.ok) {
+        // The engine validated and refused: its code, path and problems, as it said them.
+        setRefusal(parsed.refusal)
+        return
       }
+      store.setPackResult(parsed.result)
+      store.setBuiltPackPath(parsed.result.out)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -1089,53 +968,26 @@ export default function PackWizard() {
     }
   }
 
-  const runInstall = async () => {
-    if (candidate === null || store.builtPackPath === null) return
-    store.setRunning(true)
-    setError(null)
-    try {
-      const install = await installPack(candidate, store.builtPackPath, hostHome)
-      store.setInstalledTo(install.dataDir)
-      store.setRunResult(install.result)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      store.setRunning(false)
-    }
-  }
-
-  const issues = packValidationIssues(
-    store.items,
-    store.metadata,
-    store.panels,
-    store.manualSkills,
-    store.presentation,
-    store.prepScripts,
-    store.episodes,
-    store.buildUpTo,
-    store.packPresets,
-  )
-  // Advisory, alongside the blocking `issues` above and never mixed with them:
-  // these are packs that build fine and then do nothing.
-  // Also the panels editor's variable list: the closed set a `$var` binding may
-  // name is exactly what the lint resolves bindings against, so both read one source.
+  const issues = packValidationIssues(draftInput)
+  // Advisory, alongside the blocking `issues` above and never mixed with them: packs that
+  // build fine and then do nothing.
   const lintSource = lintSourceFromPackBench({
     items: store.items,
     metadata: store.metadata,
     panels: store.panels,
-    manualSkills: store.manualSkills,
     presentation: store.presentation,
     episodes: store.episodes,
     buildUpTo: store.buildUpTo,
   })
   const lintFindings = lintPack(lintSource)
-  // Kit issues live on the presentation step (every kit key shares the
-  // packPresentation prefix; kit-raised path collisions are tagged `from`) —
-  // the metadata step only gates on its own fields, the build gates on ALL.
+  // Kit issues live on the presentation step, module issues on the modules step; the
+  // metadata step gates on the rest, and the build gates on ALL.
   const isKitIssue = (issue: Issue) =>
     issue.key.startsWith("packPresentation") || issue.params?.from === "presentation"
+  const isModuleIssue = (issue: Issue) => issue.key.startsWith("packModule")
   const kitIssues = issues.filter(isKitIssue)
-  const otherIssues = issues.filter((issue) => !isKitIssue(issue))
+  const moduleIssues = issues.filter(isModuleIssue)
+  const otherIssues = issues.filter((issue) => !isKitIssue(issue) && !isModuleIssue(issue))
   const stepIndex = PACK_STEPS.indexOf(store.step)
   const worldCards = store.items.filter((item) => item.kind === "card" && item.cardKind === "world")
   const canNext: Record<PackStep, boolean> = {
@@ -1143,6 +995,7 @@ export default function PackWizard() {
     review: store.items.length > 0,
     promote: true,
     metadata: otherIssues.length === 0,
+    modules: moduleIssues.length === 0,
     presentation: kitIssues.length === 0,
     build: false,
   }
@@ -1158,9 +1011,8 @@ export default function PackWizard() {
             type="button"
             className={step === store.step ? "pack-step active" : "pack-step"}
             onClick={() => goto(step)}
-            // The build step stands on its own — it can adopt a source tree
-            // that already exists on disk, so it is never gated behind the
-            // authoring steps.
+            // The build step stands on its own — it can adopt a source tree that already
+            // exists on disk, so it is never gated behind the authoring steps.
             disabled={index > stepIndex + 1 && step !== "build"}
           >
             {index + 1}. {t(`studio.pack.steps.${step}`)}
@@ -1171,6 +1023,20 @@ export default function PackWizard() {
           {t("studio.pack.reset")}
         </button>
       </nav>
+
+      {store.migrationNotes.length > 0 ? (
+        <section className="studio-notice" role="status" aria-label={t("studio.pack.migration.title")}>
+          <strong>{t("studio.pack.migration.title")}</strong>
+          <ul className="issue-list">
+            {store.migrationNotes.map((note, index) => (
+              <li key={index}>{t(`studio.${note.key}`, note.params ?? {})}</li>
+            ))}
+          </ul>
+          <button type="button" className="ghost-button" onClick={() => store.dismissMigrationNotes()}>
+            {t("studio.pack.migration.dismiss")}
+          </button>
+        </section>
+      ) : null}
 
       {error !== null ? (
         <p className="studio-notice split-error" role="alert">
@@ -1342,24 +1208,22 @@ export default function PackWizard() {
 
           <RulepackSection />
 
-          <PackPresetsSection />
-
-          <PrepScriptSection />
-
           <EpisodeTimeline />
 
           <section className="pack-extra-section">
             <h3>{t("studio.pack.panels.title")}</h3>
             <p className="studio-hint">{t("studio.pack.panels.hint")}</p>
-            {/* Forms first, YAML behind a tab. Panels are a closed vocabulary of
-                blocks over the pack's own declared variables — exactly the shape a
-                form can hold — and asking an author to hand-write the file was the
-                reason most packs shipped none. `PanelsEditor` reads and writes the
-                same YAML either way, so a hand-written file opens here untouched. */}
             <PanelsEditor
               yamlText={store.panels?.yamlText ?? ""}
               onChange={store.setPanelsYaml}
               variables={lintSource.variables}
+              moduleIds={store.modules.map((module) => module.id)}
+              files={[
+                ...(store.panels?.files.map((file) => file.path) ?? []),
+                ...store.items
+                  .filter((item) => item.kind === "asset")
+                  .map((item) => `assets/${item.fileName}`),
+              ]}
             />
             <div className="dialog-row">
               <label className="field field-narrow">
@@ -1452,20 +1316,6 @@ export default function PackWizard() {
                     spellCheck={false}
                   />
                 </label>
-                <label className="field field-wide">
-                  {t("studio.pack.skills.hooks")}
-                  <textarea
-                    rows={4}
-                    value={skill.hooks[0] ?? ""}
-                    onChange={(e) =>
-                      store.updateManualSkill(index, {
-                        hooks: e.target.value.trim() ? [e.target.value] : [],
-                      })
-                    }
-                    placeholder={"on('turn_start', () => { /* … */ })"}
-                    spellCheck={false}
-                  />
-                </label>
               </div>
             ))}
             <button type="button" className="ghost-button" onClick={() => store.addManualSkill()}>
@@ -1487,6 +1337,8 @@ export default function PackWizard() {
         </div>
       ) : null}
 
+      {store.step === "modules" ? <ModulesStep issues={moduleIssues} /> : null}
+
       {store.step === "presentation" ? <PresentationStage issues={kitIssues} /> : null}
 
       {store.step === "build" ? (
@@ -1494,8 +1346,6 @@ export default function PackWizard() {
           <h3>{t("studio.pack.writeTitle")}</h3>
           {store.episodes.length > 0 ? <ReleaseHorizon /> : null}
           {store.presentation !== null ? (
-            // The review the author gets right before the engine speaks: what
-            // the kit stages, and what the trust card will disclose.
             <p className="studio-hint">
               {t("studio.pack.presentation.buildReview", {
                 subjects: presentationSummary(store.presentation).subjects,
@@ -1531,6 +1381,9 @@ export default function PackWizard() {
               {t("studio.pack.adoptDir")}
             </button>
           </div>
+          {issues.length > 0 ? (
+            <p className="studio-hint pack-warn">{t("studio.pack.blocked", { count: issues.length })}</p>
+          ) : null}
           <p className="studio-hint">{t("studio.pack.adoptHint")}</p>
           {store.writtenDir !== null ? (
             <p className="studio-notice" role="status">
@@ -1551,9 +1404,7 @@ export default function PackWizard() {
               >
                 {store.candidates.map((entry, index) => (
                   <option key={index} value={index}>
-                    {entry.kind === "bundled-binary"
-                      ? entry.program
-                      : `${entry.program} -m app (${entry.cwd})`}
+                    {candidateLabel(entry)}
                   </option>
                 ))}
               </select>
@@ -1561,24 +1412,13 @@ export default function PackWizard() {
               <span className="studio-hint">{t("studio.pack.noEngine")}</span>
             )}
           </div>
+          {candidate !== null && candidate.version === null ? (
+            <p className="studio-notice split-error" role="alert">
+              {t("studio.pack.engineNoVersion", { problem: candidate.problem ?? "" })}
+            </p>
+          ) : null}
           <pre className="split-code pack-command">{formatCliCommand(candidate, packArgs)}</pre>
-          <pre className="split-code pack-command">
-            {formatInstallCommand(
-              candidate,
-              store.builtPackPath ?? `<${t("studio.pack.builtPackPlaceholder")}>`,
-              installDir,
-            )}
-          </pre>
-          <p className="studio-hint">{t("studio.pack.installTargetHint", { dir: installDir || "…" })}</p>
           <div className="dialog-row">
-            <label className="pack-checkbox">
-              <input
-                type="checkbox"
-                checked={store.installAfterBuild}
-                onChange={(e) => store.setInstallAfterBuild(e.target.checked)}
-              />
-              {t("studio.pack.installAfter")}
-            </label>
             <button
               type="button"
               className="primary-button"
@@ -1587,47 +1427,37 @@ export default function PackWizard() {
             >
               {store.running ? t("studio.pack.running") : t("studio.pack.runBuild")}
             </button>
-            {store.builtPackPath !== null && !store.installAfterBuild ? (
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => void runInstall()}
-                disabled={store.running}
-              >
-                {t("studio.pack.runInstall")}
-              </button>
-            ) : null}
           </div>
-          {store.packResult !== null ? <TrustCard result={store.packResult} /> : null}
-          {store.packResult !== null && store.builtPackPath !== null ? (
-            <TestDrivePanel
-              candidate={candidate}
-              result={store.packResult}
-              packPath={store.builtPackPath}
-              sourceDir={store.writtenDir}
-            />
+          {refusal !== null ? <RefusalView refusal={refusal} titleKey="studio.pack.buildRefused" /> : null}
+          {store.packResult !== null ? (
+            <>
+              <p className="studio-notice" role="status">
+                {t("studio.pack.built", {
+                  out: store.packResult.out,
+                  kb: (store.packResult.bytes / 1024).toFixed(1),
+                })}
+              </p>
+              {store.packResult.ignored.length > 0 ? (
+                <p className="studio-hint pack-warn">
+                  {t("studio.pack.builtIgnored", { files: store.packResult.ignored.join(", ") })}
+                </p>
+              ) : null}
+              <TrustCard trust={store.packResult.trust} sha256={store.packResult.sha256} />
+              <VerifyPanel candidate={candidate} result={store.packResult} />
+            </>
           ) : null}
           {store.runResult !== null ? (
-            <div className="pack-output">
-              <p
-                className={store.runResult.code === 0 ? "studio-notice" : "studio-notice split-error"}
-                role="status"
-              >
+            <details className="pack-output">
+              <summary>
                 {store.runResult.timedOut
                   ? t("studio.pack.timedOut")
                   : t("studio.pack.exitCode", { code: store.runResult.code ?? "?" })}
-                {store.builtPackPath !== null && store.runResult.code === 0
-                  ? ` · ${store.builtPackPath}`
-                  : ""}
-                {store.installedTo !== null && store.runResult.code === 0
-                  ? ` · ${t("studio.pack.installedTo", { dir: store.installedTo })}`
-                  : ""}
-              </p>
+              </summary>
               <pre className="split-code pack-terminal">
                 {[store.runResult.stderr, store.runResult.stdout].filter(Boolean).join("\n") ||
                   t("studio.pack.noOutput")}
               </pre>
-            </div>
+            </details>
           ) : null}
           {!aiAvailable() ? <p className="studio-notice">{t("studio.pack.desktopOnly")}</p> : null}
         </div>
