@@ -54,7 +54,7 @@
       "starting": "Starting the server…",
       "return": "Return to the table",
       "stop": "Stop the server",
-      "hint": "One press: start a Loreweaver server on this computer and sit down at it as the room admin. You are also the operator of that server.",
+      "hint": "One press: start a Loreweaver server on this computer and sit down at it as the room admin. You are also the operator of that server. Friends can join over the internet: make a key for each under Access keys and hand it over with the ticket. They can join only while the server runs.",
       "running": "The local server this app started is still running.",
       "desktopOnly": "Local hosting needs the desktop app.",
       "cancel": "Cancel",

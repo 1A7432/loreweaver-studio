@@ -67,7 +67,7 @@ export interface DialParams {
   ticket: string
   key: string
   name?: string
-  /** `local` for a server on this machine started with `serve --local`; `n0` by default. */
+  /** `local` for a server started with `serve --local` (tests only); `n0` by default. */
   network?: NetworkProfile
 }
 

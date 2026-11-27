@@ -13,7 +13,7 @@
     first candidate answering `--version` with `3.x`);
   - `start` claims the one slot first, then finds the engine, then (a data
     directory already in use whose key the app lost) mints an admin key with
-    the server's `key` command, then spawns `serve --local --until-stdin-closes`
+    the server's `key` command, then spawns `serve --until-stdin-closes`
     (its standard input a pipe the slot holds for the child's life) from an empty temp
     working directory with the app's environment minus `TRPG_*` plus
     `TRPG_DATA_DIR` (and `TRPG_LOCALE`), and resolves on the ONE ready line, or
@@ -32,7 +32,16 @@ stderr}`, camelCase, pinned by a test;
     directory) — not in the WebView's storage; the key reaches the WebView only
     in `start`'s answer and goes straight to the connection;
   - pressing the button again while the server runs for the same folder (after
-    a reload) returns its ready again (`reused`) instead of refusing.
+    a reload) returns its ready again (`reused`) instead of refusing;
+  - the server is reachable by the people invited (owner's ruling, 2026-11-27: a
+    table hosted here is for inviting friends, and the engine needs a network to
+    reach its model anyway): no `--local`, so it serves over the public relays and
+    its ticket, the one to hand to friends, is the same after every restart. The
+    ready answer says how to dial it (`network`, `n0`) and the WebView dials it as
+    it dials any pasted ticket. Loopback-only (`serve --local`, the `local`
+    profile) survives as ONE test-only option, `HostConfig::network`, which the
+    live gate and the unit tests pass; no command, setting or button chooses it,
+    and the Tauri command always passes `n0`.
 - **Reason:** with the ready line on stdout and a bounded wait, the start is a
   request with an answer, so the generation machinery the streamed 2.x design
   needed (host ids minted in the WebView, a stopping id, a parked Ready) has
@@ -48,4 +57,5 @@ stderr}`, camelCase, pinned by a test;
   its child on a hard stop (closing the pipe still reaches the server).
 - **Rule home:** `src-tauri/src/host_local.rs` (+ its tests and
   `src-tauri/tests/host_local_live.rs`), `src/store/hostLocal.ts`.
-- **Date:** 2026-08-22; rewritten for 3.0 on 2026-11-27; the input pipe 2026-11-27.
+- **Date:** 2026-08-22; rewritten for 3.0 on 2026-11-27; the input pipe 2026-11-27;
+  reachable by invited friends (no `--local`) 2026-11-27.

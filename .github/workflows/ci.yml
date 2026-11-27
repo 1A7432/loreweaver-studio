@@ -62,7 +62,8 @@ jobs:
       # The gate runs the engine's REAL 3.0 code on what Studio writes: its pack
       # builder and installer, its card and panels readers, and its server
       # (`serve --local`, dialled through the real Rust link, and hosted by the
-      # app's own host-local code). The engine's v3 branch must sit at the
+      # app's own host-local code, with its test-only loopback option so that no
+      # stage needs a network). The engine's v3 branch must sit at the
       # script's default sibling path ../trpg_kp.
       - name: Clone the loreweaver engine (v3)
         run: git clone --depth 1 --branch v3 https://github.com/1A7432/loreweaver.git ../trpg_kp

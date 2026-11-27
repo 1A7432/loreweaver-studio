@@ -35,12 +35,15 @@ at it as its room admin.
 
 ### Host locally & play
 
-One press starts a protocol 3.0 server on this machine (`serve --local`: loopback only, no
-relay, no network needed) and connects you to it as the room admin; you are also the operator
-of that server. Leaving the table, pressing **Stop the server**, or quitting the app stops it —
-and so does the app crashing or being killed: the server is started with
-`--until-stdin-closes` and stops when the app's end of its input goes away. A folder another
-live server holds (a terminal client's, say) is refused, in so many words.
+One press starts a protocol 3.0 server on this machine (`serve`, over the public relays, so it
+needs a network — as the server does anyway to reach its model) and connects you to it as the
+room admin; you are also the operator of that server. A table hosted here is for inviting
+friends: its ticket is the one to hand out, together with a key made for each friend on the
+**Access keys** screen, and it stays the same every time you host from the same folder. Friends
+can join only while the server runs. Leaving the table, pressing **Stop the server**, or
+quitting the app stops it — and so does the app crashing or being killed: the server is started
+with `--until-stdin-closes` and stops when the app's end of its input goes away. A folder
+another live server holds (a terminal client's, say) is refused, in so many words.
 
 What it needs — there is **no published 3.0 server to download yet**, so the app does not
 download one:
@@ -175,8 +178,9 @@ own code writes, and fails on any mismatch:
   (mode 0600), a grown save offered with `purpose: "save"`, sent and imported, and the room
   exported again, put back and exported once more — the same content before and after;
 - **g. host locally** — the app's own host-local code (`src-tauri/tests/host_local_live.rs`)
-  finds the engine checkout with the app's probe and starts the real server three times over
-  one data directory (its first key, the key the app kept, a key made after the app lost it),
+  finds the engine checkout with the app's probe and starts the real server (loopback-only,
+  `serve --local`, through the test-only option of the host code, so the gate needs no network;
+  the app itself always hosts over the relays) three times over one data directory (its first key, the key the app kept, a key made after the app lost it),
   each time connecting through the real link as the room admin, stopping it and checking the
   process is gone; then a second instance over the same folder is refused with
   `data_dir_in_use`, and the first is dropped without being stopped — its server must stop by

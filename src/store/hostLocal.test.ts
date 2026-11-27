@@ -47,6 +47,7 @@ const READY: HostReady = {
   notes: ["model_not_configured"],
   version: "3.0.0",
   dataDir: "/app/local-server/data",
+  network: "n0",
   reused: false,
 }
 
@@ -110,7 +111,7 @@ beforeEach(() => {
 })
 
 describe("hostLocal store", () => {
-  it("starts the server and sits down at it as the room admin over the local profile", async () => {
+  it("starts the server and sits down at it as the room admin, dialling it as any pasted ticket is dialled", async () => {
     bridge.hostLocalStart.mockResolvedValueOnce(READY)
     useHostLocalStore.setState({ homeOverride: " /srv/lw " })
     await useHostLocalStore.getState().start()
@@ -118,7 +119,7 @@ describe("hostLocal store", () => {
     expect(connect).toHaveBeenCalledWith({
       ticket: "endpointlocal",
       key: "admin-key-secret",
-      network: "local",
+      network: "n0",
     })
     const state = useHostLocalStore.getState()
     expect(state.phase).toBe("hosting")
@@ -132,6 +133,16 @@ describe("hostLocal store", () => {
     })
     // The key went to the connection and is kept nowhere in this store.
     expect(JSON.stringify(state)).not.toContain("admin-key-secret")
+  })
+
+  it("dials the profile Rust reports: a server hosted loopback-only for a test is dialled with `local`", async () => {
+    bridge.hostLocalStart.mockResolvedValueOnce({ ...READY, network: "local" })
+    await useHostLocalStore.getState().start()
+    expect(connect).toHaveBeenCalledWith({
+      ticket: "endpointlocal",
+      key: "admin-key-secret",
+      network: "local",
+    })
   })
 
   it("is starting while Rust waits for the ready line", async () => {

@@ -6,13 +6,26 @@
 //! - The engine is found the one way this app finds it ([`crate::engine`]): a
 //!   `loreweaver` on PATH, or the configured engine checkout run with Bun —
 //!   the first that answers `--version` like a 3.x engine.
-//! - It runs `serve --local --until-stdin-closes` (loopback only; the WebView
-//!   dials it with the `local` network profile) as a child process, from an empty temporary
-//!   working directory (Bun loads `.env` from the working directory), with this
-//!   app's environment minus every `TRPG_*` variable, plus `TRPG_DATA_DIR` and
-//!   the few settings the caller passes (nothing secret goes on the command
-//!   line). The data directory is `<home>/data`; the home is the folder the
-//!   user picked, or `local-server` under this app's data folder.
+//! - It runs `serve --until-stdin-closes` as a child process, as an operator
+//!   would run `serve`: the server is reachable over the public relays, so the
+//!   ticket it prints is the one to hand to friends, and it stays the same
+//!   across restarts (the owner's ruling, 2026-11-27: a table hosted here is
+//!   for inviting people; it once ran `serve --local`, loopback only, and
+//!   nobody on another machine could join). The WebView dials it as it dials
+//!   any pasted ticket, with the normal (`n0`) network profile. The child runs
+//!   from an empty temporary working directory (Bun loads `.env` from the
+//!   working directory), with this app's environment minus every `TRPG_*`
+//!   variable, plus `TRPG_DATA_DIR` and the few settings the caller passes
+//!   (nothing secret goes on the command line). The data directory is
+//!   `<home>/data`; the home is the folder the user picked, or `local-server`
+//!   under this app's data folder.
+//! - [`HostConfig::network`] is the ONE way to host loopback-only
+//!   (`serve --local --until-stdin-closes`, dialled with the `local` profile,
+//!   no network at all). It exists for the tests and gates that must run
+//!   offline (`tests/host_local_live.rs`); the product path sets
+//!   [`NetworkProfile::N0`] and nothing in the app, its settings or its
+//!   commands can ask for the other. [`HostReady::network`] tells the caller
+//!   how to dial what it got.
 //! - Ready is the ONE JSON line the server prints on stdout,
 //!   `{ok, version, ticket, notes, first_key?}`; a refusal is one JSON object
 //!   on stderr, `{ok: false, code, problems?, detail?}` (`bad_settings`,
@@ -42,6 +55,7 @@
 //! server; the commands at the bottom are a thin layer over it.
 
 use crate::engine::{self, EngineCandidate};
+use loreweaver_transport::link::NetworkProfile;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -60,10 +74,13 @@ pub const HOST_LOCAL_EVENT: &str = "loreweaver://host-local";
 pub const LOCAL_ROOM: &str = "main";
 const ADMIN_NAME: &str = "Admin";
 /// How long the server gets to open its store and endpoint and print its
-/// ready line (`--local` waits for no relay; the terminal client allows 60s).
+/// ready line (over the relays it may wait on the network; the terminal client
+/// allows 60s too).
 pub const READY_TIMEOUT: Duration = Duration::from_secs(60);
 /// Tells `serve` to stop when its standard input ends.
 pub const UNTIL_STDIN_CLOSES: &str = "--until-stdin-closes";
+/// Tells `serve` to listen on loopback only, with no relay and no network.
+pub const LOOPBACK_ONLY: &str = "--local";
 /// After its input closes (and SIGTERM), how long the server gets to close cleanly before SIGKILL.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 /// After SIGKILL (or Windows' terminate), how long to wait for it to be gone.
@@ -114,6 +131,10 @@ pub struct HostReady {
     pub notes: Vec<String>,
     pub version: String,
     pub data_dir: String,
+    /// How to dial the ticket: `n0` (the public relays, the way any pasted
+    /// ticket is dialled) unless the server was started loopback-only, which
+    /// only a test does.
+    pub network: NetworkProfile,
     /// The server was already running for this data directory (the WebView
     /// reloaded, say): this is its ready, again.
     pub reused: bool,
@@ -130,6 +151,7 @@ impl std::fmt::Debug for HostReady {
             .field("notes", &self.notes)
             .field("version", &self.version)
             .field("data_dir", &self.data_dir)
+            .field("network", &self.network)
             .field("reused", &self.reused)
             .finish()
     }
@@ -620,22 +642,27 @@ pub async fn find_engine(engine_repo_dir: Option<String>) -> Result<EngineComman
     })
 }
 
-/// The `serve --local --until-stdin-closes` command: the engine's program and
-/// arguments, run from `cwd`, with this app's environment minus every `TRPG_*`
-/// variable, plus `TRPG_DATA_DIR` and `env`, and its standard input a pipe
-/// (the caller holds it for the child's life). Values go in the environment
-/// only — the command line is `<program> [<entry>] serve --local
-/// --until-stdin-closes`, nothing else.
+/// The `serve` command: the engine's program and arguments, run from `cwd`,
+/// with this app's environment minus every `TRPG_*` variable, plus
+/// `TRPG_DATA_DIR` and `env`, and its standard input a pipe (the caller holds
+/// it for the child's life). Values go in the environment only — the command
+/// line is `<program> [<entry>] serve --until-stdin-closes`, nothing else, and
+/// with [`NetworkProfile::Local`] (tests only) `serve --local
+/// --until-stdin-closes`.
 pub fn serve_command(
     engine: &EngineCommand,
     cwd: &Path,
     data_dir: &Path,
     env: &[(String, String)],
+    network: NetworkProfile,
 ) -> Command {
     let mut command = Command::new(&engine.program);
+    command.args(&engine.args).arg("serve");
+    if network == NetworkProfile::Local {
+        command.arg(LOOPBACK_ONLY);
+    }
     command
-        .args(&engine.args)
-        .args(["serve", "--local", UNTIL_STDIN_CLOSES])
+        .arg(UNTIL_STDIN_CLOSES)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -804,6 +831,12 @@ pub struct HostConfig {
     /// Settings for the server beyond `TRPG_DATA_DIR` (its default language).
     pub env: Vec<(String, String)>,
     pub ready_timeout: Duration,
+    /// How the server is reached. The product always passes
+    /// [`NetworkProfile::N0`]: it serves over the public relays, and its ticket
+    /// is the one to hand to friends. [`NetworkProfile::Local`] — loopback
+    /// only, no network — is for a test that must run offline; nothing a
+    /// person can set chooses it.
+    pub network: NetworkProfile,
 }
 
 struct Hosted {
@@ -961,7 +994,15 @@ impl LocalHost {
             return unspawned(HostFailure::Cancelled);
         }
 
-        let mut child = match serve_command(&engine, &run_dir, &data_dir, &config.env).spawn() {
+        let mut child = match serve_command(
+            &engine,
+            &run_dir,
+            &data_dir,
+            &config.env,
+            config.network,
+        )
+        .spawn()
+        {
             Ok(child) => child,
             Err(err) => {
                 return unspawned(HostFailure::Io {
@@ -1069,6 +1110,7 @@ impl LocalHost {
                             notes: ready.notes,
                             version: ready.version,
                             data_dir: data_dir.to_string_lossy().into_owned(),
+                            network: config.network,
                             reused: false,
                         };
                         let mut slot = lock(&self.slot);
@@ -1193,6 +1235,8 @@ pub async fn host_local_start(
         paths,
         env: locale_env(locale.as_deref()),
         ready_timeout: READY_TIMEOUT,
+        // The one place the product chooses: reachable by the people invited.
+        network: NetworkProfile::N0,
     };
     let host = Arc::clone(&state.0);
     host.start(config, find_engine(engine_repo_dir), move |exited| {

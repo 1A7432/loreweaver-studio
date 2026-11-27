@@ -1,13 +1,14 @@
 // "Host locally & play": the state of the one local server this app may run, and
 // the press that brings it up and sits the person down at it as the room admin.
 //
-// `start` asks Rust to start the server (it finds the engine, starts `serve --local`,
-// waits for the ready line and hands back the ticket and the admin key) and dials it
-// through the normal connection owner with the `local` network profile. The key goes
-// from Rust's answer straight into the connection and is kept nowhere here: pressing
-// the button again while that server runs (after a reload, say) gets the same answer
-// back from Rust (`reused`). Leaving the hosted table stops the server; a server that
-// dies on its own ends the table and says so, with its last lines.
+// `start` asks Rust to start the server (it finds the engine, starts `serve`, reachable
+// over the public relays so the ticket is the one to hand to friends, waits for the ready
+// line and hands back the ticket and the admin key) and dials it through the normal
+// connection owner, the way any pasted ticket is dialled: with the profile Rust reports
+// (`n0`). The key goes from Rust's answer straight into the connection and is kept
+// nowhere here: pressing the button again while that server runs (after a reload, say)
+// gets the same answer back from Rust (`reused`). Leaving the hosted table stops the
+// server; a server that dies on its own ends the table and says so, with its last lines.
 
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
@@ -145,7 +146,7 @@ export const useHostLocalStore = create<HostLocalState>()(
         set({ phase: "hosting", hosted, running: true })
         await useConnectionStore
           .getState()
-          .connect({ ticket: ready.ticket, key: ready.key, network: "local" })
+          .connect({ ticket: ready.ticket, key: ready.key, network: ready.network })
         const connection = useConnectionStore.getState().connection
         if (attempt !== attempts || connection === null) return
         set({ connection })

@@ -1,5 +1,22 @@
-import { describe, expect, it } from "vitest"
-import { asHostFailure } from "./hostLocal"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+const core = vi.hoisted(() => ({ invoke: vi.fn(async () => ({})) }))
+vi.mock("@tauri-apps/api/core", () => ({ invoke: core.invoke }))
+
+import { asHostFailure, hostLocalStart } from "./hostLocal"
+
+describe("hostLocalStart", () => {
+  beforeEach(() => core.invoke.mockClear())
+
+  it("asks for a server and says nothing about how it is reached: the product path has no switch for loopback", async () => {
+    await hostLocalStart({ engineRepoDir: "/engine", homeOverride: "/srv/lw", locale: "zh" })
+    expect(core.invoke).toHaveBeenCalledWith("host_local_start", {
+      engineRepoDir: "/engine",
+      homeOverride: "/srv/lw",
+      locale: "zh",
+    })
+  })
+})
 
 describe("asHostFailure", () => {
   it("passes a failure Rust answered with through as it is", () => {

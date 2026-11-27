@@ -246,6 +246,7 @@ fn a_ready_serializes_in_camel_case_and_its_debug_hides_the_key() {
         notes: vec!["model_not_configured".to_owned()],
         version: "3.0.0".to_owned(),
         data_dir: "/d".to_owned(),
+        network: NetworkProfile::N0,
         reused: false,
     };
     assert_eq!(
@@ -253,12 +254,20 @@ fn a_ready_serializes_in_camel_case_and_its_debug_hides_the_key() {
         json!({
             "hostId": "host-1", "ticket": "endpointabc", "key": "the-admin-key-value",
             "room": "main", "keySource": "first", "notes": ["model_not_configured"],
-            "version": "3.0.0", "dataDir": "/d", "reused": false
+            "version": "3.0.0", "dataDir": "/d", "network": "n0", "reused": false
         })
     );
     assert!(!format!("{ready:?}").contains("the-admin-key-value"));
     assert_eq!(serde_json::to_value(KeySource::Minted).unwrap(), "minted");
     assert_eq!(serde_json::to_value(KeySource::Kept).unwrap(), "kept");
+    let on_loopback = HostReady {
+        network: NetworkProfile::Local,
+        ..ready
+    };
+    assert_eq!(
+        serde_json::to_value(&on_loopback).unwrap()["network"],
+        "local"
+    );
 }
 
 // --- paths, keys, the command line -------------------------------------------
@@ -309,6 +318,26 @@ fn a_kept_key_belongs_to_its_data_directory() {
 }
 
 #[test]
+fn the_loopback_option_adds_local_before_the_stdin_flag_and_nothing_else() {
+    let engine = EngineCommand {
+        program: "loreweaver".to_owned(),
+        args: Vec::new(),
+    };
+    let args = |network| -> Vec<String> {
+        serve_command(&engine, Path::new("/run"), Path::new("/data"), &[], network)
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    };
+    assert_eq!(args(NetworkProfile::N0), ["serve", "--until-stdin-closes"]);
+    assert_eq!(
+        args(NetworkProfile::Local),
+        ["serve", "--local", "--until-stdin-closes"]
+    );
+}
+
+#[test]
 fn the_command_line_carries_no_value_and_the_callers_trpg_settings_are_dropped() {
     // A TRPG_* variable in this app's own environment must not reach the server.
     std::env::set_var("TRPG_STUDIO_HOST_TEST_LEAK", "leak");
@@ -323,19 +352,25 @@ fn the_command_line_carries_no_value_and_the_callers_trpg_settings_are_dropped()
             "sk-sentinel-secret".to_owned(),
         ),
     ];
-    let command = serve_command(&engine, Path::new("/run"), Path::new("/data"), &env);
+    let command = serve_command(
+        &engine,
+        Path::new("/run"),
+        Path::new("/data"),
+        &env,
+        NetworkProfile::N0,
+    );
     let std = command.as_std();
     assert_eq!(std.get_program(), "bun");
     let args: Vec<_> = std
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    // The product path: reachable over the relays, no loopback flag.
     assert_eq!(
         args,
         [
             "/engine/server/src/cli/main.ts",
             "serve",
-            "--local",
             "--until-stdin-closes"
         ]
     );
@@ -402,13 +437,17 @@ mod process {
     use super::*;
 
     /// A stand-in for the engine: `sh fake.sh <subcommand…>`, its behaviour
-    /// picked by `FAKE_MODE` in the settings the start passes on.
+    /// picked by `FAKE_MODE` in the settings the start passes on. A `serve`
+    /// refuses to run unless its arguments are `FAKE_ARGS`.
     const FAKE: &str = r#"
 if [ "$1" = "key" ]; then
   printf '{"ok":true,"key":"minted-key-0123456789","id":"k1"}\n'
   exit 0
 fi
-[ "$1 $2 $3" = "serve --local --until-stdin-closes" ] || { echo "bad args: $*" >&2; exit 9; }
+# The arguments the start passed are exactly what the test expects (`FAKE_ARGS`),
+# and are kept for it to read back.
+[ "$*" = "$FAKE_ARGS" ] || { echo "bad args: $*" >&2; exit 9; }
+echo "$*" > "$TRPG_DATA_DIR/serve-args"
 first() {
   if [ -f "$TRPG_DATA_DIR/keys.json" ]; then echo ""; else
     echo '{}' > "$TRPG_DATA_DIR/keys.json"
@@ -477,11 +516,31 @@ esac
             )
         }
 
+        /// The product path: the relays, `serve --until-stdin-closes`.
         fn config(&self, mode: &str, home: &str, timeout: Duration) -> HostConfig {
+            self.config_on(mode, home, timeout, NetworkProfile::N0)
+        }
+
+        fn config_on(
+            &self,
+            mode: &str,
+            home: &str,
+            timeout: Duration,
+            network: NetworkProfile,
+        ) -> HostConfig {
+            // Spelt out here, not taken from the code under test.
+            let args = match network {
+                NetworkProfile::N0 => "serve --until-stdin-closes",
+                NetworkProfile::Local => "serve --local --until-stdin-closes",
+            };
             HostConfig {
                 paths: self.paths(home),
-                env: vec![("FAKE_MODE".to_owned(), mode.to_owned())],
+                env: vec![
+                    ("FAKE_MODE".to_owned(), mode.to_owned()),
+                    ("FAKE_ARGS".to_owned(), args.to_owned()),
+                ],
                 ready_timeout: timeout,
+                network,
             }
         }
 
@@ -542,6 +601,44 @@ esac
         assert!(!alive(pid), "the server is gone once stop returns");
         assert!(rig.host.running().is_none());
         assert!(!rig.host.stop().await, "nothing left to stop");
+    }
+
+    #[tokio::test]
+    async fn the_product_path_serves_over_the_relays_and_reports_the_normal_dial_profile() {
+        let rig = Rig::new("n0");
+        let ready = rig.start("ready").await.expect("ready");
+        assert_eq!(ready.network, NetworkProfile::N0);
+        let args = std::fs::read_to_string(rig.paths("home").data_dir.join("serve-args")).unwrap();
+        assert_eq!(args.trim(), "serve --until-stdin-closes");
+        // Sitting down again at the running server gets the same answer.
+        let again = rig.start("ready").await.expect("reused");
+        assert!(again.reused);
+        assert_eq!(again.network, NetworkProfile::N0);
+        rig.host.stop().await;
+    }
+
+    #[tokio::test]
+    async fn the_test_only_loopback_option_runs_serve_local_and_reports_the_local_profile() {
+        let rig = Rig::new("loopback");
+        let engine = rig.engine.clone();
+        let ready = rig
+            .host
+            .start(
+                rig.config_on(
+                    "ready",
+                    "home",
+                    Duration::from_secs(10),
+                    NetworkProfile::Local,
+                ),
+                async move { Ok(engine) },
+                |_| {},
+            )
+            .await
+            .expect("ready");
+        assert_eq!(ready.network, NetworkProfile::Local);
+        let args = std::fs::read_to_string(rig.paths("home").data_dir.join("serve-args")).unwrap();
+        assert_eq!(args.trim(), "serve --local --until-stdin-closes");
+        rig.host.stop().await;
     }
 
     #[tokio::test]

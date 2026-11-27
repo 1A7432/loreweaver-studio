@@ -28,8 +28,9 @@ export type LinkCloseCode =
   | "closed_by_peer"
   | "connection_lost"
 
-/** How the endpoint finds the server: the public relays, or loopback only (a
- * server on this machine started with `serve --local`). Mirrors `NetworkProfile`. */
+/** How the endpoint finds the server: the public relays (`n0`, every real ticket, a table
+ * hosted by this app included), or loopback only (`local`: a server started with `serve
+ * --local`, which only a test does). Mirrors `NetworkProfile`. */
 export type NetworkProfile = "n0" | "local"
 
 /**

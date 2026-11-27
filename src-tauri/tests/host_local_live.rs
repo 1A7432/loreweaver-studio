@@ -10,6 +10,11 @@
 //! stopped — what a crash does — and its server must stop by itself, because
 //! the input pipe it was started with (`--until-stdin-closes`) has ended.
 //!
+//! The product hosts over the public relays (`serve --until-stdin-closes`), which
+//! needs a network; this gate must run offline, so it hosts with the test-only
+//! loopback option ([`NetworkProfile::Local`]: `serve --local
+//! --until-stdin-closes`) and dials with the profile the host reports.
+//!
 //! Ignored by default — it needs Bun and an engine checkout — and driven by
 //! `scripts/check_roundtrip.sh` (stage g):
 //!
@@ -64,12 +69,12 @@ async fn next(rx: &mut UnboundedReceiver<LinkEvent>, what: &str) -> LinkEvent {
         .unwrap_or_else(|| panic!("the link ended before {what}"))
 }
 
-/// Dial the hosted server through the real link with the key the host gave,
-/// and return the `welcome`.
+/// Dial the hosted server through the real link, with the profile the host
+/// reported and the key it gave, and return the `welcome`.
 async fn sit_down(ready: &HostReady) -> Value {
     let (handle, mut rx) = connect(LinkParams {
         ticket: ready.ticket.clone(),
-        network: NetworkProfile::Local,
+        network: ready.network,
     });
     for expected in [LinkStatus::Connecting, LinkStatus::Up] {
         match next(&mut rx, "a status").await {
@@ -146,6 +151,9 @@ async fn engine(repo: &Path) -> EngineCommand {
     checkout.into()
 }
 
+/// The one option only a test sets: host loopback-only, so no network is needed.
+const OFFLINE: NetworkProfile = NetworkProfile::Local;
+
 /// One run: start, sit down as the admin, stop, and check the process is gone.
 async fn run(host: &Arc<LocalHost>, paths: &HostPaths, engine: &EngineCommand) -> HostReady {
     let engine = engine.clone();
@@ -155,6 +163,7 @@ async fn run(host: &Arc<LocalHost>, paths: &HostPaths, engine: &EngineCommand) -
                 paths: paths.clone(),
                 env: env(),
                 ready_timeout: READY_TIMEOUT,
+                network: OFFLINE,
             },
             async move { Ok(engine) },
             |exited| panic!("the server died while hosting: {exited:?}"),
@@ -167,6 +176,7 @@ async fn run(host: &Arc<LocalHost>, paths: &HostPaths, engine: &EngineCommand) -
         ready.notes,
         &ready.ticket[..24.min(ready.ticket.len())]
     );
+    assert_eq!(ready.network, OFFLINE, "the host says how to dial it");
     let pid = host.pid().expect("a running server has a pid");
     assert!(alive(pid));
 
@@ -238,6 +248,7 @@ async fn the_app_hosts_the_real_server_sits_down_as_admin_and_stops_it() {
                     paths,
                     env: env(),
                     ready_timeout: READY_TIMEOUT,
+                    network: OFFLINE,
                 },
                 async move { Ok(engine) },
                 |_| {},

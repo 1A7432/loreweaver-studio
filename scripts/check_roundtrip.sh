@@ -30,7 +30,9 @@
 #                 after;
 #   g. host       "Host locally & play" without a GUI: the app's own host-local code
 #                 (src-tauri/tests/host_local_live.rs) finds the engine checkout with the
-#                 app's probe, starts the real server three times over one data directory
+#                 app's probe, starts the real server (with the test-only loopback option,
+#                 `serve --local`: the product serves over the public relays, and this gate
+#                 needs no network) three times over one data directory
 #                 (its first key, the key the app kept, a key made after the app lost it),
 #                 sits down through the real link as the room admin each time, stops it,
 #                 and checks the process is gone; then a second instance over the same

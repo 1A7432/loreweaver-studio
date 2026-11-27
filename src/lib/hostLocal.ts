@@ -1,12 +1,15 @@
 // The typed face of "Host locally & play" (`src-tauri/src/host_local.rs`): start a
-// protocol 3.0 server on this machine and get back what it takes to sit down at it
-// as the room admin; stop it; hear about it if it dies on its own.
+// protocol 3.0 server on this machine, reachable by the people invited, and get back what
+// it takes to sit down at it as the room admin; stop it; hear about it if it dies on its own.
 //
 // `start` resolves once the server printed its ready line (a bounded wait in Rust)
 // and rejects with a `HostFailure` — a code and its details, worded by the screen.
+// Nothing here chooses how the server is reached: it always serves over the public relays.
+// (A loopback-only server is Rust's test-only option, `HostConfig::network`.)
 
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
+import type { NetworkProfile } from "./transport"
 
 export const HOST_LOCAL_EVENT = "loreweaver://host-local"
 
@@ -25,6 +28,9 @@ export interface HostReady {
   notes: string[]
   version: string
   dataDir: string
+  /** How to dial `ticket`: `n0`, as any pasted ticket is dialled (the server serves over the
+   * public relays). Only a test hosts loopback-only, and then it is `local`. */
+  network: NetworkProfile
   /** The server was already running for this folder; this is its ready again. */
   reused: boolean
 }
