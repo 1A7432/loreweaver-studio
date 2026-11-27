@@ -7,7 +7,7 @@ import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import type { PanelTemplateBlock } from "@loreweaver/protocol"
 import { transportSend } from "../../../lib/transport"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import { useSessionStore } from "../../../store/session"
 import { Block } from "../UiBlocks"
 import { resolvePanelBlocks } from "./templates"
@@ -20,7 +20,7 @@ export default function Tier1Blocks({
   blocks: readonly PanelTemplateBlock[] | undefined
 }) {
   const { i18n } = useTranslation()
-  const online = useConnectionStore((s) => s.status === "online")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
   const variables = useSessionStore((s) => s.game?.variables)
   const locale = i18n.resolvedLanguage
   const resolved = useMemo(

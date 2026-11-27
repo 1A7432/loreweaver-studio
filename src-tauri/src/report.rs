@@ -2,7 +2,7 @@
 //!
 //! The server announces a generated HTML report to the ONE connection that
 //! asked for it; the bytes ride the ordinary media GET. This module pulls them
-//! through the same verified path panel assets use (`fetch_blob` +
+//! through the same verified path panel assets use (a byte-channel GET +
 //! [`verify_and_store`]), then hands the file out in exactly two ways: copied
 //! to a path the person picked in the native save dialog, or copied under a
 //! readable name into the app cache and opened with the OS default handler.
@@ -143,12 +143,18 @@ pub async fn report_fetch(
             .map_err(|err| format!("cache stat failed: {err}"));
     }
     let handle = state.handle().await.ok_or("not connected")?;
-    let blob = handle.fetch_blob(hash.clone()).await?;
-    if blob.mime != REPORT_MIME {
-        return Err(format!("not a report: the server sent {:?}", blob.mime));
+    let fetched = handle
+        .fetch(hash.clone())
+        .await
+        .map_err(|err| err.to_string())?;
+    if fetched.file.mime != REPORT_MIME {
+        return Err(format!(
+            "not a report: the server sent {:?}",
+            fetched.file.mime
+        ));
     }
-    verify_and_store(&dir, &hash, &blob.bytes)?;
-    Ok(blob.bytes.len() as u64)
+    verify_and_store(&dir, &hash, &fetched.bytes)?;
+    Ok(fetched.bytes.len() as u64)
 }
 
 /// Save a fetched report to the path the save dialog returned.

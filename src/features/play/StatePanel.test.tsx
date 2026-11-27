@@ -12,7 +12,7 @@ vi.mock("../../lib/transport", () => ({
 }))
 
 import "../../i18n"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { useSessionStore } from "../../store/session"
 import StatePanel, { PACK_CARDS_REPLY_TIMEOUT_MS } from "./StatePanel"
 
@@ -179,7 +179,7 @@ describe("PregenCard", () => {
   }
 
   beforeEach(() => {
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",
@@ -331,7 +331,7 @@ describe("PackImportCard (v2.2)", () => {
   beforeEach(() => {
     sent.length = 0
     useSessionStore.getState().clear()
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",
@@ -414,7 +414,7 @@ describe("PackImportCard (v2.2)", () => {
   it("imports a world card with the WORLD verb when the keeper clicks it", async () => {
     // The bug: every picker hard-coded `pc`, so the module's own world card was
     // offered as a character and the import died on a name collision.
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",
@@ -448,7 +448,7 @@ describe("PackImportCard (v2.2)", () => {
   })
 
   it("offers a player no click on a world card", async () => {
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",
@@ -494,7 +494,7 @@ describe("PackImportCard (v2.2)", () => {
   })
 
   it("stays hidden while offline", () => {
-    useConnectionStore.setState({ status: "offline", welcome: null })
+    useLegacyConnectionStore.setState({ status: "offline", welcome: null })
     render(<StatePanel />)
     expect(screen.queryByText("Import from pack")).not.toBeInTheDocument()
   })
@@ -514,7 +514,7 @@ describe("keeper variable writes", () => {
   }
 
   function connect(role: "keeper" | "player") {
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",

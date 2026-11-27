@@ -8,7 +8,7 @@ import {
   type NarrativeFrame,
   type SystemFrame,
 } from "@loreweaver/protocol"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { useSessionStore, type LogEntry, type PendingEcho } from "../../store/session"
 import DiceLine from "./DiceLine"
 import UiBlocks from "./UiBlocks"
@@ -147,7 +147,7 @@ function NarrativeEntry({ frame, draft }: { frame: NarrativeFrame; draft?: boole
  */
 function PendingEntry({ seq, pending }: { seq: number; pending: PendingEcho }) {
   const { t } = useTranslation()
-  const online = useConnectionStore((s) => s.status === "online")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
   const resend = useSessionStore((s) => s.resendEcho)
   const seat = stripControlChars(pending.speaker).trim()
   return (

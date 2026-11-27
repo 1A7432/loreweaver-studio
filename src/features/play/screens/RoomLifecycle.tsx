@@ -28,7 +28,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { AdminResetScope } from "@loreweaver/protocol"
 import { useAdminStore } from "../../../store/admin"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 
 const RESET_SCOPES: AdminResetScope[] = ["story", "chars", "all"]
 
@@ -85,7 +85,7 @@ function DangerAction({
 
 export default function RoomLifecycle() {
   const { t } = useTranslation()
-  const welcome = useConnectionStore((s) => s.welcome)
+  const welcome = useLegacyConnectionStore((s) => s.welcome)
   const room = welcome?.room ?? ""
   const admin = useAdminStore()
 

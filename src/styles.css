@@ -329,6 +329,34 @@ body {
   font-size: 13px;
 }
 
+.connect-error p {
+  margin: 0;
+}
+
+.connect-error-detail {
+  margin-top: 4px;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+/* The room while the play screens move to protocol 3.0: who is connected where. */
+.room-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.room-facts dt {
+  color: var(--ink-dim);
+}
+
+.room-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ---- Status pill ---- */
 
 .status-pill {

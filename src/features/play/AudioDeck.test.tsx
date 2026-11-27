@@ -20,7 +20,7 @@ vi.mock("./panels/assets", () => ({
 import "../../i18n"
 import { assetFetch, assetReadBase64 } from "./panels/assets"
 import { armGestureUnlock, PLAY_GRACE_MS, useAudioStore } from "../../store/audio"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import AudioDeck, { AudioUnlockNotice } from "./AudioDeck"
 
 const HASH_BGM = "a".repeat(64)
@@ -42,7 +42,7 @@ describe("AudioDeck load errors", () => {
   beforeEach(() => {
     useAudioStore.getState().reset()
     useAudioStore.setState({ unlocked: true })
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       attempt: 0,
       lastError: null,
@@ -230,7 +230,7 @@ describe("AudioDeck autoplay", () => {
     useAudioStore.getState().reset()
     // The state of a window nobody has clicked yet.
     useAudioStore.setState({ unlocked: false })
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       attempt: 0,
       lastError: null,

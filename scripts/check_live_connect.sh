@@ -1,33 +1,37 @@
 #!/usr/bin/env bash
 # Live-connect smoke gate (studio ↔ engine), the half no fixture can cover:
-# spawn a REAL `python -m app --serve` engine from the sibling checkout, dial it
-# through the REAL Rust transport crate, and assert the join handshake completes
-# with a `welcome` on the event channel.
+# start a REAL protocol 3.0 server from the engine checkout (its Bun server,
+# `serve --local`), dial it through the REAL Rust link crate, and walk the
+# start of a session by hand: `hello` → `welcome`, a ping → `pong`, and a
+# byte-channel GET of a hash nobody holds → the coded `media_not_found`.
 #
-# Why it exists: the transport used to close the connection on any welcome that
-# did not announce protocol major 1. The engine had been on 2.x for weeks and
-# nothing caught it, because no test in either repo ever connected to a real
-# server — the loopback tests write their own welcome, so they agreed with
-# whatever the client believed. This gate fails if the Rust layer ever again
-# refuses a welcome the frontend (`src/store/connection.ts`) would accept.
+# Why it exists: the loopback tests write their own server, so they agree with
+# whatever the client believes. Only a real server catches an ALPN, framing or
+# byte-channel drift between the two repositories.
 #
-# Usage:  bash scripts/check_live_connect.sh   (also stage 5 of check_roundtrip.sh)
-# Engine repo: $TRPG_KP_REPO, default ../trpg_kp (sibling checkout).
+# Usage:  bash scripts/check_live_connect.sh   (also the one live stage of check_roundtrip.sh)
+# Engine repo: $TRPG_KP_REPO, default ../trpg_kp (sibling checkout, branch v3,
+# with `bun install` run at its root).
 #
-# The engine runs sandboxed: its own keystore, data dir and env file under a
-# temp directory, so nothing touches the operator's campaign data, and with no
-# LLM configured it falls back to the offline demo Keeper (no external calls).
-# The sandbox covers the env file, and the env file is only half the story —
-# pydantic-settings reads real environment variables at HIGHER priority than the
-# file, so an exported `TRPG_DATA_DIR` or `TRPG_LLM__API_KEY` in the operator's
-# shell would walk straight past it. Every `TRPG_*` is scrubbed before spawning.
+# The server runs sandboxed, so nothing touches the operator's own data or
+# settings:
+#   - from a TEMPORARY working directory: Bun loads `.env` from the working
+#     directory, and the engine's root `.env` (model keys) must not be read;
+#   - with a temporary data directory (`TRPG_DATA_DIR`): a fresh one, so the
+#     server mints the room `main`'s first admin key and prints it;
+#   - with every `TRPG_*` variable of the operator's shell scrubbed first;
+#   - `--local`: loopback only, no relays, no network at all.
+# With no model configured the server still starts and welcomes (it says
+# `model_not_configured` in its notes); this gate never asks the Keeper anything.
+#
+# The script stops the server it started on every exit path (success, failure,
+# Ctrl-C): SIGTERM, which the server handles by closing cleanly, then SIGKILL.
 
 set -euo pipefail
 
 STUDIO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE_REPO="${TRPG_KP_REPO:-$STUDIO_ROOT/../trpg_kp}"
-# How long the engine gets to bind an endpoint and print its ticket. The relay
-# handshake dominates; the engine's own startup timeout is 45s.
+# How long the server gets to open its store and endpoint and print its ready line.
 BOOT_TIMEOUT="${LIVE_CONNECT_BOOT_TIMEOUT:-60}"
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -38,89 +42,88 @@ fail() {
 
 [ -d "$ENGINE_REPO" ] || fail "engine repo not found at $ENGINE_REPO (set TRPG_KP_REPO)"
 ENGINE_REPO="$(cd "$ENGINE_REPO" && pwd)"
-[ -f "$ENGINE_REPO/app.py" ] || fail "$ENGINE_REPO does not look like the loreweaver engine repo (app.py missing)"
+ENTRY="$ENGINE_REPO/server/src/cli/main.ts"
+[ -f "$ENTRY" ] || fail "$ENGINE_REPO has no protocol 3.0 server ($ENTRY missing) — check out the engine's v3 branch"
+[ -d "$ENGINE_REPO/node_modules" ] || fail "the engine's dependencies are not installed — run 'bun install' in $ENGINE_REPO"
+command -v bun >/dev/null 2>&1 || fail "bun not found on PATH"
 command -v cargo >/dev/null 2>&1 || fail "cargo not found on PATH"
-command -v uv >/dev/null 2>&1 || fail "uv not found on PATH (the engine runs under 'uv run')"
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/lw-live-connect.XXXXXX")"
-ENGINE_PID=""
+SERVER_PID=""
 
 cleanup() {
   local status=$?
-  if [ -n "$ENGINE_PID" ] && kill -0 "$ENGINE_PID" 2>/dev/null; then
-    # SIGTERM is the engine's documented graceful stop (it cancels the serve
-    # task and closes the endpoint); SIGKILL only if it ignores us.
-    kill -TERM "$ENGINE_PID" 2>/dev/null || true
+  trap - EXIT INT TERM
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill -TERM "$SERVER_PID" 2>/dev/null || true
     for _ in $(seq 1 20); do
-      kill -0 "$ENGINE_PID" 2>/dev/null || break
+      kill -0 "$SERVER_PID" 2>/dev/null || break
       sleep 0.5
     done
-    kill -KILL "$ENGINE_PID" 2>/dev/null || true
-    wait "$ENGINE_PID" 2>/dev/null || true
+    kill -KILL "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
   fi
-  if [ "$status" -ne 0 ] && [ -f "$SANDBOX/engine.log" ]; then
-    printf '\n--- engine log (tail) ---\n' >&2
-    tail -40 "$SANDBOX/engine.log" >&2 || true
+  if [ "$status" -ne 0 ] && [ -f "$SANDBOX/server.err" ]; then
+    printf '\n--- server stderr (tail) ---\n' >&2
+    tail -40 "$SANDBOX/server.err" >&2 || true
   fi
   rm -rf "$SANDBOX"
-  return $status
+  exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-KEYS="$SANDBOX/keys.toml"
-TICKET_FILE="$SANDBOX/iroh-ticket.txt"
-KEY_FILE="$SANDBOX/keeper-key.txt"
+mkdir -p "$SANDBOX/cwd" "$SANDBOX/data"
 
-say "1/3 spawn the engine (--serve) in a sandboxed data dir"
-# An empty env file keeps the operator's real .env (LLM keys, custom data dir)
-# out of the run; the engine then falls back to the offline demo Keeper.
-: >"$SANDBOX/env"
+say "1/3 start the 3.0 server (serve --local) in a sandbox"
 (
-  cd "$ENGINE_REPO"
-  # Drop the operator's own engine settings before the three this gate sets:
-  # anything left exported would outrank the empty env file above.
+  cd "$SANDBOX/cwd"
+  # Drop the operator's own server settings: anything left exported would
+  # configure this server (a model key, another data directory).
   for name in $(env | sed -n 's/^\(TRPG_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$name"; done
-  TRPG_ENV_FILE="$SANDBOX/env" \
-  TRPG_DATA_DIR="$SANDBOX/data" \
-  TRPG_BOOTSTRAP_ROOM="live-connect" \
-    uv run python -m app --serve --keys "$KEYS" >"$SANDBOX/engine.log" 2>&1 &
-  echo $! >"$SANDBOX/engine.pid"
-)
-ENGINE_PID="$(cat "$SANDBOX/engine.pid")"
+  TRPG_DATA_DIR="$SANDBOX/data" exec bun "$ENTRY" serve --local >"$SANDBOX/server.out" 2>"$SANDBOX/server.err"
+) &
+SERVER_PID=$!
 
-# The engine writes both sidecars next to --keys: keeper-key.txt at bootstrap,
-# iroh-ticket.txt once the endpoint is online. Wait for the ticket (the later of
-# the two) rather than sleeping a fixed amount.
+# The server prints ONE JSON line on stdout when it is ready:
+# {"ok":true,"version":…,"ticket":"endpoint…","notes":[…],"first_key":{"room":"main","key":…}}
+READY=""
 for _ in $(seq 1 "$((BOOT_TIMEOUT * 2))"); do
-  [ -s "$TICKET_FILE" ] && break
-  kill -0 "$ENGINE_PID" 2>/dev/null || fail "the engine exited before printing a ticket"
+  READY="$(grep -m1 '"ticket"' "$SANDBOX/server.out" 2>/dev/null || true)"
+  [ -n "$READY" ] && break
+  kill -0 "$SERVER_PID" 2>/dev/null || fail "the server exited before it was ready ($(cat "$SANDBOX/server.out" 2>/dev/null))"
   sleep 0.5
 done
-[ -s "$TICKET_FILE" ] || fail "no ticket after ${BOOT_TIMEOUT}s — the endpoint never came online"
-[ -s "$KEY_FILE" ] || fail "the engine printed a ticket but minted no keeper key at $KEY_FILE"
+[ -n "$READY" ] || fail "no ready line after ${BOOT_TIMEOUT}s"
 
-# `ticket=endpoint…` / `key=…` sidecar lines; take the value after the first `=`.
-TICKET="$(sed -n 's/^ticket=//p' "$TICKET_FILE" | head -1)"
-KEY="$(sed -n 's/^key=//p' "$KEY_FILE" | head -1)"
-[ -n "$TICKET" ] || fail "could not read a ticket out of $TICKET_FILE"
-[ -n "$KEY" ] || fail "could not read a key out of $KEY_FILE"
-echo "ok: engine pid $ENGINE_PID serving ticket ${TICKET:0:24}…"
+field() {
+  READY_LINE="$READY" bun -e '
+    const ready = JSON.parse(process.env.READY_LINE)
+    const value = process.argv[1] === "key" ? ready.first_key?.key : ready[process.argv[1]]
+    if (typeof value !== "string" || value === "") process.exit(1)
+    console.log(value)
+  ' "$1"
+}
+TICKET="$(field ticket)" || fail "the ready line carries no ticket: $READY"
+KEY="$(field key)" || fail "the ready line carries no first admin key (is the data directory fresh?): $READY"
+echo "ok: server pid $SERVER_PID, ticket ${TICKET:0:24}…"
 
-say "2/3 dial it through the real transport crate"
+say "2/3 dial it through the real link crate: hello, welcome, ping, a refused GET"
 CARGO_LOG="$SANDBOX/cargo.log"
 (
   cd "$STUDIO_ROOT"
   LOREWEAVER_LIVE_TICKET="$TICKET" \
   LOREWEAVER_LIVE_KEY="$KEY" \
+  LOREWEAVER_LIVE_NETWORK=local \
     cargo test -p loreweaver-transport --test live_connect -- --ignored --nocapture 2>&1 | tee "$CARGO_LOG"
 )
 # `cargo test` exits 0 when a filter matches NOTHING, so the exit code alone
-# would let this gate pass vacuously — rename the test, or let the `#[ignore]`
-# attribute drift, and green would mean "ran zero tests". Assert the count.
+# would let this gate pass vacuously. Assert that a test actually passed.
 grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$CARGO_LOG" \
   || fail "the live-connect test did not actually run (a filter that matches no test still exits 0) — check the test name and its #[ignore] attribute"
 
-say "3/3 the engine survived the session"
-kill -0 "$ENGINE_PID" 2>/dev/null || fail "the engine died during the handshake (see log above)"
+say "3/3 the server survived the session"
+kill -0 "$SERVER_PID" 2>/dev/null || fail "the server died during the session"
 
 say "live-connect gate: PASS"

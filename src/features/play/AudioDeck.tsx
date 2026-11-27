@@ -39,7 +39,7 @@ import {
   type LayerState,
 } from "../../store/audio"
 import { isTauri, transportSend } from "../../lib/transport"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { useMediaStore } from "../../store/media"
 import { cachedAudioUrl } from "./audioPlayback"
 import {
@@ -386,7 +386,7 @@ export default function AudioDeck() {
   const muted = useAudioStore((s) => s.muted)
   const setMuted = useAudioStore((s) => s.setMuted)
 
-  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
+  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
   const anyKnown = AUDIO_LAYERS.some(
     (name) => layers[name].playing || layers[name].waitingForUnlock || layers[name].hash,
   )

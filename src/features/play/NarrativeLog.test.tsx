@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "../../i18n"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { PENDING_ECHO_TIMEOUT_MS, useSessionStore } from "../../store/session"
 import NarrativeLog, { ECHO_SWEEP_MS, NPC_PREVIEW_CHARS } from "./NarrativeLog"
 
@@ -20,7 +20,7 @@ const ingest = useSessionStore.getState().ingest
 describe("NarrativeLog", () => {
   beforeEach(() => {
     useSessionStore.getState().clear()
-    useConnectionStore.setState({ status: "offline" })
+    useLegacyConnectionStore.setState({ status: "offline" })
     transport.send.mockClear()
   })
 
@@ -461,7 +461,7 @@ describe("NarrativeLog", () => {
 
     it("offers to resend, and sends the same words once the table is back", () => {
       undelivered()
-      act(() => useConnectionStore.setState({ status: "online" }))
+      act(() => useLegacyConnectionStore.setState({ status: "online" }))
       const { container } = render(<NarrativeLog />)
       expect(screen.getByText("not delivered")).toBeInTheDocument()
 
@@ -478,7 +478,7 @@ describe("NarrativeLog", () => {
 
     it("cannot be sent twice by a double click", () => {
       undelivered()
-      act(() => useConnectionStore.setState({ status: "online" }))
+      act(() => useLegacyConnectionStore.setState({ status: "online" }))
       render(<NarrativeLog />)
       const button = screen.getByRole("button", { name: "Resend" })
 
@@ -499,7 +499,7 @@ describe("NarrativeLog", () => {
       expect(transport.send).not.toHaveBeenCalled()
 
       // The link comes back: the same button is live.
-      act(() => useConnectionStore.setState({ status: "online" }))
+      act(() => useLegacyConnectionStore.setState({ status: "online" }))
       expect(screen.getByRole("button", { name: "Resend" })).toBeEnabled()
     })
 
@@ -507,7 +507,7 @@ describe("NarrativeLog", () => {
       act(() => {
         useSessionStore.getState().echoLocalInput("I check the ledger.", "Nyx", Date.now())
       })
-      act(() => useConnectionStore.setState({ status: "online" }))
+      act(() => useLegacyConnectionStore.setState({ status: "online" }))
       render(<NarrativeLog />)
       expect(screen.getByText("sending…")).toBeInTheDocument()
       expect(screen.queryByRole("button", { name: "Resend" })).toBeNull()

@@ -1,15 +1,20 @@
 import { useTranslation } from "react-i18next"
-import { useConnectionStore } from "../../store/connection"
+import { displayStatus } from "../../lib/connection"
+import { useConnectionState } from "../../store/connection"
 
+/** Connecting · online · reconnecting (with the attempt) · offline — read from
+ * the connection owner, not from any store copy. */
 export default function StatusPill() {
   const { t } = useTranslation()
-  const status = useConnectionStore((s) => s.status)
-  const attempt = useConnectionStore((s) => s.attempt)
+  const state = useConnectionState()
+  const status = displayStatus(state)
   return (
     <span className={`status-pill status-${status}`} data-status={status}>
       <span className="status-dot" aria-hidden="true" />
       {t(`connect.status.${status}`)}
-      {status === "reconnecting" && attempt > 0 ? ` (${t("connect.attempt", { n: attempt })})` : null}
+      {status === "reconnecting" && state.attempt > 0
+        ? ` (${t("connect.attempt", { n: state.attempt })})`
+        : null}
     </span>
   )
 }

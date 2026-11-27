@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { quitTable } from "../../store/hostLocal"
 import { AudioUnlockNotice } from "./AudioDeck"
 import InputBox from "./InputBox"
@@ -16,7 +16,7 @@ import TurnStatus from "./TurnStatus"
 
 export default function SessionView({ onMenu }: { onMenu?: () => void }) {
   const { t } = useTranslation()
-  const welcome = useConnectionStore((s) => s.welcome)
+  const welcome = useLegacyConnectionStore((s) => s.welcome)
 
   return (
     <div className="session">

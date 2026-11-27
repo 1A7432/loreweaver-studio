@@ -8,7 +8,7 @@ import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import type { PlayerRole } from "@loreweaver/protocol"
 import { useAdminStore } from "../../../store/admin"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import RoomLifecycle from "./RoomLifecycle"
 import ScreenShell from "./ScreenShell"
 
@@ -21,7 +21,7 @@ export default function KeysScreen({ onBack }: { onBack: () => void }) {
   const updateKey = useAdminStore((s) => s.updateKey)
   const deleteKey = useAdminStore((s) => s.deleteKey)
   const clearMinted = useAdminStore((s) => s.clearMinted)
-  const room = useConnectionStore((s) => s.welcome?.room ?? "")
+  const room = useLegacyConnectionStore((s) => s.welcome?.room ?? "")
 
   const [name, setName] = useState("")
   const [role, setRole] = useState<PlayerRole>("player")

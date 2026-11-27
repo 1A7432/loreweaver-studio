@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ServerFrame } from "@loreweaver/protocol"
 import "../../i18n"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { JOIN_REPLAY_TIMEOUT_MS, useSessionStore } from "../../store/session"
 import InputBox from "./InputBox"
 
@@ -19,7 +19,7 @@ describe("InputBox", () => {
     vi.mocked(transportSend).mockClear()
     vi.mocked(transportSend).mockResolvedValue(undefined)
     useSessionStore.getState().clear()
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",
@@ -74,7 +74,7 @@ describe("InputBox", () => {
   })
 
   it("is disabled unless the connection is online", () => {
-    useConnectionStore.setState({ status: "reconnecting" })
+    useLegacyConnectionStore.setState({ status: "reconnecting" })
     render(<InputBox />)
     expect(screen.getByRole("textbox")).toBeDisabled()
   })

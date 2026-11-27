@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { StateFrame, UiManifestPanel, WelcomeFrame } from "@loreweaver/protocol"
 import "../../../i18n"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import { usePanelsStore } from "../../../store/panels"
 import { useSessionStore } from "../../../store/session"
 import { PanelSidebar, PanelTray } from "./PanelDeck"
@@ -86,7 +86,7 @@ beforeEach(() => {
   globalThis.localStorage.clear()
   useSessionStore.getState().clear()
   useSessionStore.setState({ game: GAME })
-  useConnectionStore.setState({ status: "online", welcome: WELCOME })
+  useLegacyConnectionStore.setState({ status: "online", welcome: WELCOME })
   usePanelsStore.setState({ blocksOnly: false, noticeRooms: [] })
   usePanelsStore.getState().applyManifest([CASE_BOARD, TICKER, MANOR_MAP])
 })

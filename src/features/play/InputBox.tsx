@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
 import { transportSend } from "../../lib/transport"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { JOIN_REPLAY_TIMEOUT_MS, useSessionStore } from "../../store/session"
 
 export default function InputBox() {
   const { t } = useTranslation()
-  const status = useConnectionStore((s) => s.status)
-  const seat = useConnectionStore((s) => s.welcome?.you.name ?? "")
+  const status = useLegacyConnectionStore((s) => s.status)
+  const seat = useLegacyConnectionStore((s) => s.welcome?.you.name ?? "")
   const echoLocalInput = useSessionStore((s) => s.echoLocalInput)
   const failEcho = useSessionStore((s) => s.failEcho)
   // The transport is online the moment the welcome lands, but the room's history

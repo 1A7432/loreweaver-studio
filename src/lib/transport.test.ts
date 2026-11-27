@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { createConnection } from "./transport"
+import { createGeneration } from "./transport"
 
-describe("createConnection", () => {
-  it("mints a unique id per explicit connect", () => {
-    const a = createConnection()
-    const b = createConnection()
+describe("createGeneration", () => {
+  it("mints a unique id per link", () => {
+    const a = createGeneration()
+    const b = createGeneration()
     expect(a.connectionId).not.toBe(b.connectionId)
     expect(a.connectionId.length).toBeGreaterThan(0)
   })
@@ -16,8 +16,8 @@ describe("createConnection", () => {
     // again while the slot still holds an epoch from the page before it, and
     // fencing the live page out behind a dead one's numbers would leave the app
     // unable to connect to anything at all.
-    const first = createConnection()
-    const second = createConnection()
+    const first = createGeneration()
+    const second = createGeneration()
     expect(second.seq).toBeGreaterThan(first.seq)
     expect(second.session).toBe(first.session)
     expect(first.session.length).toBeGreaterThan(0)

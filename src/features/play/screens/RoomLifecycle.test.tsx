@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "../../../i18n"
 import { useAdminStore } from "../../../store/admin"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import RoomLifecycle from "./RoomLifecycle"
 
 const WELCOME = {
@@ -16,7 +16,7 @@ const WELCOME = {
 }
 
 function connected(features: string[] = []) {
-  useConnectionStore.setState({ status: "online", welcome: { ...WELCOME, features } })
+  useLegacyConnectionStore.setState({ status: "online", welcome: { ...WELCOME, features } })
 }
 
 /** The four destructive actions, in DOM order — each owns one confirm field. */

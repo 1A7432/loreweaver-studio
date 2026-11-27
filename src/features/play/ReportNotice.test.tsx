@@ -107,15 +107,11 @@ describe("ReportNotice", () => {
     expect(container.querySelector("iframe, webview, object, embed")).toBeNull()
   })
 
-  it("is routed off the connection, not into the chronicle", () => {
+  it("is not fed from the link any more: the 2.x frame router is gone until the move to 3.0", () => {
     useSessionStore.getState().clear()
-    useConnectionStore.setState({ connectionId: "gen-report" })
-    useConnectionStore.getState().handleEvent({
-      kind: "frame",
-      connectionId: "gen-report",
-      frame: FRAME,
-    } as Parameters<ReturnType<typeof useConnectionStore.getState>["handleEvent"]>[0])
-    expect(useReportStore.getState().offers.map((o) => o.hash)).toEqual([HASH])
+    useReportStore.getState().reset()
+    useConnectionStore.getState().handleEvent({ kind: "frame", connectionId: "gen-report", frame: FRAME })
+    expect(useReportStore.getState().offers).toEqual([])
     expect(useSessionStore.getState().entries).toEqual([])
   })
 })

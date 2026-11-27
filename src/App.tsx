@@ -4,7 +4,7 @@ import PlayView from "./features/play/PlayView"
 import StudioView from "./features/studio/StudioView"
 import UndoToast from "./features/studio/UndoToast"
 import { usePersistenceDegraded } from "./lib/persistStorage"
-import { isTauri, onTransportEvent } from "./lib/transport"
+import { isTauri, onLinkEvent } from "./lib/transport"
 import { useAppStore, type AppMode } from "./store/app"
 import { armGestureUnlock } from "./store/audio"
 import { useConnectionStore } from "./store/connection"
@@ -19,7 +19,10 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return
-    const unlisten = onTransportEvent((event) => useConnectionStore.getState().handleEvent(event))
+    // The link's events go to the connection owner, and nowhere else: frames are
+    // the protocol session's to read (the 2.x frame router into the old stores is
+    // gone — those stores are migrated to 3.0 in later steps).
+    const unlisten = onLinkEvent((event) => useConnectionStore.getState().handleEvent(event))
     return () => {
       void unlisten.then((dispose) => dispose())
     }

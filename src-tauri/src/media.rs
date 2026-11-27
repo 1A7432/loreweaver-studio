@@ -1,26 +1,27 @@
 //! Uploading a picture or an audio file to the room.
 //!
-//! The upload flow is `docs/protocol.md`'s, split at the one seam that matters:
-//! the CONTROL half (`media_offer` out, `media_accept` back) is frames, so the
-//! WebView owns it; the BYTE half is a PUT on the media channel, so it happens
-//! here and the file's bytes never enter the WebView. That is the same rule
+//! The upload flow is `docs/protocol.md`'s (§11.2–11.4), split at the one seam
+//! that matters: the CONTROL half (`call media.offer`, answered `{upload_id}`)
+//! is frames, so the WebView owns it; the BYTE half is a PUT on the byte
+//! channel, so it happens here and the file's bytes never enter the WebView. That is the same rule
 //! `asset_cache.rs` keeps for downloads, and for the same reason — the protocol
 //! allows 128 MiB of audio per file.
 //!
 //! Two commands, matching the two steps:
 //!   1. `media_prepare(path)` stats the file, refuses a non-regular or over-cap
 //!      path *before* `read`, hashes the bytes, and reports the
-//!      `{name, mime, size, sha256}` the offer frame needs.
+//!      `{name, mime, size, sha256}` the offer needs.
 //!   2. `media_upload(path, upload_id)` repeats that pre-check, re-reads, and
 //!      PUTs, refusing if the file grew past the cap between `metadata` and
-//!      `read` (TOCTOU) or no longer hashes to what was offered.
+//!      `read` (TOCTOU) or no longer hashes to what was offered, and checks the
+//!      server's receipt names those very bytes.
 //!
 //! The cap is [`loreweaver_transport::MAX_BLOB_BYTES`] — the same client
 //! defensive ceiling the GET path uses — so a 65–128 MiB audio file the
 //! protocol already allows is not blocked here.
 //!
 //! MIME comes from the file EXTENSION against the engine's own allowlists
-//! (`infra/media_store.py`: `ALLOWED_IMAGE_MIMES` / `ALLOWED_AUDIO_MIMES`),
+//! (`docs/protocol.md` §11.2, "Accepted types"),
 //! never from sniffing: the server validates the offered MIME against those
 //! same sets, so guessing differently would only produce a confusing rejection.
 
@@ -32,7 +33,7 @@ use crate::asset_cache::sha256_hex;
 use crate::transport_bridge::TransportState;
 use loreweaver_transport::MAX_BLOB_BYTES;
 
-/// Extension → MIME, mirroring `infra/media_store.py`'s two allowlists. A
+/// Extension → MIME, mirroring the protocol's accepted types (§11.2). A
 /// suffix that is not here is not uploadable, and the error says so rather than
 /// letting the server answer `media_bad_mime` about a file we could have
 /// refused locally.
@@ -109,7 +110,7 @@ async fn read_capped_file(path: &str) -> Result<Vec<u8>, String> {
     read_capped_file_with(path, MAX_BLOB_BYTES).await
 }
 
-/// Read a file and report exactly what `media_offer` needs to say about it.
+/// Read a file and report exactly what `media.offer` needs to say about it.
 #[tauri::command]
 pub async fn media_prepare(path: String) -> Result<MediaOffer, String> {
     let name = file_name(&path);
@@ -141,13 +142,32 @@ pub async fn media_upload(
     if actual != expected_sha256.to_ascii_lowercase() {
         return Err("the file changed after it was offered — pick it again".to_owned());
     }
+    let size = bytes.len() as u64;
     let handle = state.handle().await.ok_or("not connected")?;
-    handle.put_blob(upload_id, bytes).await
+    let receipt = handle
+        .put(upload_id, bytes)
+        .await
+        .map_err(|err| err.to_string())?;
+    receipt_matches(&receipt.hash, receipt.size, &actual, size)?;
+    Ok(receipt.hash)
+}
+
+/// The server stored what was sent: its receipt names the same hash and size.
+fn receipt_matches(hash: &str, size: u64, sent_hash: &str, sent_size: u64) -> Result<(), String> {
+    if hash == sent_hash && size == sent_size {
+        Ok(())
+    } else {
+        Err(format!(
+            "the server's receipt ({hash}, {size} bytes) does not match what was sent"
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{file_name, mime_for, over_cap_err, read_capped_file_with, MAX_BLOB_BYTES};
+    use super::{
+        file_name, mime_for, over_cap_err, read_capped_file_with, receipt_matches, MAX_BLOB_BYTES,
+    };
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
@@ -164,6 +184,13 @@ mod tests {
     fn client_cap_is_the_transport_constant() {
         assert_eq!(MAX_BLOB_BYTES, loreweaver_transport::MAX_BLOB_BYTES);
         assert_eq!(MAX_BLOB_BYTES, 128 * 1024 * 1024);
+    }
+
+    #[test]
+    fn a_receipt_must_name_the_bytes_that_were_sent() {
+        assert!(receipt_matches("ab", 3, "ab", 3).is_ok());
+        assert!(receipt_matches("ab", 4, "ab", 3).is_err());
+        assert!(receipt_matches("cd", 3, "ab", 3).is_err());
     }
 
     #[test]
@@ -220,7 +247,7 @@ mod tests {
 
     #[test]
     fn maps_every_format_the_engine_allows() {
-        // `infra/media_store.py::ALLOWED_IMAGE_MIMES` / `ALLOWED_AUDIO_MIMES`.
+        // `docs/protocol.md` §11.2, "Accepted types".
         for (name, mime) in [
             ("a.png", "image/png"),
             ("a.JPG", "image/jpeg"),

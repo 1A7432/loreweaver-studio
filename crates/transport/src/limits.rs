@@ -1,14 +1,14 @@
 //! Client-side defensive ceilings for media blobs.
 //!
-//! Kept out of the connection actor so `client.rs` can change (session
-//! epochs, send verdicts) without touching the published 128 MiB audio
-//! default, and so `src-tauri` can import one symbol.
+//! Kept out of the link and the byte channel so either can change without
+//! touching the published 128 MiB audio default, and so `src-tauri` can
+//! import one symbol.
 
 /// Client-side defensive ceiling for one fetched blob.
 ///
 /// This is not a quota and not a second policy: the published protocol default
-/// (`docs/protocol.md`, engine `audio_max_file_bytes`) is 128 MiB per audio
-/// file, and this constant MUST stay equal to that number. A 65–128 MiB blob
+/// (`docs/protocol.md` §11.2) is 128 MiB per sound, the largest file a server
+/// stores, and this constant MUST stay equal to that number. A 65–128 MiB blob
 /// the engine already accepted has to be fetchable here; anything larger is
 /// refused so a hostile or misconfigured peer cannot force an unbounded
 /// allocation. `src-tauri` reads the same symbol (`loreweaver_transport::MAX_BLOB_BYTES`)
@@ -33,7 +33,7 @@ mod tests {
 
     #[test]
     fn client_blob_cap_matches_the_published_audio_default() {
-        // Engine `infra/config.py` `audio_max_file_bytes` and `docs/protocol.md`.
+        // `docs/protocol.md` §11.2: "a sound at most 128 MiB".
         assert_eq!(MAX_BLOB_BYTES, 128 * 1024 * 1024);
     }
 
@@ -58,19 +58,19 @@ mod tests {
     }
 
     #[test]
-    fn fetch_blob_on_gates_header_size_through_accepted_blob_size() {
+    fn the_get_gates_header_size_through_accepted_blob_size() {
         // Call-site pin: the GET path must use this helper (not an inline
         // `if size > MAX_BLOB_BYTES`) so the 64–128 MiB band and the 128 MiB
         // refuse cannot drift from the tests above. The matching-body
         // roundtrip in `tests/loopback.rs` still covers the byte pump.
-        let src = include_str!("client.rs");
+        let src = include_str!("bytes.rs");
         assert!(
-            src.contains("accepted_blob_size(size)"),
-            "fetch_blob_on must gate the GET header through accepted_blob_size"
+            src.contains("accepted_blob_size(file.size)"),
+            "the GET must gate its header through accepted_blob_size"
         );
         assert!(
             !src.contains("if size > MAX_BLOB_BYTES"),
-            "an inline ceiling in client.rs would drift from limits.rs"
+            "an inline ceiling in bytes.rs would drift from limits.rs"
         );
     }
 }

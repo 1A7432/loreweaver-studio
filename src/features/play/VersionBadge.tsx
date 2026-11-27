@@ -15,12 +15,12 @@
 
 import { useTranslation } from "react-i18next"
 import { PROTOCOL_VERSION } from "@loreweaver/protocol"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { STUDIO_VERSION } from "../../version"
 
 export default function VersionBadge() {
   const { t } = useTranslation()
-  const welcome = useConnectionStore((s) => s.welcome)
+  const welcome = useLegacyConnectionStore((s) => s.welcome)
   if (welcome === null) return null
 
   const serverProtocol = welcome.protocol

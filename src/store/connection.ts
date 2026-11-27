@@ -1,291 +1,168 @@
+// The app's one table slot (protocol 3.0): which `Connection` is current, and
+// the three things the connect form does to it. The connection itself — its
+// `Session`, its link, its redials — lives in `lib/connection.ts`, outside
+// React; this store holds only the REFERENCE to the current one. React reads
+// the session with `useSessionSnapshot()` (`useSyncExternalStore` on the
+// session itself) and the owner's own state with `useConnectionState()`: no
+// copy of either is kept here.
+
+import { useSyncExternalStore } from "react"
+import type { SessionSnapshot } from "loreweaver-protocol/v3"
 import { create } from "zustand"
-import { isServerFrame, protocolMismatch, type WelcomeFrame } from "@loreweaver/protocol"
 import i18n from "../i18n"
 import {
-  createConnection,
+  Connection,
+  IDLE_STATE,
+  LinkDriverError,
+  type ConnectionState,
+  type LinkDriver,
+} from "../lib/connection"
+import {
   isTauri,
-  transportConnect,
-  transportDisconnect,
-  type DialParams,
-  type TransportEvent,
-  type TransportStatus,
+  linkConnect,
+  linkDisconnect,
+  linkSend,
+  type LinkEvent,
+  type NetworkProfile,
 } from "../lib/transport"
-import { useAdminStore } from "./admin"
-import { useAudioStore } from "./audio"
+import { STUDIO_VERSION } from "../version"
 import { useLastTableStore, type RememberedTable } from "./lastTable"
-import { useMediaStore } from "./media"
-import { useReportStore } from "./report"
-import { useSessionStore } from "./session"
 
-/** Tolerate the ticket shapes people actually paste: the engine writes
- * `ticket=endpoint…` into iroh-ticket.txt, its console announce line reads
- * `Ticket：endpoint…`, and terminals wrap long tickets across lines. The real
- * ticket is the bare `endpoint…` string — slice from that marker when present
- * and strip all whitespace; anything else passes through for the transport's
- * own error message. */
+/** The name this client gives in `hello`. */
+export const CLIENT_NAME = "loreweaver-studio"
+
+/** Tolerate the ticket shapes people actually paste: a `ticket=endpoint…`
+ * sidecar line, a console announce line, a ticket a terminal wrapped across
+ * lines. The real ticket is the bare `endpoint…` string — slice from that
+ * marker when present and strip all whitespace; anything else passes through
+ * for the link's own error. */
 export function sanitizeTicket(raw: string): string {
   const flat = raw.replace(/\s+/g, "")
   const at = flat.toLowerCase().indexOf("endpoint")
   return at > 0 ? flat.slice(at) : flat
 }
 
-/** Does this frame claim to be the handshake, whatever else is wrong with it?
- * Only the `type` is trusted here — that is the whole point: everything else
- * failed validation. */
-function looksLikeWelcome(frame: unknown): boolean {
-  return typeof frame === "object" && frame !== null && (frame as { type?: unknown }).type === "welcome"
+export interface DialParams {
+  ticket: string
+  key: string
+  name?: string
+  /** `local` for a server on this machine started with `serve --local`; `n0` by default. */
+  network?: NetworkProfile
 }
-
-/** The hand-dialed connection waiting to be judged: remembered once its welcome
- * is accepted, dropped again if the server rejects its key. Keyed by the dial's
- * generation, so a later dial (the local-host button, say) can never inherit it.
- * Module state rather than store state — nothing renders from it. */
-let pendingRemember: { connectionId: string; table: RememberedTable } | null = null
 
 export interface ConnectOptions {
   /** This dial is a table the player entered by hand: remember it once the
-   * handshake succeeds (see `store/lastTable.ts`). */
+   * server welcomes it (see `store/lastTable.ts`). */
   remember?: boolean
 }
 
-/** What the operator reads when the transport gave up before ever coming
- * online. A code the UI words itself gets its own sentence; anything else is
- * the transport's own text, verbatim. */
-function describeFailure(event: Extract<TransportEvent, { kind: "status" }>): string | null {
-  const detail = event.error ?? ""
-  switch (event.errorCode) {
-    case "connect_timeout":
-      return i18n.t("connect.error.connectTimeout")
-    case "join_timeout":
-      return i18n.t("connect.error.joinTimeout")
-    case "connect_failed":
-      return i18n.t("connect.error.connectFailed", { detail })
-    default:
-      return event.error ?? null
+/** The Rust bridge, or — outside the app shell — a driver that refuses with `no_shell`. */
+function linkDriver(): LinkDriver {
+  if (!isTauri()) {
+    return {
+      connect: () => Promise.reject(new LinkDriverError("no_shell")),
+      send: () => Promise.reject(new LinkDriverError("no_shell")),
+      disconnect: () => Promise.resolve(),
+    }
   }
+  return { connect: linkConnect, send: linkSend, disconnect: linkDisconnect }
 }
 
-interface ConnectionState {
-  status: TransportStatus
-  attempt: number
-  lastError: string | null
-  welcome: WelcomeFrame | null
-  /**
-   * The live Tauri-bridge generation. Events stamped with any other id are
-   * dropped at `handleEvent` — including ones already sitting in the JS
-   * queue when this is overwritten. `null` after disconnect, so a queued
-   * Offline/Frame from the dying actor cannot write back.
-   */
-  connectionId: string | null
-  /** A handshake this store refused. While set, transport statuses are ignored
-   * — see `handleEvent`. Cleared only by an explicit new connect. */
-  refused: boolean
+/** The hand-dialed table waiting to be judged: remembered on its welcome,
+ * forgotten again if the server turns its key down. Keyed by the connection, so
+ * a later dial (the local-host button, say) can never inherit it. */
+let pendingRemember: { connection: Connection; table: RememberedTable } | null = null
+
+interface ConnectionSlot {
+  /** The current connection (live, or ended with its reason), or none yet. */
+  connection: Connection | null
+  /** Dial a table: the current connection, if any, is stopped first. */
   connect: (params: DialParams, options?: ConnectOptions) => Promise<void>
+  /** Stop the current connection; it stays in the slot, ended, with any failure it had. */
   disconnect: () => Promise<void>
-  /** The player's Forget: drop the saved table, and the remember a dial still
-   * in flight would write on its welcome. */
+  /** The player's Forget: drop the saved table, and the remember a dial still in
+   * flight would write on its welcome. */
   forgetLastTable: () => void
   /** Single entry point for everything the Rust bridge emits. */
-  handleEvent: (event: TransportEvent) => void
+  handleEvent: (event: LinkEvent) => void
 }
 
-type Setter = (partial: Partial<ConnectionState>) => void
-type Getter = () => ConnectionState
-
-/** Refuse the handshake: go offline with a reason, latch it so the statuses
- * already in flight cannot undo it, and drop the connection rather than letting
- * the bridge redial into the same wall. */
-function refuse(set: Setter, get: Getter, reason: string): void {
-  set({ status: "offline", attempt: 0, welcome: null, lastError: reason, refused: true })
-  void get().disconnect()
-}
-
-export const useConnectionStore = create<ConnectionState>((set, get) => ({
-  status: "offline",
-  attempt: 0,
-  lastError: null,
-  welcome: null,
-  connectionId: null,
-  refused: false,
+export const useConnectionStore = create<ConnectionSlot>((set, get) => ({
+  connection: null,
 
   connect: async (params, options) => {
     pendingRemember = null
-    // An explicit dial is the one thing that lifts a refusal — do it before any
-    // early return, so a refused handshake cannot leave the store deaf to every
-    // status that follows for the rest of the process's life.
-    set({ refused: false })
-    if (!isTauri()) {
-      set({
-        status: "offline",
-        lastError: "transport is only available inside the app shell",
-        connectionId: null,
-      })
-      return
+    get().connection?.stop()
+    const table: RememberedTable = {
+      ticket: sanitizeTicket(params.ticket),
+      key: params.key.trim(),
+      name: params.name?.trim() ?? "",
     }
-    // Mint the new generation BEFORE clear() and BEFORE the invoke returns.
-    // Events already queued from the previous actor carry the old id and
-    // must not refill the session we are about to wipe; events from the new
-    // actor may arrive before `transportConnect` resolves. The generation also
-    // travels to Rust, which seats an actor only for a dial the WebView has
-    // not already outrun — the id alone says who, the session + seq say when.
-    const generation = createConnection()
-    if (options?.remember) {
-      pendingRemember = {
-        connectionId: generation.connectionId,
-        table: {
-          ticket: sanitizeTicket(params.ticket),
-          key: params.key.trim(),
-          name: params.name?.trim() ?? "",
-        },
-      }
-    }
-    set({
-      status: "connecting",
-      attempt: 0,
-      lastError: null,
-      welcome: null,
-      connectionId: generation.connectionId,
+    const connection: Connection = new Connection({
+      ticket: table.ticket,
+      key: table.key,
+      ...(table.name ? { name: table.name } : {}),
+      locale: i18n.resolvedLanguage ?? i18n.language ?? "en",
+      client: { name: CLIENT_NAME, version: STUDIO_VERSION },
+      network: params.network ?? "n0",
+      driver: linkDriver(),
+      onWelcome: () => {
+        if (pendingRemember?.connection !== connection) return
+        useLastTableStore.getState().remember(pendingRemember.table)
+        pendingRemember = null
+      },
+      onRefused: (failure) => {
+        // The server turned the key down: a table saved with it can never connect
+        // again, and prefilling it on every launch would just repeat the failure.
+        if (pendingRemember?.connection !== connection) return
+        if (failure.code === "bad_key") useLastTableStore.getState().forgetMatching(pendingRemember.table)
+        pendingRemember = null
+      },
     })
-    useSessionStore.getState().clear()
-    useMediaStore.getState().reset()
-    useAudioStore.getState().reset()
-    useReportStore.getState().reset()
-    let failure: string | null = null
-    try {
-      await transportConnect({
-        ...params,
-        ticket: sanitizeTicket(params.ticket),
-        key: params.key.trim(),
-        generation,
-      })
-    } catch (err) {
-      failure = String(err)
-    }
-    // One guard over BOTH continuations: a later explicit connect may already
-    // own the store, and this invoke — seated or refused — speaks for a
-    // generation that is gone. Writing offline/null here would kill B.
-    if (get().connectionId !== generation.connectionId) {
-      // Cancelled while the invoke was still in flight: the cancel's own
-      // disconnect reached Rust before this dial was seated and found nothing
-      // to close, so the actor seated just now belongs to nobody. Drop it —
-      // by this generation's id only, so a newer dial is untouched. (A
-      // newer connect needs no help: seating it already replaced this one.)
-      if (failure === null && get().connectionId === null) {
-        void transportDisconnect(generation.connectionId).catch(() => undefined)
-      }
-      return
-    }
-    if (failure === null) return
-    set({ status: "offline", lastError: failure, connectionId: null })
+    if (options?.remember) pendingRemember = { connection, table }
+    set({ connection })
+    connection.start()
   },
 
   disconnect: async () => {
-    // Invalidate FIRST. The dying actor still emits Offline (and maybe a
-    // last Frame); those events may already be in the JS queue. Clearing
-    // the generation here is what stops them writing the previous room
-    // back after the caller has moved on. Status is set locally because
-    // the Offline event itself will now be dropped.
-    //
-    // The invoke below writes nothing when it settles, so a concurrent
-    // newer connect is safe from this function's tail — do not add a
-    // post-await set.
-    const lastError = get().refused ? get().lastError : null
-    const connectionId = get().connectionId
-    set({ connectionId: null, status: "offline", attempt: 0, welcome: null, lastError })
-    if (!isTauri()) return
-    try {
-      // Name the generation being dropped. The slot closes only its own
-      // occupant, so a disconnect a newer dial has already replaced cannot
-      // take that newer actor down with it.
-      await transportDisconnect(connectionId)
-    } catch {
-      // A failed disconnect only means there was nothing to disconnect.
-    }
+    get().connection?.stop()
   },
 
   forgetLastTable: () => {
-    // Forget is the later, explicit word. The connect screen keeps it live while
-    // a dial is in flight, and that dial's `{ remember: true }` would otherwise
-    // write the table straight back when its welcome lands — and the saved-table
-    // row would be back on the form after the next disconnect.
+    // Forget is the later, explicit word: a dial in flight must not write the
+    // table straight back when its welcome lands.
     pendingRemember = null
     useLastTableStore.getState().forget()
   },
 
   handleEvent: (event) => {
-    // The single chokepoint for a stale generation. A Rust-side check
-    // before emit cannot see an event that has already crossed the bridge.
-    if (event.connectionId !== get().connectionId) return
-    if (event.kind === "status") {
-      // A refusal outranks every status that follows it. The bridge emits the
-      // welcome frame and `online` back-to-back (`client.rs`: `settled = true`
-      // then `status(Online)`), so a refusal decided on the frame would be
-      // undone one event later by a status already in flight — the app would
-      // flicker into a room-less play screen and then bounce back to the form
-      // with no reason showing. The latch holds until the operator dials again.
-      if (get().refused) return
-      set((state) => ({
-        status: event.status,
-        attempt: event.attempt,
-        lastError: describeFailure(event),
-        welcome: event.status === "offline" ? null : state.welcome,
-      }))
-      return
-    }
-    const frame = event.frame
-    // Belt and braces: the shared validator drops malformed frames so no
-    // downstream consumer can crash on a missing field. A malformed WELCOME is
-    // not droppable, though: the bridge has already marked the session settled
-    // (which disarms its join deadline) and announced `online`, so staying
-    // quiet would leave the app online with no room and nothing to show for it.
-    if (!isServerFrame(frame)) {
-      if (looksLikeWelcome(frame)) refuse(set, get, i18n.t("connect.welcomeUnreadable"))
-      return
-    }
-    if (frame.type === "welcome") {
-      // The MAJOR version is the compatibility contract, and the shared package ships
-      // the predicate so no client has to write it. A client that keeps talking to a
-      // different-major server misreads frames rather than failing, which is much
-      // harder to diagnose than a refusal — and with no backward compatibility promised
-      // before adoption, a stale client WILL meet a server that moved. So: refuse, name
-      // both versions, and drop the connection instead of letting the Rust bridge
-      // reconnect into the same wall. (The library only warns; refusing is the app's
-      // call, and this is the app.)
-      const mismatch = protocolMismatch(frame.protocol)
-      if (mismatch) {
-        refuse(set, get, i18n.t("connect.protocolMismatch", { ...mismatch }))
-        return
-      }
-      set({ welcome: frame })
-      if (pendingRemember?.connectionId === event.connectionId) {
-        useLastTableStore.getState().remember(pendingRemember.table)
-        pendingRemember = null
-      }
-      // Every welcome opens a join replay, and an automatic redial is a join
-      // like any other: the log must hear about it to rebuild from the replay
-      // instead of appending the whole history a second time.
-      useSessionStore.getState().ingest(frame)
-      return
-    }
-    // The server turned the key down: a table saved with it can never connect
-    // again, and prefilling it on every launch would just repeat the failure.
-    if (
-      frame.type === "error" &&
-      frame.code === "bad_key" &&
-      pendingRemember?.connectionId === event.connectionId
-    ) {
-      useLastTableStore.getState().forgetMatching(pendingRemember.table)
-      pendingRemember = null
-    }
-    // Keeper-admin replies feed the admin store; they never reach the chronicle.
-    if (useAdminStore.getState().ingest(frame)) return
-    // The media and audio families are room furniture, not chronicle lines:
-    // pictures and library entries land in their own index beside the log, and
-    // playback intent drives the mixer.
-    if (useMediaStore.getState().ingest(frame)) return
-    if (useAudioStore.getState().ingest(frame)) return
-    // A session report is an offer to THIS connection, not a chronicle line.
-    if (useReportStore.getState().ingest(frame)) return
-    useSessionStore.getState().ingest(frame)
+    get().connection?.handleEvent(event)
   },
 }))
+
+const noSubscription = () => () => undefined
+const noSnapshot = (): SessionSnapshot | null => null
+const idleState = (): ConnectionState => IDLE_STATE
+
+/** The current connection, or null. */
+export function useConnection(): Connection | null {
+  return useConnectionStore((slot) => slot.connection)
+}
+
+/** The current connection's own state (phase, attempt, failure); idle when there is none. */
+export function useConnectionState(): ConnectionState {
+  const connection = useConnection()
+  return useSyncExternalStore(
+    connection ? connection.subscribe : noSubscription,
+    connection ? connection.getState : idleState,
+  )
+}
+
+/** The current session's snapshot, read straight from the protocol `Session`; null when there is none. */
+export function useSessionSnapshot(): SessionSnapshot | null {
+  const connection = useConnection()
+  return useSyncExternalStore(
+    connection ? connection.session.subscribe : noSubscription,
+    connection ? connection.session.getSnapshot : noSnapshot,
+  )
+}

@@ -1,30 +1,23 @@
-// Play mode: connect screen → MAIN MENU (the TUI flow — the game is one menu
-// item among character/settings and the keeper screens) → the chronicle or a
-// management screen. Esc anywhere below the menu returns to it.
+// Play mode (protocol 3.0): the connect screen, then the room.
+//
+// The room is, for now, one honest line: connected, to which server and room,
+// as whom — the play screens themselves (log, state, panels…) still read the
+// protocol 2.x stores and move to the 3.0 `Session` in later steps
+// (`OnlineView.tsx` holds them meanwhile, unrendered).
 
 import { useEffect, useId, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next"
+import { displayStatus } from "../../lib/connection"
 import { pickDirectory } from "../../lib/native"
 import { isTauri } from "../../lib/transport"
-import { useConnectionStore } from "../../store/connection"
-import { useHostLocalStore } from "../../store/hostLocal"
+import { useConnectionState, useConnectionStore, useSessionSnapshot } from "../../store/connection"
+import { quitTable, useHostLocalStore } from "../../store/hostLocal"
 import { useLastTableStore } from "../../store/lastTable"
-import CharacterScreen from "./screens/CharacterScreen"
-import KeysScreen from "./screens/KeysScreen"
-import MainMenuScreen from "./screens/MainMenuScreen"
-import ModelScreen from "./screens/ModelScreen"
-import ModuleScreen from "./screens/ModuleScreen"
-import RulesScreen from "./screens/RulesScreen"
-import SettingsScreen from "./screens/SettingsScreen"
-import SkillsScreen from "./screens/SkillsScreen"
-import SessionView from "./SessionView"
+import { describeFailure } from "./connectFailure"
 import StatusPill from "./StatusPill"
 
-export type PlayScreen =
-  "menu" | "game" | "character" | "settings" | "keys" | "module" | "rules" | "skills" | "model"
-
-/** The TUI's green button: bring a local server up and log straight in as
- * Keeper. While it's starting the real bring-up log streams below. */
+/** The TUI's green button: bring a local server up and log straight in as the
+ * room admin. While it's starting the real bring-up log streams below. */
 function HostLocalBlock() {
   const { t } = useTranslation()
   const phase = useHostLocalStore((s) => s.phase)
@@ -110,47 +103,42 @@ function HostLocalBlock() {
   )
 }
 
-function OnlineView() {
-  const [screen, setScreen] = useState<PlayScreen>("menu")
-
-  // Esc backs out of any screen to the menu — the TUI's navigation spine.
-  // The game screen keeps Esc too (its input is a plain textarea; Esc there
-  // is not otherwise meaningful).
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
-      // A child that owns this key (panel modal, an in-progress sheet edit)
-      // preventDefault()s. InputBox does not — Esc from the chat field is
-      // still the TUI's "back to the menu".
-      if (event.defaultPrevented) return
-      setScreen("menu")
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [])
-
-  const back = () => setScreen("menu")
-
-  switch (screen) {
-    case "menu":
-      return <MainMenuScreen onNavigate={setScreen} />
-    case "game":
-      return <SessionView onMenu={back} />
-    case "character":
-      return <CharacterScreen onBack={back} />
-    case "settings":
-      return <SettingsScreen onBack={back} />
-    case "keys":
-      return <KeysScreen onBack={back} />
-    case "module":
-      return <ModuleScreen onBack={back} />
-    case "rules":
-      return <RulesScreen onBack={back} />
-    case "skills":
-      return <SkillsScreen onBack={back} />
-    case "model":
-      return <ModelScreen onBack={back} />
-  }
+/** The room, as far as protocol 3.0 is wired today: who is connected where. */
+function RoomScreen() {
+  const { t } = useTranslation()
+  const welcome = useSessionSnapshot()?.welcome ?? null
+  return (
+    <div className="play-view">
+      <section className="connect-card room-card">
+        <header className="connect-head">
+          <h2>{welcome ? t("play.room.title", { room: welcome.room.id }) : t("connect.title")}</h2>
+          <StatusPill />
+        </header>
+        {welcome ? (
+          <dl className="room-facts">
+            <dt>{t("play.room.you")}</dt>
+            <dd>
+              {t("play.room.member", { name: welcome.you.name, role: t(`connect.role.${welcome.you.role}`) })}
+            </dd>
+            <dt>{t("play.room.server")}</dt>
+            <dd>
+              {t("play.room.serverVersion", {
+                name: welcome.server.name,
+                version: welcome.server.version,
+                protocol: welcome.protocol,
+              })}
+            </dd>
+          </dl>
+        ) : null}
+        <p className="studio-hint">{t("play.room.moving")}</p>
+        <div className="connect-actions">
+          <button type="button" className="ghost-button" onClick={() => void quitTable()}>
+            {t("connect.disconnect")}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 /** The access key is a credential: it never sits on screen in clear text
@@ -202,8 +190,9 @@ function SecretField({
 
 export default function PlayView() {
   const { t } = useTranslation()
-  const status = useConnectionStore((s) => s.status)
-  const lastError = useConnectionStore((s) => s.lastError)
+  const state = useConnectionState()
+  const status = displayStatus(state)
+  const failure = state.failure ? describeFailure(state.failure, t) : null
   const connect = useConnectionStore((s) => s.connect)
   const savedTicket = useLastTableStore((s) => s.ticket)
   const savedKey = useLastTableStore((s) => s.key)
@@ -217,14 +206,14 @@ export default function PlayView() {
   const [key, setKey] = useState(() => useLastTableStore.getState().key)
   const [name, setName] = useState(() => useLastTableStore.getState().name)
 
-  // The session stays visible through reconnects; the form only returns once
-  // the transport has given up (offline) or is dialing the very first time.
+  // The room stays visible through reconnects; the form only returns once the
+  // connection has ended (offline) or is dialing the very first time.
   if (status === "online" || status === "reconnecting") {
-    return <OnlineView />
+    return <RoomScreen />
   }
 
   // A dial in flight does not lock the form. Connecting again replaces it (the
-  // bridge closes the dial it outran), so a ticket pasted over a stale one
+  // old connection is stopped), so a ticket pasted over a stale one
   // takes effect at once instead of waiting for the old attempt to give up;
   // Cancel drops the attempt and leaves the form as it was.
   const dialing = status === "connecting"
@@ -329,10 +318,11 @@ export default function PlayView() {
           </div>
         </form>
 
-        {lastError ? (
-          <p className="connect-error" role="alert">
-            {lastError}
-          </p>
+        {failure ? (
+          <div className="connect-error" role="alert">
+            <p>{failure.text}</p>
+            {failure.detail ? <p className="connect-error-detail">{failure.detail}</p> : null}
+          </div>
         ) : null}
       </section>
     </div>

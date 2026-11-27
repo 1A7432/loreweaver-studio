@@ -18,7 +18,7 @@
     "key": "Access key",
     "keyPlaceholder": "the key your room admin minted for you",
     "name": "Display name (optional)",
-    "namePlaceholder": "advisory — the keystore name wins",
+    "namePlaceholder": "the name to appear under — empty for the key's own",
     "submit": "Connect",
     "disconnect": "Disconnect",
     "cancel": "Cancel",
@@ -27,12 +27,28 @@
     "showKeyLabel": "Show access key",
     "hideKeyLabel": "Hide access key",
     "error": {
-      "connectTimeout": "Could not reach the table in time. If the host restarted, its ticket changed — paste the current ticket and connect again.",
-      "joinTimeout": "Reached the host, but it did not welcome you in time. Try again in a moment.",
-      "connectFailed": "Could not connect to the table ({{detail}})."
+      "invalid_ticket": "That is not a server ticket. A ticket is one long word starting with “endpoint” — paste the whole of it.",
+      "bind_failed": "Studio could not open its network endpoint on this machine. Check that the network is up, then try again.",
+      "dial_timeout": "Could not reach the table in time. If the host restarted, its ticket changed — paste the current ticket and connect again.",
+      "dial_failed": "Could not connect to the table. The host may be down, or it may be running a server of another protocol version.",
+      "protocol_violation": "The server sent a line too long to be a frame, so the connection was dropped.",
+      "closed_by_peer": "The host closed the connection before letting you in.",
+      "connection_lost": "The connection was lost before you got in. Try again in a moment.",
+      "welcome_timeout": "Reached the host, but it did not welcome you in time. Try again in a moment.",
+      "ping_timeout": "The host stopped answering. Try again in a moment.",
+      "send_failed": "Could not send to the host, so the connection was dropped.",
+      "no_shell": "Connecting needs the desktop app.",
+      "other": "The connection ended ({{code}})."
     },
-    "protocolMismatch": "Protocol {{server}} ≠ {{client}}: the major version is the compatibility contract, so the connection was refused. Update whichever side is behind.",
-    "welcomeUnreadable": "The server's welcome could not be read, so the connection was refused. This usually means the two ends disagree about the frame format — check that both are on a build you recognise.",
+    "refused": {
+      "protocol_mismatch": "This server speaks another version of the protocol than this Studio, so it refused the connection. Update whichever side is behind.",
+      "bad_key": "The server does not know this access key. Ask the room admin for a new one.",
+      "bad_name": "That display name is too long: at most 64 characters.",
+      "hello_first": "The server refused the connection: Studio spoke before saying hello. This is a bug in Studio.",
+      "bad_frame": "The server could not read what Studio sent and refused the connection. This is a bug in Studio or the server.",
+      "other": "The server refused the connection ({{code}})."
+    },
+    "lost": "Lost the table: it dropped and every attempt to reconnect failed. Check that the host is still running, then connect again.",
     "hostLocal": {
       "button": "Host locally & play",
       "starting": "Bringing the server up…",
@@ -60,7 +76,8 @@
     },
     "role": {
       "player": "Player",
-      "keeper": "Admin"
+      "admin": "Room admin",
+      "observer": "Observer"
     },
     "versions": "server {{server}} · studio {{client}}",
     "versionUnknown": "(unreported)",
@@ -155,6 +172,14 @@
   },
   "play": {
     "back": "← Menu",
+    "room": {
+      "title": "Room {{room}}",
+      "you": "You",
+      "member": "{{name}} · {{role}}",
+      "server": "Server",
+      "serverVersion": "{{name}} {{version}} · protocol {{protocol}}",
+      "moving": "Connected. The play screen is being moved to protocol 3.0 — the story, the dice and the panels come back in the next steps."
+    },
     "busy": "Working…",
     "sendFailed": "Nothing was sent — the app could not reach the room. Check the connection and try again.",
     "menuButton": "Menu",

@@ -4,7 +4,7 @@
 // defensible, and blocks-only mode lives one click away in the panels menu.
 
 import { useTranslation } from "react-i18next"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import { usePanelsStore } from "../../../store/panels"
 import { tier2FootprintBytes } from "./assets"
 
@@ -13,7 +13,7 @@ export default function PanelNotice() {
   const manifest = usePanelsStore((s) => s.manifest)
   const noticeRooms = usePanelsStore((s) => s.noticeRooms)
   const markNoticeSeen = usePanelsStore((s) => s.markNoticeSeen)
-  const room = useConnectionStore((s) => s.welcome?.room ?? null)
+  const room = useLegacyConnectionStore((s) => s.welcome?.room ?? null)
 
   if (!room || manifest.length === 0 || noticeRooms.includes(room)) return null
   const mb = (tier2FootprintBytes(manifest) / (1024 * 1024)).toFixed(1)

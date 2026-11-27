@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next"
 import type { MediaFrame } from "@loreweaver/protocol"
 import { pickAnyFiles } from "../../lib/native"
 import { isTauri } from "../../lib/transport"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { useMediaStore } from "../../store/media"
 import { assetFetch, assetReadBase64 } from "./panels/assets"
 
@@ -75,7 +75,7 @@ export default function MediaDeck() {
   const upload = useMediaStore((s) => s.upload)
   const setUploadsEnabled = useMediaStore((s) => s.setUploadsEnabled)
   const clearUpload = useMediaStore((s) => s.clearUpload)
-  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
+  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
   const [error, setError] = useState<string | null>(null)
 
   const share = async () => {

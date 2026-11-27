@@ -17,7 +17,7 @@ vi.mock("../../../lib/transport", () => ({
 }))
 
 import "../../../i18n"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import { useSessionStore } from "../../../store/session"
 import CharacterScreen from "./CharacterScreen"
 import { sheetWrite } from "./sheetWrite"
@@ -47,7 +47,7 @@ describe("CharacterScreen — creation", () => {
   beforeEach(() => {
     sent.length = 0
     useSessionStore.getState().clear()
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",
@@ -118,7 +118,7 @@ describe("CharacterScreen — editing", () => {
   beforeEach(() => {
     sent.length = 0
     useSessionStore.getState().clear()
-    useConnectionStore.setState({
+    useLegacyConnectionStore.setState({
       status: "online",
       welcome: {
         type: "welcome",

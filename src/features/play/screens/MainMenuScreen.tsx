@@ -5,11 +5,11 @@
 
 import { useTranslation } from "react-i18next"
 import { transportSend } from "../../../lib/transport"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import { quitTable } from "../../../store/hostLocal"
 import StatePanel from "../StatePanel"
 import StatusPill from "../StatusPill"
-import type { PlayScreen } from "../PlayView"
+import type { PlayScreen } from "../OnlineView"
 
 interface MenuRow {
   key: string
@@ -20,7 +20,7 @@ interface MenuRow {
 
 export default function MainMenuScreen({ onNavigate }: { onNavigate: (screen: PlayScreen) => void }) {
   const { t } = useTranslation()
-  const welcome = useConnectionStore((s) => s.welcome)
+  const welcome = useLegacyConnectionStore((s) => s.welcome)
   const isKeeper = welcome?.you.role === "keeper"
   const hasDemo = isKeeper && (welcome?.features ?? []).includes("demo")
 

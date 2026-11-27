@@ -1,36 +1,62 @@
 //! Offline loopback integration tests: a real iroh endpoint pair over
 //! localhost UDP with relays and address lookup disabled — no external
-//! network, deterministic sequencing via explicit acks.
+//! network. The fake server speaks protocol 3.0's TRANSPORT: ALPN
+//! `loreweaver/3`, newline-delimited JSON on the first bidirectional stream,
+//! and the byte channel (§11) on every further one. It expects the client's
+//! first line to come from the CALLER: the link writes nothing of its own.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
 use std::time::Duration;
 
 use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream};
 use iroh::{Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
-use loreweaver_transport::client::{
-    connect, connect_with_backoff_pulse, connect_with_deadlines, connect_with_timeouts, Bound,
-    ConnStatus, ConnectParams, Deadline, DeadlineFn, ErrorCode, NetworkProfile, Timeouts,
-    TransportEvent,
+use loreweaver_transport::bytes::{ByteError, ByteFile, MAX_BYTE_STREAMS};
+use loreweaver_transport::codec::{encode_line, LineDecoder, MAX_LINE_BYTES};
+use loreweaver_transport::link::{
+    connect, connect_with, CloseCode, LinkEvent, LinkHandle, LinkParams, LinkStatus,
+    NetworkProfile, Timeouts,
 };
-use loreweaver_transport::codec::{encode_line, LineDecoder};
+use loreweaver_transport::MAX_BLOB_BYTES;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::oneshot;
 
-const ALPN: &[u8] = b"loreweaver/tui/1";
+const ALPN: &[u8] = b"loreweaver/3";
 const STEP: Duration = Duration::from_secs(20);
+const HASH: &str = "3f9a0c7d2b1e4f5a6c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+const OTHER: &str = "0000000000000000000000000000000000000000000000000000000000000001";
 
-fn params(ticket: &str) -> ConnectParams {
-    ConnectParams {
+fn params(ticket: &str) -> LinkParams {
+    LinkParams {
         ticket: ticket.to_owned(),
-        key: "k-test".to_owned(),
-        name: Some("Nyx".to_owned()),
-        client_name: "loreweaver-studio-test".to_owned(),
-        client_version: "0.0.0".to_owned(),
-        network: NetworkProfile::LocalOnly,
+        network: NetworkProfile::Local,
     }
+}
+
+fn hello() -> Value {
+    json!({
+        "type": "hello",
+        "protocol": "3.0",
+        "key": "k-test",
+        "locale": "en",
+        "client": {"name": "loreweaver-studio-test", "version": "0.0.0"},
+        "caps": [],
+    })
+}
+
+fn welcome() -> Value {
+    json!({
+        "type": "welcome",
+        "protocol": "3.0",
+        "server": {"name": "loreweaver", "version": "3.0.0-test"},
+        "room": {"id": "main", "locale": "en"},
+        "you": {"id": "m:000000000001", "name": "Nyx", "role": "player"},
+        "features": [],
+        "epoch": 1,
+        "head": 0,
+        "first": 0,
+    })
 }
 
 async fn bind_server() -> (Endpoint, String) {
@@ -53,15 +79,17 @@ async fn bind_server() -> (Endpoint, String) {
     (endpoint, ticket)
 }
 
+/// The server's side of one connection: the control stream, read line by line.
 struct ServerConn {
     conn: Connection,
     send: SendStream,
     recv: RecvStream,
-    decoder: LineDecoder,
-    queue: Vec<Value>,
+    pending: Vec<u8>,
 }
 
 impl ServerConn {
+    /// Accept one connection and its control stream (which the server only
+    /// sees once the client has written on it).
     async fn accept(endpoint: &Endpoint) -> Self {
         let incoming = endpoint.accept().await.expect("incoming connection");
         let conn = incoming.await.expect("connection establishes");
@@ -70,15 +98,16 @@ impl ServerConn {
             conn,
             send,
             recv,
-            decoder: LineDecoder::new(),
-            queue: Vec::new(),
+            pending: Vec::new(),
         }
     }
 
-    async fn read_frame(&mut self) -> Value {
+    /// The next line exactly as it crossed the wire, newline excluded.
+    async fn read_raw_line(&mut self) -> Vec<u8> {
         loop {
-            if !self.queue.is_empty() {
-                return self.queue.remove(0);
+            if let Some(at) = self.pending.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = self.pending.drain(..=at).collect();
+                return line[..line.len() - 1].to_vec();
             }
             let mut buf = vec![0u8; 64 * 1024];
             let n = self
@@ -87,31 +116,35 @@ impl ServerConn {
                 .await
                 .expect("server read")
                 .expect("client kept the stream open");
-            self.queue
-                .extend(self.decoder.push(&buf[..n]).expect("decode"));
+            self.pending.extend_from_slice(&buf[..n]);
         }
     }
 
+    async fn read_frame(&mut self) -> Value {
+        serde_json::from_slice(&self.read_raw_line().await).expect("a JSON line")
+    }
+
+    async fn write_raw(&mut self, bytes: &[u8]) {
+        self.send.write_all(bytes).await.expect("server write");
+    }
+
     async fn write_frame(&mut self, frame: &Value) {
-        self.send
-            .write_all(&encode_line(frame))
-            .await
-            .expect("server write");
+        self.write_raw(&encode_line(frame)).await;
     }
 }
 
-fn welcome_frame(protocol: &str) -> Value {
-    json!({
-        "type": "welcome",
-        "protocol": protocol,
-        "room": "r1",
-        "you": { "id": "u1", "name": "Nyx", "role": "player" },
-        "locale": "en",
-        "server": "loreweaver/1",
-    })
+/// Accept a connection and read the caller's first line: the `hello`.
+async fn accept_with_hello(endpoint: &Endpoint) -> ServerConn {
+    let mut conn = ServerConn::accept(endpoint).await;
+    assert_eq!(
+        conn.read_frame().await,
+        hello(),
+        "the first line is the caller's"
+    );
+    conn
 }
 
-async fn next_event(rx: &mut UnboundedReceiver<TransportEvent>) -> TransportEvent {
+async fn next_event(rx: &mut UnboundedReceiver<LinkEvent>) -> LinkEvent {
     tokio::time::timeout(STEP, rx.recv())
         .await
         .expect("an event before the timeout")
@@ -119,780 +152,664 @@ async fn next_event(rx: &mut UnboundedReceiver<TransportEvent>) -> TransportEven
 }
 
 async fn expect_status(
-    rx: &mut UnboundedReceiver<TransportEvent>,
-    expected: ConnStatus,
-) -> (u32, Option<String>) {
+    rx: &mut UnboundedReceiver<LinkEvent>,
+    expected: LinkStatus,
+) -> (Option<CloseCode>, Option<String>) {
     match next_event(rx).await {
-        TransportEvent::Status {
+        LinkEvent::Status {
             status,
-            attempt,
-            error,
-            ..
+            code,
+            reason,
         } => {
-            assert_eq!(status, expected, "unexpected status (error: {error:?})");
-            (attempt, error)
+            assert_eq!(status, expected, "unexpected status ({code:?}: {reason:?})");
+            (code, reason)
         }
-        TransportEvent::Frame { frame } => {
-            panic!("expected status {expected:?}, got frame {frame}")
-        }
+        LinkEvent::Frame { frame } => panic!("expected status {expected:?}, got frame {frame}"),
     }
 }
 
-async fn expect_frame(rx: &mut UnboundedReceiver<TransportEvent>) -> Value {
+async fn expect_frame(rx: &mut UnboundedReceiver<LinkEvent>) -> Value {
     match next_event(rx).await {
-        TransportEvent::Frame { frame } => frame,
-        TransportEvent::Status { status, error, .. } => {
-            panic!("expected a frame, got status {status:?} (error: {error:?})")
-        }
+        LinkEvent::Frame { frame } => frame,
+        LinkEvent::Status {
+            status,
+            code,
+            reason,
+        } => panic!("expected a frame, got {status:?} ({code:?}: {reason:?})"),
     }
 }
 
-#[tokio::test]
-async fn happy_path_join_autopong_and_echo() {
-    let (endpoint, ticket) = bind_server().await;
-    let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let join = conn.read_frame().await;
-        assert_eq!(join["type"], "join");
-        assert_eq!(join["key"], "k-test");
-        assert_eq!(join["name"], "Nyx");
-        assert_eq!(join["client"]["name"], "loreweaver-studio-test");
-        conn.write_frame(&welcome_frame("1.6")).await;
-        // Server-initiated keepalive: the transport must answer by itself.
-        conn.write_frame(&json!({"type": "ping", "t": 42})).await;
-        let pong = conn.read_frame().await;
-        assert_eq!(pong, json!({"type": "pong", "t": 42}));
-        // Echo one player input back as narrative.
-        let input = conn.read_frame().await;
-        assert_eq!(input["type"], "input");
-        conn.write_frame(&json!({
-            "type": "narrative",
-            "id": "n1",
-            "speaker": "kp",
-            "text": input["text"].clone(),
-            "format": "markdown",
-        }))
-        .await;
-        conn.conn.closed().await;
-    });
-
-    let (handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    let welcome = expect_frame(&mut rx).await;
-    assert_eq!(welcome["type"], "welcome");
-    assert_eq!(welcome["room"], "r1");
-    expect_status(&mut rx, ConnStatus::Online).await;
-
-    handle
-        .send_frame(json!({"type": "input", "text": "hello"}))
+/// The receiver ends: the actor is gone and dials nothing more.
+async fn expect_end(rx: &mut UnboundedReceiver<LinkEvent>) {
+    let next = tokio::time::timeout(STEP, rx.recv())
         .await
-        .expect("send while online");
-    let narrative = expect_frame(&mut rx).await;
-    assert_eq!(narrative["type"], "narrative");
-    assert_eq!(narrative["text"], "hello");
-
-    handle.close();
-    expect_status(&mut rx, ConnStatus::Offline).await;
-    assert!(rx.recv().await.is_none(), "actor ends after close");
-    server.await.expect("server task");
+        .expect("the actor ends");
+    assert!(next.is_none(), "nothing after closed, got {next:?}");
 }
 
+/// Dial `ticket`, wait for `up`, and send the caller's hello.
+async fn up(ticket: &str) -> (LinkHandle, UnboundedReceiver<LinkEvent>) {
+    up_with(ticket, Timeouts::default()).await
+}
+
+async fn up_with(ticket: &str, timeouts: Timeouts) -> (LinkHandle, UnboundedReceiver<LinkEvent>) {
+    let (handle, mut rx) = connect_with(params(ticket), timeouts);
+    expect_status(&mut rx, LinkStatus::Connecting).await;
+    expect_status(&mut rx, LinkStatus::Up).await;
+    handle.send_frame(hello()).await.expect("hello is written");
+    (handle, rx)
+}
+
+async fn close(handle: &LinkHandle, rx: &mut UnboundedReceiver<LinkEvent>) {
+    handle.close();
+    let (code, reason) = expect_status(rx, LinkStatus::Closed).await;
+    assert_eq!(
+        (code, reason),
+        (None, None),
+        "a close asked for is not a failure"
+    );
+    expect_end(rx).await;
+}
+
+// --- the control stream ------------------------------------------------------------------
+
 #[tokio::test]
-async fn fatal_bad_key_surfaces_and_stops_retrying() {
+async fn the_link_writes_nothing_of_its_own_and_carries_lines_both_ways() {
     let (endpoint, ticket) = bind_server().await;
+    let (done_tx, done_rx) = oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let mut conn = ServerConn::accept(&endpoint).await;
-        let join = conn.read_frame().await;
-        assert_eq!(join["type"], "join");
-        conn.write_frame(&json!({
-            "type": "error",
-            "code": "bad_key",
-            "message": "unknown key",
-        }))
-        .await;
-        // Real server closes; waiting for the client's own close keeps the
-        // error line flush deterministic.
-        conn.conn.closed().await;
-    });
-
-    let (_handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    let error = expect_frame(&mut rx).await;
-    assert_eq!(error["type"], "error");
-    assert_eq!(error["code"], "bad_key");
-    let (_, reason) = expect_status(&mut rx, ConnStatus::Offline).await;
-    assert!(reason.unwrap_or_default().contains("bad_key"));
-    assert!(rx.recv().await.is_none(), "no redial after a fatal error");
-    server.await.expect("server task");
-}
-
-/// The transport does not judge the wire version — it forwards the banner and
-/// lets `store/connection.ts` decide. This test is the regression guard for the
-/// bug where a hardcoded `1.x` check in Rust refused every real engine (which
-/// announces 2.1) before the frontend ever saw the frame.
-#[tokio::test]
-async fn welcome_of_any_protocol_version_is_forwarded_verbatim() {
-    for announced in ["1.6", "2.1", "3.0", "99.99", ""] {
-        let (endpoint, ticket) = bind_server().await;
-        let expected = welcome_frame(announced);
-        let sent = expected.clone();
-        let server = tokio::spawn(async move {
-            let mut conn = ServerConn::accept(&endpoint).await;
-            let _join = conn.read_frame().await;
-            conn.write_frame(&sent).await;
-            // Proves the connection is still usable after the welcome: a
-            // refusing transport would have closed it here. The echo keeps the
-            // close deterministic — the client waits for it before hanging up.
-            let input = conn.read_frame().await;
-            assert_eq!(input["text"], "still open");
-            conn.write_frame(&json!({"type": "ack"})).await;
-            conn.conn.closed().await;
-        });
-
-        let (handle, mut rx) = connect(params(&ticket));
-        expect_status(&mut rx, ConnStatus::Connecting).await;
-        let welcome = expect_frame(&mut rx).await;
+        // Byte for byte what the caller sent: no `join`, no frame of the link's own.
         assert_eq!(
-            welcome, expected,
-            "welcome {announced:?} must arrive verbatim"
+            conn.read_raw_line().await,
+            serde_json::to_vec(&hello()).expect("json")
         );
-        expect_status(&mut rx, ConnStatus::Online).await;
-
-        handle
-            .send_frame(json!({"type": "input", "text": "still open"}))
-            .await
-            .expect("send while online");
-        assert_eq!(expect_frame(&mut rx).await["type"], "ack");
-
-        handle.close();
-        expect_status(&mut rx, ConnStatus::Offline).await;
-        server.await.expect("server task");
-    }
-}
-
-#[tokio::test]
-async fn reconnects_with_rejoin_after_connection_loss() {
-    let (endpoint, ticket) = bind_server().await;
-    let server = tokio::spawn(async move {
-        // First session: welcome, read one input (proves the client settled),
-        // then drop the connection to simulate a server restart.
-        let mut first = ServerConn::accept(&endpoint).await;
-        let join = first.read_frame().await;
-        assert_eq!(join["type"], "join");
-        first.write_frame(&welcome_frame("1.6")).await;
-        let input = first.read_frame().await;
-        assert_eq!(input["text"], "before drop");
-        first.conn.close(0u32.into(), b"server restart");
-
-        // Second session: the client must re-send a full join.
-        let mut second = ServerConn::accept(&endpoint).await;
-        let rejoin = second.read_frame().await;
-        assert_eq!(rejoin["type"], "join");
-        assert_eq!(rejoin["key"], "k-test");
-        second.write_frame(&welcome_frame("1.6")).await;
-        second.conn.closed().await;
+        conn.write_frame(&welcome()).await;
+        // A 3.0 server never pings; a link that answered one would put a
+        // `pong` on the wire before the caller's next line.
+        conn.write_frame(&json!({"type": "ping", "t": 1})).await;
+        conn.write_frame(
+            &json!({"type": "error", "code": "bad_frame", "message": "m", "fatal": true}),
+        )
+        .await;
+        let next = conn.read_frame().await;
+        assert_eq!(next, json!({"type": "input", "rid": "r1", "text": "hi"}));
+        conn.write_frame(&json!({"type": "result", "rid": "r1", "ok": true}))
+            .await;
+        done_rx.await.expect("the test finishes first");
+        conn.conn.closed().await;
     });
 
-    let (handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    let first_welcome = expect_frame(&mut rx).await;
-    assert_eq!(first_welcome["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
+    let (handle, mut rx) = up(&ticket).await;
+    assert_eq!(
+        expect_frame(&mut rx).await,
+        welcome(),
+        "welcome passes through untouched"
+    );
+    assert_eq!(expect_frame(&mut rx).await, json!({"type": "ping", "t": 1}));
+    // Even a fatal error frame is the session's to judge: the link stays up.
+    assert_eq!(expect_frame(&mut rx).await["code"], "bad_frame");
     handle
-        .send_frame(json!({"type": "input", "text": "before drop"}))
+        .send_frame(json!({"type": "input", "rid": "r1", "text": "hi"}))
         .await
-        .expect("send while online");
-
-    let (attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
-    assert_eq!(attempt, 1, "first redial after a settled session");
-    let second_welcome = expect_frame(&mut rx).await;
-    assert_eq!(second_welcome["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
-
-    handle.close();
-    expect_status(&mut rx, ConnStatus::Offline).await;
-    assert!(rx.recv().await.is_none());
+        .expect("still up after an error frame");
+    assert_eq!(expect_frame(&mut rx).await["type"], "result");
+    done_tx.send(()).expect("server waiting");
+    close(&handle, &mut rx).await;
     server.await.expect("server task");
 }
 
-/// One media-channel GET helper for the fake server: read the request header
-/// line off a fresh bidirectional stream, hand back the parsed frame.
-async fn read_blob_request(recv: &mut RecvStream) -> Value {
-    let mut decoder = LineDecoder::new();
-    loop {
-        let mut buf = vec![0u8; 64 * 1024];
-        let n = recv
-            .read(&mut buf)
-            .await
-            .expect("blob stream read")
-            .expect("request header before EOF");
-        let mut frames = decoder.push(&buf[..n]).expect("decode blob request");
-        if let Some(frame) = frames.pop() {
-            return frame;
-        }
-    }
-}
-
 #[tokio::test]
-async fn fetch_blob_roundtrip_and_error_reply() {
+async fn torn_lines_blank_lines_and_garbage_are_framed_like_the_protocol_says() {
     let (endpoint, ticket) = bind_server().await;
-    let body: &[u8] = b"panel entry bytes";
     let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let join = conn.read_frame().await;
-        assert_eq!(join["type"], "join");
-        conn.write_frame(&welcome_frame("1.8")).await;
-
-        // First GET: header + body split across two writes.
-        let (mut bsend, mut brecv) = conn.conn.accept_bi().await.expect("blob stream");
-        let request = read_blob_request(&mut brecv).await;
-        assert_eq!(request["op"], "get");
-        assert_eq!(request["hash"], "cafe01");
-        bsend
-            .write_all(&encode_line(&json!({
-                "op": "get",
-                "hash": "cafe01",
-                "size": body.len(),
-                "mime": "text/html",
-                "name": "index.html",
-            })))
-            .await
-            .expect("blob header write");
-        bsend
-            .write_all(&body[..7])
-            .await
-            .expect("blob body write 1");
-        bsend
-            .write_all(&body[7..])
-            .await
-            .expect("blob body write 2");
-        let _ = bsend.finish();
-
-        // Second GET: an error line with no body.
-        let (mut esend, mut erecv) = conn.conn.accept_bi().await.expect("blob stream 2");
-        let request = read_blob_request(&mut erecv).await;
-        assert_eq!(request["hash"], "unknown");
-        esend
-            .write_all(&encode_line(&json!({
-                "type": "error",
-                "code": "media_not_found",
-                "message": "no such blob",
-            })))
-            .await
-            .expect("error header write");
-        let _ = esend.finish();
-
+        let mut conn = accept_with_hello(&endpoint).await;
+        conn.write_raw(b"{\"type\":\"a\",").await;
+        conn.write_raw(b"\"n\":1}\n\n\r\nnot json\n[1,2]\n42\n{\"ty")
+            .await;
+        conn.write_raw(b"pe\":\"b\"}\r\n{\"type\":\"c\"}\n").await;
         conn.conn.closed().await;
     });
 
-    let (handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
-
-    let blob = tokio::time::timeout(STEP, handle.fetch_blob("cafe01".to_owned()))
-        .await
-        .expect("fetch inside the deadline")
-        .expect("blob fetch succeeds");
-    assert_eq!(blob.bytes, body);
-    assert_eq!(blob.mime, "text/html");
-    assert_eq!(blob.name, "index.html");
-
-    let err = tokio::time::timeout(STEP, handle.fetch_blob("unknown".to_owned()))
-        .await
-        .expect("fetch inside the deadline")
-        .expect_err("a server error line fails the fetch");
-    assert!(err.contains("media_not_found"), "unexpected error: {err}");
-
-    handle.close();
-    expect_status(&mut rx, ConnStatus::Offline).await;
+    let (handle, mut rx) = up(&ticket).await;
+    assert_eq!(expect_frame(&mut rx).await, json!({"type": "a", "n": 1}));
+    assert_eq!(expect_frame(&mut rx).await, json!({"type": "b"}));
+    assert_eq!(expect_frame(&mut rx).await, json!({"type": "c"}));
+    close(&handle, &mut rx).await;
     server.await.expect("server task");
 }
 
 #[tokio::test]
-async fn put_blob_roundtrip_and_error_reply() {
+async fn a_line_far_over_the_old_1_mib_bound_still_arrives_whole() {
+    let text = "x".repeat(3 * 1024 * 1024);
+    let sent = json!({"type": "view", "name": "big", "rev": 1, "at": 0, "data": text});
+    let expected = sent.clone();
     let (endpoint, ticket) = bind_server().await;
-    // Big enough to cross the 64 KiB chunk boundary the protocol fixes, so a
-    // single-write implementation would not pass.
-    let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
-    let expected = body.clone();
     let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let join = conn.read_frame().await;
-        assert_eq!(join["type"], "join");
-        conn.write_frame(&welcome_frame("2.1")).await;
-
-        // First PUT: header line, then the body until the client finishes.
-        let (mut psend, mut precv) = conn.conn.accept_bi().await.expect("put stream");
-        let mut decoder = LineDecoder::new();
-        let mut header = None;
-        let mut received: Vec<u8> = Vec::new();
-        let mut buf = vec![0u8; 64 * 1024];
-        while let Ok(Some(n)) = precv.read(&mut buf).await {
-            if header.is_none() {
-                received.extend_from_slice(&buf[..n]);
-                if let Some(at) = received.iter().position(|&b| b == b'\n') {
-                    let line: Vec<u8> = received.drain(..=at).collect();
-                    header = Some(
-                        decoder
-                            .push(&line)
-                            .expect("decode put header")
-                            .pop()
-                            .expect("one header"),
-                    );
-                }
-                continue;
-            }
-            received.extend_from_slice(&buf[..n]);
-        }
-        let header = header.expect("a put header arrived");
-        assert_eq!(header["op"], "put");
-        assert_eq!(header["upload_id"], "u-1");
-        assert_eq!(received.len(), expected.len(), "the whole body arrived");
-        assert_eq!(received, expected, "the body arrived unmangled");
-        psend
-            .write_all(&encode_line(&json!({"op": "put_ok", "hash": "cafe01"})))
-            .await
-            .expect("put_ok write");
-        let _ = psend.finish();
-
-        // Second PUT: a rejection line.
-        let (mut esend, mut erecv) = conn.conn.accept_bi().await.expect("put stream 2");
-        let mut sink = vec![0u8; 64 * 1024];
-        while let Ok(Some(_)) = erecv.read(&mut sink).await {}
-        esend
-            .write_all(&encode_line(&json!({
-                "type": "error",
-                "code": "media_too_large",
-                "message": "over the per-file cap",
-            })))
-            .await
-            .expect("error write");
-        let _ = esend.finish();
-
+        let mut conn = accept_with_hello(&endpoint).await;
+        conn.write_frame(&sent).await;
         conn.conn.closed().await;
     });
 
-    let (handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
-
-    let hash = tokio::time::timeout(STEP, handle.put_blob("u-1".to_owned(), body))
-        .await
-        .expect("upload inside the deadline")
-        .expect("upload succeeds");
-    // The SERVER's hash is the answer — it is what every later broadcast names.
-    assert_eq!(hash, "cafe01");
-
-    let err = tokio::time::timeout(STEP, handle.put_blob("u-2".to_owned(), vec![1, 2, 3]))
-        .await
-        .expect("upload inside the deadline")
-        .expect_err("a server error line fails the upload");
-    assert!(err.contains("media_too_large"), "unexpected error: {err}");
-
-    handle.close();
-    expect_status(&mut rx, ConnStatus::Offline).await;
+    let (handle, mut rx) = up(&ticket).await;
+    assert_eq!(expect_frame(&mut rx).await, expected);
+    close(&handle, &mut rx).await;
     server.await.expect("server task");
 }
 
-/// A write that the control stream accepted is `Ok`. Enqueue-and-return-Ok
-/// was the old bug: the handle resolved before the actor touched the stream.
 #[tokio::test]
-async fn send_while_online_returns_ok_after_write() {
+async fn a_line_over_the_cap_tears_the_link_as_a_protocol_violation() {
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = accept_with_hello(&endpoint).await;
+        conn.write_frame(&json!({"type": "before"})).await;
+        // No newline in sight, and more than a line may hold.
+        let flood = vec![b'x'; MAX_LINE_BYTES + 1];
+        let _ = conn.send.write_all(&flood).await;
+        conn.conn.closed().await;
+    });
+
+    let (_handle, mut rx) = up(&ticket).await;
+    assert_eq!(expect_frame(&mut rx).await["type"], "before");
+    let (code, reason) = expect_status(&mut rx, LinkStatus::Closed).await;
+    assert_eq!(code, Some(CloseCode::ProtocolViolation));
+    assert!(reason.unwrap_or_default().contains("exceeds"));
+    expect_end(&mut rx).await;
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn the_server_closing_ends_the_link_and_nothing_is_redialled() {
+    let (endpoint, ticket) = bind_server().await;
+    let (redial_tx, redial_rx) = oneshot::channel::<bool>();
+    let server = tokio::spawn(async move {
+        let mut conn = accept_with_hello(&endpoint).await;
+        conn.write_frame(
+            &json!({"type": "error", "code": "bad_key", "message": "unknown key", "fatal": true}),
+        )
+        .await;
+        // A QUIC close discards what is still unsent: hang up once the client
+        // has shown it read the line.
+        assert_eq!(conn.read_frame().await["type"], "read-it");
+        conn.conn.close(0u32.into(), b"bad key");
+        // A link that redialled on its own would knock again.
+        let again = tokio::time::timeout(Duration::from_millis(1500), endpoint.accept()).await;
+        let _ = redial_tx.send(again.is_ok());
+    });
+
+    let (handle, mut rx) = up(&ticket).await;
+    assert_eq!(expect_frame(&mut rx).await["code"], "bad_key");
+    handle
+        .send_frame(json!({"type": "read-it"}))
+        .await
+        .expect("still up");
+    let (code, _) = expect_status(&mut rx, LinkStatus::Closed).await;
+    assert_eq!(code, Some(CloseCode::ClosedByPeer));
+    expect_end(&mut rx).await;
+    assert!(
+        !redial_rx.await.expect("server reports"),
+        "the link dialled again by itself"
+    );
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn a_finished_control_stream_is_closed_by_peer_too() {
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let mut conn = accept_with_hello(&endpoint).await;
+        conn.send.finish().expect("finish");
+        conn.conn.closed().await;
+    });
+
+    let (_handle, mut rx) = up(&ticket).await;
+    let (code, _) = expect_status(&mut rx, LinkStatus::Closed).await;
+    assert_eq!(code, Some(CloseCode::ClosedByPeer));
+    expect_end(&mut rx).await;
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn send_is_a_delivery_verdict_and_fails_once_the_link_is_gone() {
     let (endpoint, ticket) = bind_server().await;
     let (read_tx, read_rx) = oneshot::channel::<()>();
     let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let _join = conn.read_frame().await;
-        conn.write_frame(&welcome_frame("1.6")).await;
-        let input = conn.read_frame().await;
-        assert_eq!(input, json!({"type": "input", "text": "delivered"}));
+        let mut conn = accept_with_hello(&endpoint).await;
+        assert_eq!(conn.read_frame().await, json!({"type": "ping", "t": 7}));
         read_tx.send(()).expect("test waits for the read");
         conn.conn.closed().await;
     });
 
-    let (handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
-
+    let (handle, mut rx) = up(&ticket).await;
     handle
-        .send_frame(json!({"type": "input", "text": "delivered"}))
+        .send_frame(json!({"type": "ping", "t": 7}))
         .await
-        .expect("online write is Ok only after the stream accepts it");
-
-    // Accepted by the stream is not yet sent: a close now would discard the
-    // bytes before they leave. Close once the host has read them.
+        .expect("Ok once the stream accepted it");
+    // Accepted is not yet delivered: close only once the host has read it.
     tokio::time::timeout(STEP, read_rx)
         .await
-        .expect("the host reads the input")
-        .expect("server task alive");
-    handle.close();
-    expect_status(&mut rx, ConnStatus::Offline).await;
+        .expect("the host reads it")
+        .expect("server alive");
+    close(&handle, &mut rx).await;
+    assert!(handle
+        .send_frame(json!({"type": "ping", "t": 8}))
+        .await
+        .is_err());
+    assert_eq!(
+        handle.fetch(HASH.to_owned()).await.expect_err("gone"),
+        ByteError::NotConnected
+    );
     server.await.expect("server task");
 }
 
-/// After a settled session drops, the actor sleeps the backoff window
-/// (`Reconnecting` is emitted only when that sleep ends) and used to
-/// `continue` on `Command::Send` — the handle had already returned `Ok`,
-/// so the typed line vanished. The verdict must be `Err` here.
-#[tokio::test]
-async fn send_during_reconnect_backoff_returns_err() {
-    let (endpoint, ticket) = bind_server().await;
-    let (drop_tx, drop_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = tokio::spawn(async move {
-        let mut first = ServerConn::accept(&endpoint).await;
-        let _join = first.read_frame().await;
-        first.write_frame(&welcome_frame("1.6")).await;
-        drop_rx.await.expect("client asks the server to drop");
-        first.conn.close(0u32.into(), b"drop");
-        // Hold the endpoint; do not accept a redial (that would end backoff).
-        tokio::time::sleep(STEP).await;
-        drop(endpoint);
-    });
+// --- dialling ------------------------------------------------------------------------------
 
-    let (handle, mut rx, mut backoff) = connect_with_backoff_pulse(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
-
-    drop_tx.send(()).expect("signal the drop");
-    tokio::time::timeout(STEP, backoff.recv())
-        .await
-        .expect("actor observed the loss")
-        .expect("backoff pulse channel open");
-    let err = handle
-        .send_frame(json!({"type": "input", "text": "lost if this is Ok"}))
-        .await
-        .expect_err("backoff must not report a successful send");
-    assert!(
-        err.contains("offline") || err.contains("closed") || err.contains("send failed"),
-        "unexpected send error: {err}"
-    );
-
-    handle.close();
-    expect_status(&mut rx, ConnStatus::Offline).await;
-    server.abort();
-}
-
-/// Close (and actor drop) must settle a waiter rather than leave the
-/// `transport_send` Promise pending forever.
-#[tokio::test]
-async fn close_settles_a_pending_send() {
-    let (endpoint, ticket) = bind_server().await;
-    let (drop_tx, drop_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = tokio::spawn(async move {
-        let mut first = ServerConn::accept(&endpoint).await;
-        let _join = first.read_frame().await;
-        first.write_frame(&welcome_frame("1.6")).await;
-        drop_rx.await.expect("client asks the server to drop");
-        first.conn.close(0u32.into(), b"drop");
-        tokio::time::sleep(STEP).await;
-        drop(endpoint);
-    });
-
-    let (handle, mut rx, mut backoff) = connect_with_backoff_pulse(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
-    drop_tx.send(()).expect("signal the drop");
-    tokio::time::timeout(STEP, backoff.recv())
-        .await
-        .expect("actor observed the loss")
-        .expect("backoff pulse channel open");
-
-    let pending = {
-        let handle = handle.clone();
-        tokio::spawn(async move {
-            handle
-                .send_frame(json!({"type": "input", "text": "late"}))
-                .await
-        })
-    };
-    handle.close();
-    let result = tokio::time::timeout(STEP, pending)
-        .await
-        .expect("close settles the waiter")
-        .expect("send task");
-    assert!(
-        result.is_err(),
-        "close must fail the pending send, got {result:?}"
-    );
-    expect_status(&mut rx, ConnStatus::Offline).await;
-    server.abort();
-}
-
-/// Per-attempt bounds short enough for a test to watch them fire. Only for an
-/// attempt that is MEANT to time out: one expected to connect or be welcomed
-/// would race these against a loaded runner — arm its bounds with
-/// [`connect_with_deadlines`] instead.
-const FAST: Timeouts = Timeouts {
+/// Bounds short enough for a test to watch the dial bound fire. Only for an
+/// attempt MEANT to time out.
+const FAST_DIAL: Timeouts = Timeouts {
     dial: Duration::from_millis(300),
-    join: Duration::from_millis(300),
+    stall: Duration::from_secs(30),
+    byte_op: Duration::from_secs(600),
 };
 
-/// The `offline` that ends a connection, with the code the UI words itself by.
-async fn expect_offline_with_code(
-    rx: &mut UnboundedReceiver<TransportEvent>,
-) -> (Option<String>, Option<ErrorCode>) {
-    match next_event(rx).await {
-        TransportEvent::Status {
-            status: ConnStatus::Offline,
-            error,
-            error_code,
-            ..
-        } => (error, error_code),
-        other => panic!("expected offline, got {other:?}"),
-    }
-}
-
-/// A per-attempt bound the test fires by hand: each `fire` releases one
-/// armed deadline, so a timeout happens after the event the test sequences it
-/// on, never on wall-clock time.
-#[derive(Clone)]
-struct Trigger(Arc<Semaphore>);
-
-impl Trigger {
-    fn new() -> Self {
-        Self(Arc::new(Semaphore::new(0)))
-    }
-
-    fn fire(&self) {
-        self.0.add_permits(1);
-    }
-
-    fn deadline(&self) -> Deadline {
-        let permits = self.0.clone();
-        Box::pin(async move {
-            permits.acquire().await.expect("trigger open").forget();
-        })
-    }
-}
-
-/// A bound that never fires: the attempt waits for its real events.
-fn never() -> Deadline {
-    Box::pin(std::future::pending())
-}
-
-/// A host that is reachable on the wire but never answers the handshake: the
-/// endpoint is bound (so the address in the ticket is live) and never
-/// accepts. This is what a stale ticket looks like to the dialer — packets go
-/// out, nothing comes back, and iroh alone keeps trying.
-async fn bind_silent_host() -> (Endpoint, String) {
-    bind_server().await
+#[tokio::test]
+async fn an_unparseable_ticket_closes_at_once_with_its_code() {
+    let (_handle, mut rx) = connect(params("not a ticket"));
+    let (code, reason) = expect_status(&mut rx, LinkStatus::Closed).await;
+    assert_eq!(code, Some(CloseCode::InvalidTicket));
+    assert!(reason.unwrap_or_default().contains("invalid ticket"));
+    expect_end(&mut rx).await;
 }
 
 #[tokio::test]
-async fn a_dial_that_gets_no_answer_times_out_with_a_code_and_does_not_redial() {
-    let (_silent, ticket) = bind_silent_host().await;
-
-    let (_handle, mut rx, _pulse) = connect_with_timeouts(params(&ticket), FAST);
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    let (error, code) = expect_offline_with_code(&mut rx).await;
-    assert_eq!(code, Some(ErrorCode::ConnectTimeout));
-    assert!(
-        error
-            .as_deref()
-            .unwrap_or_default()
-            .contains("connect timeout"),
-        "unexpected detail: {error:?}"
-    );
-    assert!(
-        rx.recv().await.is_none(),
-        "a connection that was never welcomed must not enter the redial loop"
-    );
+async fn a_dial_that_gets_no_answer_times_out_with_its_code() {
+    // Bound but never accepting: what a stale ticket looks like to the dialler.
+    let (_silent, ticket) = bind_server().await;
+    let (_handle, mut rx) = connect_with(params(&ticket), FAST_DIAL);
+    expect_status(&mut rx, LinkStatus::Connecting).await;
+    let (code, reason) = expect_status(&mut rx, LinkStatus::Closed).await;
+    assert_eq!(code, Some(CloseCode::DialTimeout));
+    assert!(reason.unwrap_or_default().contains("dial timeout"));
+    expect_end(&mut rx).await;
 }
 
 #[tokio::test]
-async fn a_host_that_never_welcomes_times_out_the_join_with_its_own_code() {
-    let (endpoint, ticket) = bind_server().await;
-    let (joined_tx, joined_rx) = oneshot::channel::<()>();
-    let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let join = conn.read_frame().await;
-        assert_eq!(join["type"], "join");
-        joined_tx.send(()).expect("test waits for the join");
-        // Connected and joined, then silence.
-        conn.conn.closed().await;
-    });
-
-    // The dial must succeed, so its bound never fires; the join bound fires
-    // only once the host has read the join (firing it earlier would close
-    // the connection before the join reached the host).
-    let join_bound = Trigger::new();
-    let arm: DeadlineFn = {
-        let join_bound = join_bound.clone();
-        Arc::new(move |bound, _attempt| match bound {
-            Bound::Dial => never(),
-            Bound::Join => join_bound.deadline(),
-        })
-    };
-    let (_handle, mut rx, _pulse) =
-        connect_with_deadlines(params(&ticket), Timeouts::default(), arm);
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    tokio::time::timeout(STEP, joined_rx)
+async fn a_server_of_another_alpn_fails_the_dial() {
+    let endpoint = Endpoint::builder(presets::Minimal)
+        .relay_mode(RelayMode::Disabled)
+        .alpns(vec![b"loreweaver/tui/1".to_vec()])
+        .bind()
         .await
-        .expect("the host reads the join")
-        .expect("server task alive");
-    join_bound.fire();
-    let (error, code) = expect_offline_with_code(&mut rx).await;
-    assert_eq!(code, Some(ErrorCode::JoinTimeout));
-    assert!(error.unwrap_or_default().contains("join timeout"));
-    assert!(
-        rx.recv().await.is_none(),
-        "no redial after a first-attempt failure"
-    );
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn a_host_that_hangs_up_before_welcoming_ends_the_first_attempt() {
-    let (endpoint, ticket) = bind_server().await;
-    let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let _join = conn.read_frame().await;
-        conn.conn.close(0u32.into(), b"go away");
-        // Closing the endpoint is what flushes the CLOSE out; dropping it
-        // straight away can swallow the frame and leave the client waiting.
-        endpoint.close().await;
+        .expect("a 2.x-style server binds");
+    let mut addr = EndpointAddr::new(endpoint.id());
+    for sock in endpoint.bound_sockets() {
+        addr = addr.with_ip_addr(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            sock.port(),
+        ));
+    }
+    let ticket = EndpointTicket::from(addr).to_string();
+    let accepting = tokio::spawn(async move {
+        if let Some(incoming) = endpoint.accept().await {
+            let _ = incoming.await;
+        }
+        endpoint
     });
 
     let (_handle, mut rx) = connect(params(&ticket));
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    let (_, code) = expect_offline_with_code(&mut rx).await;
-    assert_eq!(code, Some(ErrorCode::ConnectFailed));
-    assert!(rx.recv().await.is_none());
-    server.await.expect("server task");
+    expect_status(&mut rx, LinkStatus::Connecting).await;
+    let (code, _) = expect_status(&mut rx, LinkStatus::Closed).await;
+    assert_eq!(code, Some(CloseCode::DialFailed));
+    expect_end(&mut rx).await;
+    accepting.abort();
 }
 
-/// The hang this guards: a close that arrives while `endpoint.connect` is
-/// still pending used to sit in the command queue until the dial returned —
-/// which, for a stale ticket, is minutes. The replacement dial closes the
-/// incumbent exactly this way, so a close the actor cannot hear is a connect
-/// button that does nothing.
 #[tokio::test]
 async fn close_abandons_a_dial_in_flight_and_other_commands_fail_fast() {
-    let (_silent, ticket) = bind_silent_host().await;
-    // The real bounds: only the close can end this within the test.
-    let (handle, mut rx, _pulse) = connect_with_timeouts(params(&ticket), Timeouts::default());
-    expect_status(&mut rx, ConnStatus::Connecting).await;
+    let (_silent, ticket) = bind_server().await;
+    let (handle, mut rx) = connect(params(&ticket));
+    expect_status(&mut rx, LinkStatus::Connecting).await;
 
-    // Mid-dial there is no stream to send on: refuse, do not queue.
-    let verdict = tokio::time::timeout(
-        Duration::from_secs(5),
-        handle.send_frame(json!({"type": "input", "text": "too early"})),
-    )
-    .await
-    .expect("a send during a dial settles instead of waiting for it");
-    assert!(
-        verdict.is_err(),
-        "send during a dial must be Err, got {verdict:?}"
-    );
-    let fetched =
-        tokio::time::timeout(Duration::from_secs(5), handle.fetch_blob("cafe".to_owned()))
-            .await
-            .expect("a fetch during a dial settles too");
-    assert!(fetched.is_err());
+    let verdict = tokio::time::timeout(Duration::from_secs(5), handle.send_frame(hello()))
+        .await
+        .expect("a send during a dial settles instead of waiting for it");
+    assert!(verdict.is_err(), "no stream to write on yet: {verdict:?}");
+    let fetched = tokio::time::timeout(Duration::from_secs(5), handle.fetch(HASH.to_owned()))
+        .await
+        .expect("a fetch during a dial settles too");
+    assert_eq!(fetched.expect_err("not up"), ByteError::NotConnected);
 
     let started = std::time::Instant::now();
-    handle.close();
-    let (error, code) = expect_offline_with_code(&mut rx).await;
-    assert_eq!((error, code), (None, None), "a close is not a failure");
+    close(&handle, &mut rx).await;
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "close took {:?}: it waited out the dial",
         started.elapsed()
     );
-    assert!(rx.recv().await.is_none(), "the actor ends after a close");
 }
 
-/// A replacement dial (the bridge closes the incumbent and starts a new
-/// actor) must not be held up by the one it replaces, and the replaced one
-/// must really end.
 #[tokio::test]
-async fn a_new_dial_while_one_is_stuck_connects_and_the_stuck_one_ends() {
-    let (_silent, stale_ticket) = bind_silent_host().await;
+async fn a_new_link_while_one_is_stuck_comes_up_and_the_stuck_one_ends() {
+    let (_silent, stale_ticket) = bind_server().await;
     let (endpoint, live_ticket) = bind_server().await;
     let server = tokio::spawn(async move {
-        let mut conn = ServerConn::accept(&endpoint).await;
-        let _join = conn.read_frame().await;
-        conn.write_frame(&welcome_frame("1.6")).await;
+        let conn = accept_with_hello(&endpoint).await;
         conn.conn.closed().await;
     });
 
-    let (stuck, mut stuck_rx, _pulse) =
-        connect_with_timeouts(params(&stale_ticket), Timeouts::default());
-    expect_status(&mut stuck_rx, ConnStatus::Connecting).await;
-
-    // What `transport_connect` does: close the occupant, seat a new actor.
+    let (stuck, mut stuck_rx) = connect(params(&stale_ticket));
+    expect_status(&mut stuck_rx, LinkStatus::Connecting).await;
+    // What `transport_connect` does: close the occupant, seat a new link.
     stuck.close();
-    let (fresh, mut fresh_rx) = connect(params(&live_ticket));
-    expect_status(&mut fresh_rx, ConnStatus::Connecting).await;
-    assert_eq!(expect_frame(&mut fresh_rx).await["type"], "welcome");
-    expect_status(&mut fresh_rx, ConnStatus::Online).await;
-
-    expect_offline_with_code(&mut stuck_rx).await;
-    assert!(
-        stuck_rx.recv().await.is_none(),
-        "the replaced actor is gone"
-    );
-
-    fresh.close();
-    expect_status(&mut fresh_rx, ConnStatus::Offline).await;
+    let (fresh, mut fresh_rx) = up(&live_ticket).await;
+    let (code, _) = expect_status(&mut stuck_rx, LinkStatus::Closed).await;
+    assert_eq!(code, None);
+    expect_end(&mut stuck_rx).await;
+    close(&fresh, &mut fresh_rx).await;
     server.await.expect("server task");
 }
 
-/// After a session that WAS good, a dial that gets no answer is not fatal: the
-/// redial loop keeps going under the same dial bound, with the attempt count
-/// rising, and a close still ends it.
+// --- the byte channel ----------------------------------------------------------------------
+
+/// Accept one byte stream and read its request line.
+async fn accept_request(conn: &Connection) -> (SendStream, RecvStream, Value) {
+    let (send, mut recv) = conn.accept_bi().await.expect("a byte stream");
+    let mut decoder = LineDecoder::new();
+    loop {
+        let mut buf = vec![0u8; 4096];
+        let n = recv
+            .read(&mut buf)
+            .await
+            .expect("byte stream read")
+            .expect("a request before the end");
+        if let Some(request) = decoder.push(&buf[..n]).expect("decode").pop() {
+            return (send, recv, request);
+        }
+    }
+}
+
+fn get_ok(hash: &str, size: u64) -> Value {
+    json!({"op": "get", "ok": true, "hash": hash, "size": size, "mime": "image/png", "name": "map.png"})
+}
+
+fn refusal(code: &str) -> Value {
+    json!({"ok": false, "code": code, "message": "said in the member's language"})
+}
+
 #[tokio::test]
-async fn redial_after_a_good_session_is_bounded_and_keeps_going() {
+async fn get_succeeds_and_each_bad_answer_has_its_own_failure() {
+    let body: &[u8] = b"panel entry bytes";
     let (endpoint, ticket) = bind_server().await;
-    let (drop_tx, drop_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {
-        let mut first = ServerConn::accept(&endpoint).await;
-        let _join = first.read_frame().await;
-        first.write_frame(&welcome_frame("1.6")).await;
-        drop_rx.await.expect("client asks the server to drop");
-        first.conn.close(0u32.into(), b"restart");
-        // Hold the endpoint and never accept: every redial dials a host that
-        // does not answer.
-        tokio::time::sleep(STEP).await;
-        drop(endpoint);
+        let conn = accept_with_hello(&endpoint).await;
+        let conn = conn.conn;
+
+        // 1. The header, then the body split across writes.
+        let (mut send, _recv, request) = accept_request(&conn).await;
+        assert_eq!(request, json!({"op": "get", "hash": HASH}));
+        send.write_all(&encode_line(&get_ok(HASH, body.len() as u64)))
+            .await
+            .unwrap();
+        send.write_all(&body[..5]).await.unwrap();
+        send.write_all(&body[5..]).await.unwrap();
+        send.finish().unwrap();
+
+        // 2. The server's refusal, word for word.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&refusal("media_not_found")))
+            .await
+            .unwrap();
+        send.finish().unwrap();
+
+        // 3. A reply naming another file.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&get_ok(OTHER, 1)))
+            .await
+            .unwrap();
+        send.write_all(b"x").await.unwrap();
+        send.finish().unwrap();
+
+        // 4. More than this client accepts.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&get_ok(HASH, MAX_BLOB_BYTES + 1)))
+            .await
+            .unwrap();
+        let _ = send.finish();
+
+        // 5. One byte more than promised.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&get_ok(HASH, 3)))
+            .await
+            .unwrap();
+        send.write_all(b"abcd").await.unwrap();
+        send.finish().unwrap();
+
+        // 6. Fewer bytes than promised, then the end.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(&get_ok(HASH, 10)))
+            .await
+            .unwrap();
+        send.write_all(b"abc").await.unwrap();
+        send.finish().unwrap();
+
+        // 7. A header that never ends.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        let _ = send.write_all(&[b' '; 3000]).await;
+        let _ = send.finish();
+
+        // 8. The 2.x error shape is not a reply any more.
+        let (mut send, _recv, _) = accept_request(&conn).await;
+        send.write_all(&encode_line(
+            &json!({"type": "error", "code": "media_not_found", "message": "m"}),
+        ))
+        .await
+        .unwrap();
+        send.finish().unwrap();
+
+        conn.closed().await;
     });
 
-    // The first attempt must connect and be welcomed, so its bounds never
-    // fire. Every redial's dial bound fires when the test says.
-    let redial_bound = Trigger::new();
-    let arm: DeadlineFn = {
-        let redial_bound = redial_bound.clone();
-        Arc::new(move |bound, attempt| match (bound, attempt) {
-            (Bound::Dial, 1..) => redial_bound.deadline(),
-            _ => never(),
-        })
+    let (handle, mut rx) = up(&ticket).await;
+    let fetched = handle.fetch(HASH.to_owned()).await.expect("GET succeeds");
+    assert_eq!(fetched.bytes, body);
+    assert_eq!(
+        fetched.file,
+        ByteFile {
+            hash: HASH.to_owned(),
+            size: body.len() as u64,
+            mime: "image/png".to_owned(),
+            name: "map.png".to_owned(),
+        }
+    );
+    let refused = handle.fetch(HASH.to_owned()).await.expect_err("refused");
+    assert_eq!(refused.code(), "media_not_found");
+    assert_eq!(
+        refused.to_string(),
+        "media_not_found: said in the member's language"
+    );
+    for expected in [
+        "bad_reply",
+        "too_large",
+        "too_much",
+        "stream_ended",
+        "bad_reply",
+        "bad_reply",
+    ] {
+        let err = handle.fetch(HASH.to_owned()).await.expect_err(expected);
+        assert_eq!(err.code(), expected, "{err}");
+    }
+    // A hash that is not one is refused before any stream opens.
+    assert_eq!(
+        handle
+            .fetch("cafe".to_owned())
+            .await
+            .expect_err("not a hash"),
+        ByteError::BadHash
+    );
+    close(&handle, &mut rx).await;
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn a_byte_stream_with_nothing_arriving_stalls() {
+    let (endpoint, ticket) = bind_server().await;
+    let (done_tx, done_rx) = oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let conn = accept_with_hello(&endpoint).await;
+        // Read the request, answer nothing, hold the stream open.
+        let (_send, _recv, _) = accept_request(&conn.conn).await;
+        done_rx.await.expect("the test finishes first");
+    });
+
+    let stall = Timeouts {
+        dial: Duration::from_secs(15),
+        stall: Duration::from_millis(300),
+        byte_op: Duration::from_secs(600),
     };
-    let (handle, mut rx, mut pulse) =
-        connect_with_deadlines(params(&ticket), Timeouts::default(), arm);
-    expect_status(&mut rx, ConnStatus::Connecting).await;
-    assert_eq!(expect_frame(&mut rx).await["type"], "welcome");
-    expect_status(&mut rx, ConnStatus::Online).await;
+    let (handle, mut rx) = up_with(&ticket, stall).await;
+    let err = handle.fetch(HASH.to_owned()).await.expect_err("stalled");
+    assert_eq!(err, ByteError::Stalled);
+    done_tx.send(()).expect("server waiting");
+    close(&handle, &mut rx).await;
+    server.await.expect("server task");
+}
 
-    drop_tx.send(()).expect("signal the drop");
-    tokio::time::timeout(STEP, pulse.recv())
+#[tokio::test]
+async fn put_sends_every_byte_then_finishes_and_reads_the_receipt() {
+    // Big enough to cross the 64 KiB chunk boundary.
+    let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let expected = body.clone();
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let conn = accept_with_hello(&endpoint).await;
+        let conn = conn.conn;
+
+        // 1. Header line, then the body until the client finishes its side.
+        let (mut send, mut recv) = conn.accept_bi().await.expect("put stream");
+        let mut received: Vec<u8> = Vec::new();
+        let mut buf = vec![0u8; 64 * 1024];
+        while let Some(n) = recv.read(&mut buf).await.expect("read") {
+            received.extend_from_slice(&buf[..n]);
+        }
+        let at = received.iter().position(|&b| b == b'\n').expect("a header");
+        let header: Value = serde_json::from_slice(&received[..at]).expect("json header");
+        assert_eq!(header, json!({"op": "put", "upload_id": "u-1"}));
+        assert_eq!(
+            &received[at + 1..],
+            &expected[..],
+            "the body, whole and in order"
+        );
+        send.write_all(&encode_line(&json!({
+            "op": "put", "ok": true, "hash": HASH, "size": expected.len(), "mime": "audio/ogg", "name": "tide.ogg",
+        })))
         .await
-        .expect("actor observed the loss")
-        .expect("pulse open");
+        .unwrap();
+        send.finish().unwrap();
 
-    let (first_attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
-    assert_eq!(first_attempt, 1);
-    // The first redial's dial bound fires: it must give up on it, back off,
-    // and try again as attempt 2 — not hang on attempt 1 and not go offline.
-    redial_bound.fire();
-    let (second_attempt, _) = expect_status(&mut rx, ConnStatus::Reconnecting).await;
-    assert_eq!(second_attempt, 2);
+        // 2. Refused part-way: the error line, without reading the body.
+        let (mut send, _recv, request) = accept_request(&conn).await;
+        assert_eq!(request["upload_id"], "u-2");
+        send.write_all(&encode_line(&refusal("media_unknown_upload")))
+            .await
+            .unwrap();
+        send.finish().unwrap();
 
-    handle.close();
-    expect_status(&mut rx, ConnStatus::Offline).await;
-    server.abort();
+        // 3. A GET-shaped answer to a PUT.
+        let (mut send, mut recv, _) = accept_request(&conn).await;
+        while let Ok(Some(_)) = recv.read(&mut buf).await {}
+        send.write_all(&encode_line(&get_ok(HASH, 3)))
+            .await
+            .unwrap();
+        send.finish().unwrap();
+
+        conn.closed().await;
+    });
+
+    let (handle, mut rx) = up(&ticket).await;
+    let receipt = handle
+        .put("u-1".to_owned(), body.clone())
+        .await
+        .expect("PUT succeeds");
+    assert_eq!(
+        receipt,
+        ByteFile {
+            hash: HASH.to_owned(),
+            size: body.len() as u64,
+            mime: "audio/ogg".to_owned(),
+            name: "tide.ogg".to_owned(),
+        }
+    );
+    let refused = handle
+        .put("u-2".to_owned(), vec![1, 2, 3])
+        .await
+        .expect_err("refused");
+    assert_eq!(refused.code(), "media_unknown_upload");
+    let wrong = handle
+        .put("u-3".to_owned(), vec![1, 2, 3])
+        .await
+        .expect_err("a GET reply");
+    assert_eq!(wrong.code(), "bad_reply");
+    assert_eq!(
+        handle.put(String::new(), vec![1]).await.expect_err("no id"),
+        ByteError::BadUploadId
+    );
+    assert_eq!(
+        handle
+            .put("x".repeat(65), vec![1])
+            .await
+            .expect_err("too long"),
+        ByteError::BadUploadId
+    );
+    close(&handle, &mut rx).await;
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn at_most_four_byte_streams_are_open_and_the_fifth_waits_its_turn() {
+    let (endpoint, ticket) = bind_server().await;
+    let server = tokio::spawn(async move {
+        let conn = accept_with_hello(&endpoint).await;
+        let conn = conn.conn;
+        let mut open = Vec::new();
+        for _ in 0..MAX_BYTE_STREAMS {
+            open.push(accept_request(&conn).await);
+        }
+        // Four are open and unanswered: a fifth must not have been opened.
+        let early = tokio::time::timeout(Duration::from_millis(500), conn.accept_bi()).await;
+        assert!(
+            early.is_err(),
+            "a fifth byte stream opened while four were busy"
+        );
+        // Answer one: its slot goes to the fifth.
+        let (mut send, _recv, _) = open.remove(0);
+        send.write_all(&encode_line(&refusal("media_not_found")))
+            .await
+            .unwrap();
+        send.finish().unwrap();
+        open.push(accept_request(&conn).await);
+        for (mut send, _recv, _) in open {
+            send.write_all(&encode_line(&refusal("media_not_found")))
+                .await
+                .unwrap();
+            send.finish().unwrap();
+        }
+        conn.closed().await;
+    });
+
+    let (handle, mut rx) = up(&ticket).await;
+    let fetches: Vec<_> = (0..MAX_BYTE_STREAMS + 1)
+        .map(|_| {
+            let handle = handle.clone();
+            tokio::spawn(async move { handle.fetch(HASH.to_owned()).await })
+        })
+        .collect();
+    for fetch in fetches {
+        let result = tokio::time::timeout(STEP, fetch)
+            .await
+            .expect("every fetch is answered")
+            .expect("fetch task");
+        assert_eq!(result.expect_err("refused").code(), "media_not_found");
+    }
+    close(&handle, &mut rx).await;
+    server.await.expect("server task");
 }

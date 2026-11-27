@@ -16,6 +16,10 @@ import { installPack } from "../lib/packInstall"
 import { isTauri, transportSend } from "../lib/transport"
 import { useAppStore } from "./app"
 import { useConnectionStore } from "./connection"
+// Still the 2.x view of the table (status, welcome, the `keeper` role) and the
+// 2.x `transportSend`: the test drive moves to protocol 3.0 with the local host
+// and the authoring side, in a later step. Until then it cannot reach `online`.
+import { useLegacyConnectionStore } from "./legacyConnection"
 import { useHostLocalStore } from "./hostLocal"
 
 /** The author-visible progress: installing → host starting → connected →
@@ -142,7 +146,7 @@ export const useTestDriveStore = create<TestDriveState>()((set) => ({
       //    rulepack registries, so a pack that ships either needs a restart.
       set({ phase: "starting" })
       const host = useHostLocalStore.getState()
-      const serving = host.phase === "ready" && useConnectionStore.getState().status === "online"
+      const serving = host.phase === "ready" && useLegacyConnectionStore.getState().status === "online"
       if (serving && request.carriesSkillsOrRulepacks) {
         await useHostLocalStore.getState().stop()
         await useConnectionStore.getState().disconnect()
@@ -154,18 +158,18 @@ export const useTestDriveStore = create<TestDriveState>()((set) => ({
       // 4. `hostLocal` dials the moment the server announces its ticket + key.
       set({ phase: "connecting" })
       const online = await waitFor(() => {
-        const state = useConnectionStore.getState()
+        const state = useLegacyConnectionStore.getState()
         return state.status === "online" && state.welcome !== null
       }, CONNECT_TIMEOUT_MS)
       if (!online) {
-        const reason = useHostLocalStore.getState().error ?? useConnectionStore.getState().lastError
+        const reason = useHostLocalStore.getState().error ?? useLegacyConnectionStore.getState().lastError
         set({ phase: "error", error: reason ?? "testDrive.err.connectTimeout" })
         return
       }
       // World import is keeper-only (`cmd_import` refuses it outright for a
       // player), so say so here rather than letting the engine reject each
       // command one by one.
-      if (useConnectionStore.getState().welcome?.you.role !== "keeper") {
+      if (useLegacyConnectionStore.getState().welcome?.you.role !== "keeper") {
         set({ phase: "error", error: "testDrive.err.notKeeper" })
         return
       }
@@ -207,7 +211,7 @@ async function mountSource(
 
   try {
     const host = useHostLocalStore.getState()
-    const ready = host.phase === "ready" && useConnectionStore.getState().status === "online"
+    const ready = host.phase === "ready" && useLegacyConnectionStore.getState().status === "online"
     if (!ready || host.devSourceRoot !== root) {
       if (ready) {
         await useHostLocalStore.getState().stop()
@@ -218,15 +222,15 @@ async function mountSource(
 
     set({ phase: "connecting" })
     const online = await waitFor(() => {
-      const state = useConnectionStore.getState()
+      const state = useLegacyConnectionStore.getState()
       return state.status === "online" && state.welcome !== null
     }, CONNECT_TIMEOUT_MS)
     if (!online) {
-      const reason = useHostLocalStore.getState().error ?? useConnectionStore.getState().lastError
+      const reason = useHostLocalStore.getState().error ?? useLegacyConnectionStore.getState().lastError
       set({ phase: "error", error: reason ?? "testDrive.err.connectTimeout" })
       return
     }
-    if (useConnectionStore.getState().welcome?.you.role !== "keeper") {
+    if (useLegacyConnectionStore.getState().welcome?.you.role !== "keeper") {
       set({ phase: "error", error: "testDrive.err.notKeeper" })
       return
     }

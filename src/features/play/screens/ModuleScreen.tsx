@@ -12,7 +12,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { transportSend } from "../../../lib/transport"
 import { useAdminStore } from "../../../store/admin"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import ScreenShell from "./ScreenShell"
 
 /** Nothing typed yet / the line reached the transport / it never left. */
@@ -24,7 +24,7 @@ export default function ModuleScreen({ onBack }: { onBack: () => void }) {
   const busy = useAdminStore((s) => s.busy)
   const generateModule = useAdminStore((s) => s.generateModule)
 
-  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
+  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
 
   const [path, setPath] = useState("")
   const [description, setDescription] = useState("")

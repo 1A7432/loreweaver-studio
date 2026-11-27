@@ -1,11 +1,16 @@
-//! Tauri glue for the transport actor: three commands in, one event stream out.
+//! Tauri glue for the link actor: three commands in, one event stream out.
 //!
 //! The WebView never touches the network. It calls `transport_connect` /
 //! `transport_send` / `transport_disconnect`, and consumes every
-//! [`TransportEvent`] (status + frames) from the `loreweaver://transport`
-//! event channel. Each explicit connect carries a **bridge** connection id —
-//! stamped onto the envelope, never onto the protocol wire frame — so the
-//! WebView can drop events from a generation it has already left.
+//! [`LinkEvent`] (status + frames) from the `loreweaver://transport` event
+//! channel. Each link carries a **bridge** connection id — one per dial, a
+//! redial included; stamped onto the envelope, never onto the protocol wire
+//! frame — so the WebView can drop events from a link it has already left, and
+//! a send meant for a link that is gone is refused instead of landing on its
+//! successor (where it would arrive before that link's `hello`).
+//!
+//! The link is plain: the WebView's protocol session writes `hello`, answers
+//! nothing on the link's behalf, and decides when to dial again.
 //!
 //! The slot knows whose actor it is holding. Commands cross the IPC boundary
 //! as independent tasks, so they can be handled out of the order the WebView
@@ -15,9 +20,7 @@
 //! the healthy actor emits on its way out. That is a working table taken apart
 //! by a redial nobody is waiting for.
 
-use loreweaver_transport::client::{
-    self, ClientHandle, ConnectParams, NetworkProfile, TransportEvent,
-};
+use loreweaver_transport::link::{self, LinkEvent, LinkHandle, LinkParams, NetworkProfile};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
@@ -29,6 +32,9 @@ pub const TRANSPORT_EVENT: &str = "loreweaver://transport";
 /// only the generation that still owns the store may settle it — so this is
 /// for whoever is reading a log.
 const STALE_DIAL: &str = "a newer connection already owns the transport";
+
+/// What a send for a link that is no longer seated is told.
+const STALE_SEND: &str = "that link is not the one seated";
 
 /// Who a seated actor belongs to: the bridge generation that dialed it, the
 /// WebView page session that minted that generation, and its place in that
@@ -52,12 +58,12 @@ struct Seat<H> {
 }
 
 #[derive(Default)]
-pub struct TransportState(Mutex<Option<Seat<ClientHandle>>>);
+pub struct TransportState(Mutex<Option<Seat<LinkHandle>>>);
 
 impl TransportState {
-    /// A clone of the live connection handle, if any (for sibling modules —
-    /// the asset cache pulls blobs over the same authenticated connection).
-    pub async fn handle(&self) -> Option<ClientHandle> {
+    /// A clone of the live link's handle, if any (for sibling modules — the
+    /// asset cache pulls files over the same welcomed connection).
+    pub async fn handle(&self) -> Option<LinkHandle> {
         self.0.lock().await.as_ref().map(|seat| seat.handle.clone())
     }
 }
@@ -88,6 +94,14 @@ fn take_for_replace<H>(
     }
 }
 
+/// The seated actor, but only for the generation that seated it: a send from a
+/// link the WebView has already replaced must not reach the new one.
+fn held_by<'a, H>(slot: &'a Option<Seat<H>>, connection_id: &str) -> Option<&'a H> {
+    slot.as_ref()
+        .filter(|seat| seat.owner.connection_id == connection_id)
+        .map(|seat| &seat.handle)
+}
+
 /// Take the actor down only for the generation that seated it. A disconnect
 /// from any other one is about a connection that is already gone, and the
 /// actor it would close belongs to somebody still using it.
@@ -104,7 +118,7 @@ fn take_if_owner<H>(slot: &mut Option<Seat<H>>, connection_id: &str) -> Option<H
 /// protocol frame payload. Late events already sitting in the Tauri/JS queue
 /// still carry the id they were minted with; the WebView is the one that
 /// drops a stale generation — a check here cannot see those.
-pub fn bridged_event(connection_id: &str, event: &TransportEvent) -> Value {
+pub fn bridged_event(connection_id: &str, event: &LinkEvent) -> Value {
     let mut payload = serde_json::to_value(event).expect("transport events are JSON");
     payload
         .as_object_mut()
@@ -118,8 +132,7 @@ pub async fn transport_connect(
     app: AppHandle,
     state: State<'_, TransportState>,
     ticket: String,
-    key: String,
-    name: Option<String>,
+    network: Option<NetworkProfile>,
     generation: SlotOwner,
 ) -> Result<(), String> {
     if generation.connection_id.is_empty() || generation.session.is_empty() {
@@ -131,15 +144,11 @@ pub async fn transport_connect(
     if let Some(previous) = take_for_replace(&mut slot, &generation)? {
         previous.close();
     }
-    let params = ConnectParams {
+    let params = LinkParams {
         ticket,
-        key,
-        name,
-        client_name: "loreweaver-studio".to_owned(),
-        client_version: env!("CARGO_PKG_VERSION").to_owned(),
-        network: NetworkProfile::N0,
+        network: network.unwrap_or_default(),
     };
-    let (handle, mut events) = client::connect(params);
+    let (handle, mut events) = link::connect(params);
     let connection_id = generation.connection_id.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(event) = events.recv().await {
@@ -153,15 +162,16 @@ pub async fn transport_connect(
     Ok(())
 }
 
+/// Write one frame on the link `connection_id` names — and only that one.
 #[tauri::command]
-pub async fn transport_send(state: State<'_, TransportState>, frame: Value) -> Result<(), String> {
-    let handle = state
-        .0
-        .lock()
-        .await
-        .as_ref()
-        .map(|seat| seat.handle.clone())
-        .ok_or_else(|| "not connected".to_owned())?;
+pub async fn transport_send(
+    state: State<'_, TransportState>,
+    connection_id: String,
+    frame: Value,
+) -> Result<(), String> {
+    let handle = held_by(&*state.0.lock().await, &connection_id)
+        .cloned()
+        .ok_or_else(|| STALE_SEND.to_owned())?;
     handle.send_frame(frame).await
 }
 
@@ -185,8 +195,8 @@ pub async fn transport_disconnect(
 
 #[cfg(test)]
 mod tests {
-    use super::{bridged_event, take_for_replace, take_if_owner, Seat, SlotOwner};
-    use loreweaver_transport::client::{ConnStatus, ErrorCode, TransportEvent};
+    use super::{bridged_event, held_by, take_for_replace, take_if_owner, Seat, SlotOwner};
+    use loreweaver_transport::link::{CloseCode, LinkEvent, LinkStatus};
     use serde_json::json;
 
     fn owner(connection_id: &str, session: &str, seq: u64) -> SlotOwner {
@@ -225,14 +235,25 @@ mod tests {
         let mut slot = seated("gen-b", "page-1", 2, "live");
         let _ = take_for_replace(&mut slot, &owner("gen-a", "page-1", 1));
         let seat = slot.as_ref().expect("the live actor is still seated");
-        let event = TransportEvent::Status {
-            status: ConnStatus::Online,
-            attempt: 0,
-            error: None,
-            error_code: None,
+        let event = LinkEvent::Status {
+            status: LinkStatus::Up,
+            reason: None,
+            code: None,
         };
         let payload = bridged_event(&seat.owner.connection_id, &event);
         assert_eq!(payload["connectionId"], "gen-b");
+    }
+
+    #[test]
+    fn a_send_reaches_only_the_link_it_was_meant_for() {
+        // The WebView redialled (gen-b) while a frame for gen-a was still on
+        // its way: delivering it to gen-b would put it on the wire before
+        // gen-b's own hello.
+        let slot = seated("gen-b", "page-1", 2, "live");
+        assert_eq!(held_by(&slot, "gen-b").map(String::as_str), Some("live"));
+        assert!(held_by(&slot, "gen-a").is_none());
+        let empty: Option<Seat<String>> = None;
+        assert!(held_by(&empty, "gen-b").is_none());
     }
 
     #[test]
@@ -281,13 +302,12 @@ mod tests {
     #[test]
     fn stamps_connection_id_on_the_envelope_not_the_wire_frame() {
         let frame = json!({
-            "type": "narrative",
-            "id": "n1",
-            "speaker": "kp",
-            "text": "from the old room",
-            "format": "markdown",
+            "type": "event",
+            "seq": 7,
+            "kind": "narrative",
+            "data": {"speaker": "kp", "text": "from the old room", "format": "markdown"},
         });
-        let event = TransportEvent::Frame {
+        let event = LinkEvent::Frame {
             frame: frame.clone(),
         };
         let payload = bridged_event("gen-1", &event);
@@ -299,30 +319,28 @@ mod tests {
 
     #[test]
     fn a_failure_code_rides_the_envelope_for_the_webview_to_word() {
-        let event = TransportEvent::Status {
-            status: ConnStatus::Offline,
-            attempt: 0,
-            error: Some("connect timeout: no connection to the host within 15s".to_owned()),
-            error_code: Some(ErrorCode::ConnectTimeout),
+        let event = LinkEvent::Status {
+            status: LinkStatus::Closed,
+            reason: Some("dial timeout: no connection within 15s".to_owned()),
+            code: Some(CloseCode::DialTimeout),
         };
         let payload = bridged_event("gen-1", &event);
-        assert_eq!(payload["errorCode"], "connect_timeout");
+        assert_eq!(payload["code"], "dial_timeout");
         assert_eq!(payload["connectionId"], "gen-1");
-        assert!(payload["error"].as_str().is_some());
+        assert!(payload["reason"].as_str().is_some());
     }
 
     #[test]
     fn stamps_status_events_the_same_way() {
-        let event = TransportEvent::Status {
-            status: ConnStatus::Offline,
-            attempt: 0,
-            error: None,
-            error_code: None,
+        let event = LinkEvent::Status {
+            status: LinkStatus::Closed,
+            reason: None,
+            code: None,
         };
         let payload = bridged_event("gen-old", &event);
         assert_eq!(payload["connectionId"], "gen-old");
         assert_eq!(payload["kind"], "status");
-        assert_eq!(payload["status"], "offline");
+        assert_eq!(payload["status"], "closed");
         assert!(payload.get("frame").is_none());
     }
 }

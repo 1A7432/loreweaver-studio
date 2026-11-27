@@ -37,6 +37,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # TEMPORARY: protocol 3.0's client library (`loreweaver-protocol/v3`) is a
+      # path dependency on the engine checkout's `clients/protocol` until
+      # loreweaver-protocol 3.0.0 is on npm (package.json, vite.config.ts), so
+      # the engine's v3 branch must sit at the sibling path ../trpg_kp.
+      - name: Clone the loreweaver engine (v3) for the protocol 3.0 library
+        run: git clone --depth 1 --branch v3 https://github.com/1A7432/loreweaver.git ../trpg_kp
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run lint
@@ -48,32 +54,23 @@ jobs:
       - run: bun run build
 
   roundtrip:
-    name: Cross-repo round-trip gate (lorecard v1 + pack manifest v2)
+    name: Cross-repo round-trip gate (live connect to a 3.0 server)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # The gate builds the studio's REAL emission with the engine's REAL
-      # parsers (and diffs against its pinned fixtures), so the engine repo
-      # must sit at the script's default sibling path ../trpg_kp.
-      - name: Clone the loreweaver engine repo for the round-trip gate
-        run: git clone --depth 1 https://github.com/1A7432/loreweaver.git ../trpg_kp
+      # The gate starts the engine's REAL protocol 3.0 server (Bun, `serve
+      # --local`) and dials it through the real Rust link, so the engine's v3
+      # branch must sit at the script's default sibling path ../trpg_kp. Its
+      # four static 2.x stages are parked (see scripts/check_roundtrip.sh).
+      - name: Clone the loreweaver engine (v3)
+        run: git clone --depth 1 --branch v3 https://github.com/1A7432/loreweaver.git ../trpg_kp
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      - uses: astral-sh/setup-uv@v7
-        with:
-          python-version: "3.11"
-          enable-cache: true
-      # The gate's stage-3 fixture ships a rules-script rulepack, which compiles
-      # through QuickJS at pack-build time — and the engine keeps quickjs behind
-      # its optional `ejs` extra. Without this the gate fails at its own
-      # prerequisite check, by design, so sync the extra rather than skipping a
-      # lane: a lane skipped in CI is a lane nobody guards.
-      - name: Sync the engine's dependencies, ejs extra included
-        run: uv sync --extra ejs
+      - name: Install the engine's dependencies
+        run: bun install
         working-directory: ../trpg_kp
-      # Stage 5 dials the engine through the real transport crate, so this job
-      # needs a toolchain too. No Tauri system libs: the transport crate is
-      # standalone and the gate builds only `-p loreweaver-transport`.
+      # No Tauri system libs: the transport crate is standalone and the gate
+      # builds only `-p loreweaver-transport`.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run the round-trip gate

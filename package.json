@@ -21,6 +21,7 @@
     "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "i18next": "^27.2.2",
+    "loreweaver-protocol": "file:../trpg_kp/clients/protocol",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-i18next": "^18.0.3",

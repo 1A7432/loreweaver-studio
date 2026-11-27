@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { UiFrame } from "@loreweaver/protocol"
 import "../../i18n"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import UiBlocks from "./UiBlocks"
 
 vi.mock("../../lib/transport", async (importOriginal) => {
@@ -34,7 +34,7 @@ const HUD: UiFrame = {
 describe("UiBlocks", () => {
   beforeEach(() => {
     vi.mocked(transportSend).mockClear()
-    useConnectionStore.setState({ status: "online" })
+    useLegacyConnectionStore.setState({ status: "online" })
   })
 
   it("renders every v1.7 block kind", () => {
@@ -56,7 +56,7 @@ describe("UiBlocks", () => {
   })
 
   it("disables choices while not online", () => {
-    useConnectionStore.setState({ status: "reconnecting" })
+    useLegacyConnectionStore.setState({ status: "reconnecting" })
     render(<UiBlocks frame={HUD} />)
     expect(screen.getByRole("button", { name: "Attack" })).toBeDisabled()
   })

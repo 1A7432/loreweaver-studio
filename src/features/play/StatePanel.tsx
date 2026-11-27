@@ -10,7 +10,7 @@ import {
   type StateFrame,
 } from "@loreweaver/protocol"
 import { transportSend } from "../../lib/transport"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import { useSessionStore } from "../../store/session"
 import AudioDeck from "./AudioDeck"
 import Avatar from "./Avatar"
@@ -217,7 +217,7 @@ function VariableWrite({ variable }: { variable: ModuleVariable }) {
 
 function VariablesCard({ game }: { game: StateFrame }) {
   const { t } = useTranslation()
-  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
+  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
   // Off by default: a keeper reads this panel far more often than they write
   // it, and thirty inline inputs would bury the numbers they came to read.
   const [editing, setEditing] = useState(false)
@@ -310,8 +310,8 @@ export function PregenCard({ game }: { game: StateFrame }) {
   const { t } = useTranslation()
   // `claimed_by` is the claiming MEMBER ID on the wire (protocol `PregenEntry`),
   // so "mine" is the welcome id, never the display name.
-  const youId = useConnectionStore((s) => s.welcome?.you.id ?? "")
-  const online = useConnectionStore((s) => s.status === "online")
+  const youId = useLegacyConnectionStore((s) => s.welcome?.you.id ?? "")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
   const presence = useSessionStore((s) => s.presence)
   const pregens = game.pregens ?? []
   if (pregens.length === 0) return null
@@ -424,8 +424,8 @@ export const PACK_CARDS_REPLY_TIMEOUT_MS = 8_000
  * types a path. `packCards === null` means no reply yet. */
 function PackImportCard() {
   const { t } = useTranslation()
-  const online = useConnectionStore((s) => s.status === "online")
-  const isKeeper = useConnectionStore((s) => s.welcome?.you.role === "keeper")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
+  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
   const packCards = useSessionStore((s) => s.packCards)
   const requestPackCards = useSessionStore((s) => s.requestPackCards)
   const [open, setOpen] = useState(false)

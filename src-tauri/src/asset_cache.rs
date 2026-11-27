@@ -137,7 +137,7 @@ pub async fn asset_cache_status(app: AppHandle, hashes: Vec<String>) -> Result<V
 }
 
 /// Ensure one content-addressed blob is in the verified cache, pulling it over
-/// the live transport's media byte channel on a miss. Returns the byte size.
+/// the live link's byte channel (a GET, protocol 3.0 §11.3) on a miss. Returns the byte size.
 /// The WebView never receives the bytes — the `panel://` handler serves them.
 #[tauri::command]
 pub async fn asset_fetch(
@@ -156,9 +156,12 @@ pub async fn asset_fetch(
             .map_err(|err| format!("cache stat failed: {err}"));
     }
     let handle = state.handle().await.ok_or("not connected")?;
-    let blob = handle.fetch_blob(hash.clone()).await?;
-    verify_and_store(&dir, &hash, &blob.bytes)?;
-    Ok(blob.bytes.len() as u64)
+    let fetched = handle
+        .fetch(hash.clone())
+        .await
+        .map_err(|err| err.to_string())?;
+    verify_and_store(&dir, &hash, &fetched.bytes)?;
+    Ok(fetched.bytes.len() as u64)
 }
 
 /// Read one verified cache entry back as base64. Tier-1 `image`/`map_pin`

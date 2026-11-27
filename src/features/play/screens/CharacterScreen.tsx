@@ -20,7 +20,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { stripControlChars, type RuleSystemEntry } from "@loreweaver/protocol"
 import { transportSend } from "../../../lib/transport"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import { useSessionStore } from "../../../store/session"
 import { PregenCard, ResourceRow } from "../StatePanel"
 import ScreenShell from "./ScreenShell"
@@ -56,7 +56,7 @@ type CreateMode = "roll" | "describe" | "import"
 function CreateCharacter() {
   const { t } = useTranslation()
   const systems = useSessionStore((s) => s.game?.systems ?? NO_SYSTEMS)
-  const online = useConnectionStore((s) => s.status === "online")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
   const creatable = systems.filter((entry) => entry.make_char)
   const [mode, setMode] = useState<CreateMode>("roll")
   const [system, setSystem] = useState("")
@@ -185,7 +185,7 @@ function CreateCharacter() {
  * raw `name` stays the write key and the cell's tooltip, since it is what `.st` takes. */
 function AttributeRow({ name, label, value }: { name: string; label?: string; value: unknown }) {
   const { t } = useTranslation()
-  const online = useConnectionStore((s) => s.status === "online")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
   const [draft, setDraft] = useState<string | null>(null)
   const key = stripControlChars(name)
   // `typeof`, not truthiness: a plain-object lookup of a key like `constructor`
@@ -263,7 +263,7 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation()
   const character = useSessionStore((s) => s.game?.character ?? null)
   const game = useSessionStore((s) => s.game)
-  const online = useConnectionStore((s) => s.status === "online")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   return (

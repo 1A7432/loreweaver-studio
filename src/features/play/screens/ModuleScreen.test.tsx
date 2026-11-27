@@ -18,11 +18,11 @@ vi.mock("../../../lib/transport", () => ({
 }))
 
 import "../../../i18n"
-import { useConnectionStore } from "../../../store/connection"
+import { useLegacyConnectionStore } from "../../../store/legacyConnection"
 import ModuleScreen from "./ModuleScreen"
 
 function seat(role: PlayerRole) {
-  useConnectionStore.setState({
+  useLegacyConnectionStore.setState({
     status: "online",
     welcome: {
       type: "welcome",

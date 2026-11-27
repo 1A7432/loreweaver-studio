@@ -1,6 +1,6 @@
 import { stripControlChars, type UiBlock, type UiChoiceOption, type UiFrame } from "@loreweaver/protocol"
 import { transportSend } from "../../lib/transport"
-import { useConnectionStore } from "../../store/connection"
+import { useLegacyConnectionStore } from "../../store/legacyConnection"
 import Meter from "./Meter"
 import {
   ClippingBlockView,
@@ -86,7 +86,7 @@ export function Block({
 }
 
 export default function UiBlocks({ frame }: { frame: UiFrame }) {
-  const online = useConnectionStore((s) => s.status === "online")
+  const online = useLegacyConnectionStore((s) => s.status === "online")
   return (
     <div className="ui-blocks">
       {frame.blocks.map((block, index) => (
