@@ -4,11 +4,10 @@
 // Nothing used to remember them, so any WebView reload — a dev HMR full reload,
 // a crash, quitting and reopening the app — landed on an empty form and the
 // player had to dig the ticket and key out of wherever the keeper sent them
-// (2026-10-21 play-test). The one-click local-host path never had that problem
-// because `store/hostLocal.ts` persists its own credentials; this is the same
-// mechanism for the other path.
+// (2026-10-21 play-test). The one-click local-host path never had that problem:
+// the app keeps the admin key of the server it hosts itself (`host_local.rs`).
 //
-// The caveats are the ones hostLocal documents, and they hold here too:
+// The caveats:
 //  - The credentials sit in the WebView's localStorage, in the clear, beside the
 //    API key this app already keeps. A key is an invitation to one room, not an
 //    account — but it is still a secret on this machine, so the player can drop
@@ -16,9 +15,9 @@
 //  - Persistence is best-effort (`guardedLocalStorage`): a full or blocked
 //    storage costs the NEXT launch its memory, never the connection in hand.
 //  - Only a connection that actually completed the handshake is remembered, and
-//    only one the player dialed by hand. The local-host path keeps its own
-//    credentials for its own server; mixing them in here would prefill this form
-//    with a server that is no longer running.
+//    only one the player dialed by hand. The local-host path has its own key for
+//    its own server; mixing it in here would prefill this form with a server that
+//    is no longer running.
 //
 // A leaf store on purpose (it imports no other store): the connection store
 // writes to it when a welcome is accepted, and the connect screen reads it.

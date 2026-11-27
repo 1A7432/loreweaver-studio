@@ -133,6 +133,14 @@ async fn probe_version(candidate: &mut EngineCandidate) {
 /// user-configured engine checkout (run with `bun`). Each is asked `--version`.
 #[tauri::command]
 pub async fn probe_engine_cli(engine_repo_dir: Option<String>) -> Vec<EngineCandidate> {
+    probe_candidates(engine_repo_dir).await
+}
+
+/// The candidates `probe_engine_cli` offers, each asked `--version` (all at
+/// once: a candidate that never answers costs the probe timeout once, not once
+/// per candidate). The one way this app finds the engine — the authoring
+/// studio offers the list, local hosting takes [`pick_engine`] of it.
+pub async fn probe_candidates(engine_repo_dir: Option<String>) -> Vec<EngineCandidate> {
     let mut candidates = Vec::new();
     if let Some(binary) = executable_in_path("loreweaver") {
         candidates.push(EngineCandidate {
@@ -144,15 +152,17 @@ pub async fn probe_engine_cli(engine_repo_dir: Option<String>) -> Vec<EngineCand
             problem: None,
         });
     }
-    if let Some(repo) = engine_repo_dir {
+    if let Some(repo) = engine_repo_dir
+        .map(|dir| dir.trim().to_owned())
+        .filter(|dir| !dir.is_empty())
+    {
         let entry = CHECKOUT_ENTRY
             .iter()
             .fold(Path::new(&repo).to_path_buf(), |path, part| path.join(part));
         if entry.is_file() {
-            let bun = executable_in_path("bun");
             candidates.push(EngineCandidate {
                 kind: "checkout".to_owned(),
-                program: bun.map_or_else(
+                program: bun_executable().map_or_else(
                     || "bun".to_owned(),
                     |path| path.to_string_lossy().into_owned(),
                 ),
@@ -164,10 +174,84 @@ pub async fn probe_engine_cli(engine_repo_dir: Option<String>) -> Vec<EngineCand
             });
         }
     }
-    for candidate in &mut candidates {
-        probe_version(candidate).await;
+    let probes: Vec<_> = candidates
+        .into_iter()
+        .map(|mut candidate| {
+            tokio::spawn(async move {
+                probe_version(&mut candidate).await;
+                candidate
+            })
+        })
+        .collect();
+    let mut probed = Vec::with_capacity(probes.len());
+    for probe in probes {
+        if let Ok(candidate) = probe.await {
+            probed.push(candidate);
+        }
     }
+    probed
+}
+
+/// Whether `version` is what a protocol 3.0 engine prints for `--version`
+/// (`3.<minor>…`). Anything else — a 2.x engine, or another program that
+/// happens to be called `loreweaver` and exits 0 — is not a server this app
+/// can host.
+pub fn is_engine_version(version: &str) -> bool {
+    let mut parts = version.trim().splitn(3, '.');
+    parts.next() == Some("3")
+        && parts
+            .next()
+            .is_some_and(|minor| !minor.is_empty() && minor.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The engine to run: the first candidate, in the probe's order, that
+/// answered `--version` like a 3.x engine.
+pub fn pick_engine(candidates: &[EngineCandidate]) -> Option<&EngineCandidate> {
     candidates
+        .iter()
+        .find(|candidate| candidate.version.as_deref().is_some_and(is_engine_version))
+}
+
+/// `bun` on PATH, or where Bun's own installer puts it. An app started from
+/// the desktop (Finder, a launcher) inherits a minimal PATH that rarely names
+/// `~/.bun/bin`, even when the user's shell does.
+fn bun_executable() -> Option<PathBuf> {
+    if let Some(found) = executable_in_path("bun") {
+        return Some(found);
+    }
+    let name = if cfg!(windows) { "bun.exe" } else { "bun" };
+    let install = std::env::var_os("BUN_INSTALL").map(PathBuf::from);
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|home| PathBuf::from(home).join(".bun"));
+    install
+        .into_iter()
+        .chain(home)
+        .map(|root| root.join("bin").join(name))
+        .find(|path| path.is_file())
+}
+
+/// Remove every `TRPG_*` variable of this app's own environment from a
+/// command: anything an operator left exported would configure an engine run
+/// (another data directory, a model key).
+pub(crate) fn scrub_trpg(command: &mut Command) {
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("TRPG_") {
+            command.env_remove(key);
+        }
+    }
+}
+
+/// A desktop app has no console: on Windows a console program started from it
+/// would open a window of its own.
+pub(crate) fn no_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
 }
 
 /// A fresh, empty data directory for verifying a pack with the real installer
@@ -375,12 +459,9 @@ pub(crate) async fn run_engine_command(
     if let Some(dir) = cwd {
         command.current_dir(dir);
     }
+    no_console_window(&mut command);
     if scrub_trpg {
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("TRPG_") {
-                command.env_remove(key);
-            }
-        }
+        self::scrub_trpg(&mut command);
     }
     for (key, value) in env.unwrap_or_default() {
         command.env(key, value);

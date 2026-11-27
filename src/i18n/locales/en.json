@@ -51,15 +51,44 @@
     "lost": "Lost the table: it dropped and every attempt to reconnect failed. Check that the host is still running, then connect again.",
     "hostLocal": {
       "button": "Host locally & play",
-      "starting": "Bringing the server up…",
-      "hint": "One press: use your engine checkout or download the prebuilt server (SHA-256 verified), start it, and log you in as the room admin.",
+      "starting": "Starting the server…",
+      "return": "Return to the table",
+      "stop": "Stop the server",
+      "hint": "One press: start a Loreweaver server on this computer and sit down at it as the room admin. You are also the operator of that server.",
+      "running": "The local server this app started is still running.",
       "desktopOnly": "Local hosting needs the desktop app.",
       "cancel": "Cancel",
-      "home": "Server folder (data, keys, cache)",
-      "homePlaceholder": "~/.loreweaver",
-      "exitedBeforeReady": "The local server exited before it was ready.",
-      "exitedUnexpectedly": "The local server stopped unexpectedly.",
-      "exitedUnexpectedlyCode": "The local server stopped unexpectedly (code {{code}})."
+      "home": "Server folder (its data is kept in a data folder inside)",
+      "notesTitle": "Your local server says",
+      "openModels": "Open Models",
+      "keyMinted": "This app had lost the admin key for this server folder, so the server made a new one.",
+      "setting": {
+        "missing": "{{variable}} is missing",
+        "invalid": "{{variable}} is not valid"
+      },
+      "note": {
+        "model_not_configured": "No model is set, so the Keeper cannot answer yet. As the room admin, set one on the Models screen. No restart is needed, and the server keeps it.",
+        "recall_off": "Recall by meaning is off: no embeddings model is set.",
+        "context_window_unknown": "The server does not know the model's context window and assumes 32,000 tokens.",
+        "model_override_unusable": "A model saved on the Models screen can no longer be used. Check it there.",
+        "other": "Server note: {{code}}"
+      },
+      "problem": {
+        "no_engine": "No Loreweaver server was found. Install one so that a `loreweaver` executable is on your PATH, or install Bun and point “Engine checkout” in the studio’s AI & engine settings at a copy of the Loreweaver repository (v3 branch, `bun install` run). No 3.0 server can be downloaded yet.",
+        "already_running": "A local server this app started is already running for another folder ({{dir}}). Stop it first.",
+        "bad_settings": "The server refused its settings:",
+        "refused": "The server refused to start ({{code}}).",
+        "exited": "The local server exited before it was ready. Its last lines:",
+        "exitedCode": "The local server exited before it was ready (code {{code}}). Its last lines:",
+        "timeout": "The local server was not ready within a minute, so it was stopped. Its last lines:",
+        "mint_failed": "Could not make a new admin key for this server folder ({{code}}).",
+        "no_key": "The server started but no admin key is known for it. Stop it and host again.",
+        "io": "Could not start the local server:",
+        "cancelled": "Stopped.",
+        "died": "The local server stopped. Its last lines:",
+        "diedCode": "The local server stopped (code {{code}}). Its last lines:",
+        "key_refused": "The server turned down the admin key this app kept for it, so the key is forgotten. Host again and a new one will be made."
+      }
     },
     "lastTable": {
       "label": "Last table: {{table}}",
@@ -868,7 +897,7 @@
       "forgetKey": "Clear",
       "keyHint": "Stored locally with the rest of your settings, in plain text. Requests are sent from the native side, so the key never reaches a page. Anyone with access to this machine's profile can read it — use a key you are willing to keep there.",
       "engineRepo": "Engine checkout (optional)",
-      "engineRepoHint": "Path to a loreweaver checkout (v3 branch, with `bun install` run). Studio runs its pack builder as `bun <checkout>/server/src/cli/main.ts` when no `loreweaver` executable is on PATH.",
+      "engineRepoHint": "Path to a loreweaver checkout (v3 branch, with `bun install` run). Studio runs it as `bun <checkout>/server/src/cli/main.ts` — to build packs, and to host a server locally — when no `loreweaver` executable is on PATH.",
       "browse": "Browse…",
       "done": "Done",
       "panelTitle": "AI card draft",

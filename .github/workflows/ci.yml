@@ -55,14 +55,15 @@ jobs:
       - run: bun run build
 
   roundtrip:
-    name: Cross-repo round-trip gate (3.0 pack build, install, cards, panels, live connect)
+    name: Cross-repo round-trip gate (3.0 pack build, install, cards, panels, live connect, host locally)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       # The gate runs the engine's REAL 3.0 code on what Studio writes: its pack
       # builder and installer, its card and panels readers, and its server
-      # (`serve --local`, dialled through the real Rust link). The engine's v3
-      # branch must sit at the script's default sibling path ../trpg_kp.
+      # (`serve --local`, dialled through the real Rust link, and hosted by the
+      # app's own host-local code). The engine's v3 branch must sit at the
+      # script's default sibling path ../trpg_kp.
       - name: Clone the loreweaver engine (v3)
         run: git clone --depth 1 --branch v3 https://github.com/1A7432/loreweaver.git ../trpg_kp
       - uses: oven-sh/setup-bun@v2
@@ -70,8 +71,13 @@ jobs:
       - name: Install the engine's dependencies
         run: bun install
         working-directory: ../trpg_kp
-      # No Tauri system libs: the transport crate is standalone and the gate
-      # builds only `-p loreweaver-transport`.
+      # Stage g drives the app crate's own host-local code (`-p loreweaver-studio`),
+      # which links Tauri: its system libraries are needed to build it.
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run the round-trip gate

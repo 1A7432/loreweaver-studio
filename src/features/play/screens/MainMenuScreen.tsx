@@ -9,6 +9,7 @@
 import { useTranslation } from "react-i18next"
 import { useSessionSnapshot } from "../../../store/connection"
 import { quitTable } from "../../../store/hostLocal"
+import HostedNotes from "../HostedNotes"
 import StatePanel from "../StatePanel"
 import StatusPill from "../StatusPill"
 import type { PlayScreen } from "../OnlineView"
@@ -46,6 +47,7 @@ export default function MainMenuScreen({ onNavigate }: { onNavigate: (screen: Pl
           ) : null}{" "}
           <StatusPill />
         </p>
+        <HostedNotes onNavigate={onNavigate} />
         {[...ROWS, ...(welcome?.you.role === "admin" ? ADMIN_ROWS : [])].map((row) => (
           <button
             key={row.key}

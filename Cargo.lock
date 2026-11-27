@@ -2885,6 +2885,7 @@ name = "loreweaver-studio"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "libc",
  "loreweaver-transport",
  "percent-encoding",
  "reqwest 0.12.28",

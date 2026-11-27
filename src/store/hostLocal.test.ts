@@ -1,526 +1,263 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { ConnectionFailure, ConnectionState } from "../lib/connection"
+import type { HostExited, HostReady } from "../lib/hostLocal"
 
 const bridge = vi.hoisted(() => ({
-  hostLocalStart: vi.fn(async () => {}),
+  tauri: true,
+  hostLocalStart: vi.fn(),
   hostLocalStop: vi.fn(async () => true),
   hostLocalStatus: vi.fn(async () => ({
+    home: "/app/local-server",
+    dataDir: "/app/local-server/data",
     running: false,
-    home: "/tmp/.loreweaver",
-    dataDir: "/tmp/.loreweaver/data",
-    hostId: null as string | null,
   })),
-  onHostLocalEvent: vi.fn(async () => () => {}),
-  mintHostId: vi.fn(() => "minted-host"),
+  hostLocalForgetKey: vi.fn(async () => true),
+  /** The store's exit handler, registered by its first start (once per module). */
+  exit: undefined as ((event: HostExited) => void) | undefined,
+  onHostLocalExit: vi.fn(async (handler: (event: HostExited) => void) => {
+    bridge.exit = handler
+    return () => {}
+  }),
 }))
-vi.mock("../lib/hostLocal", async () => {
-  const actual = await vi.importActual<typeof import("../lib/hostLocal")>("../lib/hostLocal")
+vi.mock("../lib/hostLocal", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/hostLocal")>()
   return {
     ...actual,
-    ...bridge,
-    mintHostId: bridge.mintHostId,
-    HOST_LOCAL_EVENT: "loreweaver://host-local",
+    hostLocalStart: bridge.hostLocalStart,
+    hostLocalStop: bridge.hostLocalStop,
+    hostLocalStatus: bridge.hostLocalStatus,
+    hostLocalForgetKey: bridge.hostLocalForgetKey,
+    onHostLocalExit: bridge.onHostLocalExit,
   }
 })
-// `start` refuses outright off the desktop app, so the reconnect path needs a shell.
-vi.mock("../lib/transport", () => ({
-  isTauri: () => true,
-  transportSend: vi.fn(async () => {}),
-  TRANSPORT_EVENT: "loreweaver://transport",
-}))
+vi.mock("../lib/transport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/transport")>()
+  return { ...actual, isTauri: () => bridge.tauri }
+})
 
-import type { HostLocalEvent, HostLocalEventKind } from "../lib/hostLocal"
 import { useConnectionStore } from "./connection"
 import { quitTable, useHostLocalStore } from "./hostLocal"
 
-const HOST = "host-a"
-
-function ev(event: HostLocalEventKind, hostId = HOST): HostLocalEvent {
-  return { hostId, ...event }
+const READY: HostReady = {
+  hostId: "host-1",
+  ticket: "endpointlocal",
+  key: "admin-key-secret",
+  room: "main",
+  keySource: "first",
+  notes: ["model_not_configured"],
+  version: "3.0.0",
+  dataDir: "/app/local-server/data",
+  reused: false,
 }
 
-function reset() {
+/** Just enough of a `Connection` for the store: its state, its listeners, stop. */
+function fakeConnection() {
+  let state: ConnectionState = { phase: "dialing", attempt: 0, established: false, failure: null }
+  const listeners = new Set<() => void>()
+  const set = (next: Partial<ConnectionState>) => {
+    state = { ...state, ...next }
+    for (const listener of listeners) listener()
+  }
+  return {
+    stop: vi.fn(() => set({ phase: "ended" })),
+    getState: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => void listeners.delete(listener)
+    },
+    end: (failure: ConnectionFailure) => set({ phase: "ended", failure }),
+  }
+}
+
+let connection = fakeConnection()
+const connect = vi.fn(async (params: { ticket: string; key: string; network?: string }) => {
+  void params
+  useConnectionStore.setState({ connection: connection as never })
+})
+const disconnect = vi.fn(async () => {
+  useConnectionStore.getState().connection?.stop()
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (cause: unknown) => void
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
+
+async function settle() {
+  for (let i = 0; i < 10; i++) await Promise.resolve()
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  bridge.tauri = true
+  connection = fakeConnection()
+  useConnectionStore.setState({ connection: null, connect: connect as never, disconnect })
   useHostLocalStore.setState({
     phase: "idle",
-    log: [],
-    error: null,
-    exitKind: null,
-    exitCode: null,
-    hostId: null,
-    stoppingHostId: null,
-    parkedReady: null,
-    hostedSession: false,
+    problem: null,
+    hosted: null,
+    connection: null,
+    notesDismissed: false,
     homeOverride: "",
     effectiveHome: "",
-    devSourceRoot: "",
-    lastTicket: "",
-    lastKey: "",
-    lastTicketHome: "",
+    running: false,
   })
-}
+})
 
 describe("hostLocal store", () => {
-  beforeEach(() => {
-    reset()
-    vi.clearAllMocks()
-    bridge.mintHostId.mockReturnValue("minted-host")
+  it("starts the server and sits down at it as the room admin over the local profile", async () => {
+    bridge.hostLocalStart.mockResolvedValueOnce(READY)
+    useHostLocalStore.setState({ homeOverride: " /srv/lw " })
+    await useHostLocalStore.getState().start()
+    expect(bridge.hostLocalStart).toHaveBeenCalledWith(expect.objectContaining({ homeOverride: "/srv/lw" }))
+    expect(connect).toHaveBeenCalledWith({
+      ticket: "endpointlocal",
+      key: "admin-key-secret",
+      network: "local",
+    })
+    const state = useHostLocalStore.getState()
+    expect(state.phase).toBe("hosting")
+    expect(state.connection).toBe(connection)
+    expect(state.hosted).toEqual({
+      hostId: "host-1",
+      dataDir: "/app/local-server/data",
+      room: "main",
+      keySource: "first",
+      notes: ["model_not_configured"],
+    })
+    // The key went to the connection and is kept nowhere in this store.
+    expect(JSON.stringify(state)).not.toContain("admin-key-secret")
   })
 
-  it("sits back down at a server it already started instead of refusing to start one", async () => {
-    // The dead end this closes: the WebView reloads (a paste crash, a dev HMR, a
-    // devtools refresh), the Rust side is still serving, and pressing the one button
-    // answered "a local server is already running" with nowhere to go — a keeper had
-    // to dig a ticket out of a text file to sit back down at their own table.
-    const connect = vi.fn(async () => {})
-    useConnectionStore.setState({ connect } as never)
-    bridge.hostLocalStatus.mockResolvedValueOnce({
-      running: true,
-      home: "/tmp/.loreweaver",
-      dataDir: "/tmp/.loreweaver/data",
-      hostId: "live-child",
-    })
-    useHostLocalStore.setState({ lastTicket: "tkt", lastKey: "kee", lastTicketHome: "/tmp/.loreweaver" })
-
+  it("is starting while Rust waits for the ready line", async () => {
+    const pending = deferred<HostReady>()
+    bridge.hostLocalStart.mockReturnValueOnce(pending.promise)
+    const started = useHostLocalStore.getState().start()
+    await settle()
+    expect(useHostLocalStore.getState().phase).toBe("starting")
+    // A second press while starting does nothing.
     await useHostLocalStore.getState().start()
+    expect(bridge.hostLocalStart).toHaveBeenCalledTimes(1)
+    pending.resolve(READY)
+    await started
+    expect(useHostLocalStore.getState().phase).toBe("hosting")
+  })
 
-    expect(connect).toHaveBeenCalledWith({ ticket: "tkt", key: "kee" })
+  it("says what the server refused, with its code and problems", async () => {
+    const refused = {
+      code: "refused",
+      refusal: "bad_settings",
+      problems: [{ variable: "TRPG_LLM__API_KEY", problem: "missing" }],
+    }
+    bridge.hostLocalStart.mockRejectedValueOnce(refused)
+    await useHostLocalStore.getState().start()
+    expect(useHostLocalStore.getState()).toMatchObject({ phase: "failed", problem: refused })
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it("turns a rejection that is not a failure into an io problem", async () => {
+    bridge.hostLocalStart.mockRejectedValueOnce("ipc broke")
+    await useHostLocalStore.getState().start()
+    expect(useHostLocalStore.getState().problem).toEqual({ code: "io", detail: "ipc broke" })
+  })
+
+  it("off the desktop app it says so and starts nothing", async () => {
+    bridge.tauri = false
+    await useHostLocalStore.getState().start()
+    expect(useHostLocalStore.getState().problem).toEqual({ code: "desktop_only" })
     expect(bridge.hostLocalStart).not.toHaveBeenCalled()
-    expect(useHostLocalStore.getState().phase).toBe("ready")
-    expect(useHostLocalStore.getState().hostId).toBe("live-child")
   })
 
-  it("accepts Exit for a hostId adopted after reload", async () => {
-    useConnectionStore.setState({ connect: vi.fn(async () => {}) } as never)
-    bridge.hostLocalStatus.mockResolvedValueOnce({
-      running: true,
-      home: "/tmp/.loreweaver",
-      dataDir: "/tmp/.loreweaver/data",
-      hostId: "live-child",
-    })
-    useHostLocalStore.setState({ lastTicket: "tkt", lastKey: "kee", lastTicketHome: "/tmp/.loreweaver" })
-
-    await useHostLocalStore.getState().start()
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 9 }, "live-child"))
-
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("error")
-    expect(state.hostedSession).toBe(false)
-    expect(state.exitKind).toBe("unexpected")
-    expect(state.exitCode).toBe(9)
-    expect(state.hostId).toBeNull()
-  })
-
-  it("will not dial one server with another home's credentials", async () => {
-    const connect = vi.fn(async () => {})
-    useConnectionStore.setState({ connect } as never)
-    bridge.hostLocalStatus.mockResolvedValueOnce({
-      running: true,
-      home: "/tmp/other-home",
-      dataDir: "/tmp/other-home/data",
-      hostId: "other-child",
-    })
-    useHostLocalStore.setState({ lastTicket: "tkt", lastKey: "kee", lastTicketHome: "/tmp/.loreweaver" })
-
-    await useHostLocalStore.getState().start()
-
-    expect(connect).not.toHaveBeenCalled()
-    expect(bridge.hostLocalStart).toHaveBeenCalledWith(undefined, undefined, undefined, "minted-host")
-  })
-
-  it("mints a hostId and passes it to the bridge on a real start", async () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
-    try {
-      await useHostLocalStore.getState().start()
-      expect(useHostLocalStore.getState().hostId).toBe("minted-host")
-      expect(bridge.hostLocalStart).toHaveBeenCalledWith(undefined, undefined, undefined, "minted-host")
-    } finally {
-      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
-    }
-  })
-
-  it("remembers the credentials a ready server handed it", () => {
-    useConnectionStore.setState({ connect: vi.fn(async () => {}) } as never)
-    useHostLocalStore.setState({ hostId: HOST })
-    useHostLocalStore.getState().ingest(ev({ kind: "ready", ticket: "tkt", key: "kee" }))
-    const state = useHostLocalStore.getState()
-    expect(state.lastTicket).toBe("tkt")
-    expect(state.lastKey).toBe("kee")
-    const persisted = useHostLocalStore.persist.getOptions().partialize!(state) as { lastTicket: string }
-    expect(persisted.lastTicket).toBe("tkt")
-  })
-
-  it("streams log lines with a cap and never loses the newest", () => {
-    useHostLocalStore.setState({ hostId: HOST })
-    const ingest = useHostLocalStore.getState().ingest
-    for (let i = 0; i < 450; i++) ingest(ev({ kind: "log", level: "out", text: `line ${i}` }))
-    const log = useHostLocalStore.getState().log
-    expect(log.length).toBe(400)
-    expect(log.at(-1)).toBe("line 449")
-  })
-
-  it("dials the connection the moment the ticket + keeper key arrive", () => {
-    const connect = vi.fn(async () => {})
-    useConnectionStore.setState({ connect })
-    useHostLocalStore.setState({ hostId: HOST })
-    useHostLocalStore.getState().ingest(ev({ kind: "ready", ticket: "endpointabc", key: "KEEPERKEY1234567" }))
-    expect(useHostLocalStore.getState().phase).toBe("ready")
-    expect(useHostLocalStore.getState().hostedSession).toBe(true)
-    expect(connect).toHaveBeenCalledWith({ ticket: "endpointabc", key: "KEEPERKEY1234567" })
-  })
-
-  it("turns an early exit and a ready-time crash into structured exit state", () => {
-    useHostLocalStore.setState({ phase: "starting", hostId: HOST })
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 1 }))
-    expect(useHostLocalStore.getState().phase).toBe("error")
-    expect(useHostLocalStore.getState().exitKind).toBe("before-ready")
-    expect(useHostLocalStore.getState().exitCode).toBe(1)
-    expect(useHostLocalStore.getState().hostId).toBeNull()
-
-    useHostLocalStore.setState({
-      phase: "ready",
-      hostedSession: true,
-      error: null,
-      exitKind: null,
-      log: [],
-      hostId: HOST,
-    })
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 0 }))
-    const afterReady = useHostLocalStore.getState()
-    expect(afterReady.phase).toBe("error")
-    expect(afterReady.hostedSession).toBe(false)
-    expect(afterReady.exitKind).toBe("unexpected")
-    expect(afterReady.exitCode).toBe(0)
-    expect(afterReady.hostId).toBeNull()
-  })
-
-  it("clears a ready hosted session on a spontaneous Exit", () => {
-    useHostLocalStore.setState({
-      phase: "ready",
-      hostedSession: true,
-      error: null,
-      exitKind: null,
-      log: ["server is up"],
-      hostId: HOST,
-    })
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 137 }))
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("error")
-    expect(state.hostedSession).toBe(false)
-    expect(state.exitKind).toBe("unexpected")
-    expect(state.exitCode).toBe(137)
-    expect(state.hostId).toBeNull()
-  })
-
-  it("keeps the host id when a cancel lands during acquisition, so no server goes invisible", async () => {
-    // Acquisition (checkout / verified cache / a download allowed up to 600s)
-    // runs before Rust has a child, so a cancel in that window finds nothing
-    // to kill and `host_local_stop` answers false. Letting the id go here is
-    // what left a ghost: the child seats itself under the old id, every event
-    // it emits is filtered out, and the next start is refused with "a local
-    // server is already running".
-    const connect = vi.fn(async () => {})
-    useConnectionStore.setState({ connect } as never)
-    bridge.hostLocalStop.mockResolvedValueOnce(false)
-    useHostLocalStore.setState({ phase: "starting", hostId: HOST })
-
+  it("Cancel during the start stops it, and its late answer is not shown", async () => {
+    const pending = deferred<HostReady>()
+    bridge.hostLocalStart.mockReturnValueOnce(pending.promise)
+    const started = useHostLocalStore.getState().start()
+    await settle()
     await useHostLocalStore.getState().stop()
+    expect(bridge.hostLocalStop).toHaveBeenCalledTimes(1)
+    pending.reject({ code: "cancelled" })
+    await started
+    expect(useHostLocalStore.getState()).toMatchObject({ phase: "idle", problem: null })
+  })
 
-    const cancelled = useHostLocalStore.getState()
-    expect(cancelled.hostId).toBe(HOST)
-    expect(cancelled.phase).toBe("starting")
-    expect(cancelled.stoppingHostId).toBeNull()
-
-    // The child finally seats itself under that id — and is recognized.
-    useHostLocalStore.getState().ingest(ev({ kind: "log", level: "step", text: "relay up" }))
-    expect(useHostLocalStore.getState().log).toEqual(["relay up"])
-    useHostLocalStore.getState().ingest(ev({ kind: "ready", ticket: "tkt", key: "kee" }))
-    expect(connect).toHaveBeenCalledWith({ ticket: "tkt", key: "kee" })
-
-    // …so a second cancel has something to kill, and it lands.
+  it("a server that came up after Cancel reached Rust first is stopped again", async () => {
+    const pending = deferred<HostReady>()
+    bridge.hostLocalStart.mockReturnValueOnce(pending.promise)
+    const started = useHostLocalStore.getState().start()
+    await settle()
     await useHostLocalStore.getState().stop()
+    pending.resolve(READY)
+    await started
     expect(bridge.hostLocalStop).toHaveBeenCalledTimes(2)
-    expect(useHostLocalStore.getState().hostId).toBeNull()
-    expect(useHostLocalStore.getState().phase).toBe("idle")
-  })
-
-  it("keeps a Ready that lands while the cancel's stop call is still in flight", async () => {
-    // The window the landed test does not cover: `stop` clears `hostId` BEFORE
-    // it awaits, and until that await settles the only event still recognized
-    // is the confirming Exit. A Ready arriving inside the window was dropped —
-    // and the recovery below then put the very same id back, so the ticket was
-    // lost for a session the store went on to own. No first-run persisted
-    // credentials exist to reconnect with: the table is simply unreachable.
-    const connect = vi.fn(async () => {})
-    useConnectionStore.setState({ connect } as never)
-    let settleStop: (stopped: boolean) => void = () => {
-      throw new Error("settleStop not armed")
-    }
-    bridge.hostLocalStop.mockImplementationOnce(
-      () =>
-        new Promise<boolean>((resolve) => {
-          settleStop = resolve
-        }),
-    )
-    useHostLocalStore.setState({ phase: "starting", hostId: HOST })
-
-    const cancelled = useHostLocalStore.getState().stop()
-    useHostLocalStore.getState().ingest(ev({ kind: "ready", ticket: "tkt", key: "kee" }))
-    // Nothing was there to kill — the cancel landed during acquisition, and the
-    // child that announced itself above is the one still coming.
-    settleStop(false)
-    await cancelled
-
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("ready")
-    expect(state.hostId).toBe(HOST)
-    expect(state.lastTicket).toBe("tkt")
-    expect(state.lastKey).toBe("kee")
-    expect(connect).toHaveBeenCalledWith({ ticket: "tkt", key: "kee" })
-  })
-
-  it("throws away a window Ready when the cancel really did kill that server", async () => {
-    // The other half of the same reconciliation: the stop DID take a child
-    // down, so the Ready it managed to emit on the way out belongs to a dead
-    // process. Applying it would dial a table that no longer exists.
-    const connect = vi.fn(async () => {})
-    useConnectionStore.setState({ connect } as never)
-    let settleStop: (stopped: boolean) => void = () => {
-      throw new Error("settleStop not armed")
-    }
-    bridge.hostLocalStop.mockImplementationOnce(
-      () =>
-        new Promise<boolean>((resolve) => {
-          settleStop = resolve
-        }),
-    )
-    useHostLocalStore.setState({ phase: "starting", hostId: HOST })
-
-    const cancelled = useHostLocalStore.getState().stop()
-    useHostLocalStore.getState().ingest(ev({ kind: "ready", ticket: "doomed", key: "kee" }))
-    settleStop(true)
-    await cancelled
-
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("idle")
-    expect(state.hostId).toBeNull()
-    expect(state.lastTicket).toBe("")
     expect(connect).not.toHaveBeenCalled()
-  })
-
-  it("stops the server a readiness error left running, instead of stranding Start", async () => {
-    // A readiness Error does NOT kill the child (`watch_output` emits it and
-    // leaves the drains alone), so flipping `phase` alone leaves a live server
-    // with an id the operator can no longer reach: Start lights up, the next
-    // press is refused with "a local server is already running", and on a first
-    // run there are no persisted credentials to sit back down with.
-    useHostLocalStore.setState({ phase: "starting", hostId: HOST })
-
-    useHostLocalStore.getState().ingest(ev({ kind: "error", message: "the server never announced a ticket" }))
-    await Promise.resolve()
-
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("error")
-    expect(state.error).toBe("the server never announced a ticket")
-    expect(bridge.hostLocalStop).toHaveBeenCalledTimes(1)
-    expect(state.hostId).toBeNull()
-    expect(state.stoppingHostId).toBe(HOST)
-
-    // …and the Exit that confirms the kill is a confirmation, not a crash.
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 1 }))
-    const settled = useHostLocalStore.getState()
-    expect(settled.error).toBe("the server never announced a ticket")
-    expect(settled.exitKind).toBeNull()
-    expect(settled.stoppingHostId).toBeNull()
-  })
-
-  it("does not let an abandoned start's rejection clobber the session that replaced it", async () => {
-    // Cancel leaves `phase: "idle"` while the stop is still in flight, so Start
-    // can be pressed again before the acquisition it cancelled has seated
-    // anything. The second press owns the store; the first press's invoke then
-    // loses the race in Rust and rejects with "a local server is already
-    // running" — a verdict about a start nobody is waiting for any more.
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
-    try {
-      bridge.mintHostId.mockReturnValueOnce("host-A").mockReturnValueOnce("host-B")
-      let rejectA: (cause: Error) => void = () => {
-        throw new Error("rejectA not armed")
-      }
-      let settleStop: (stopped: boolean) => void = () => {
-        throw new Error("settleStop not armed")
-      }
-      bridge.hostLocalStart
-        .mockImplementationOnce(
-          () =>
-            new Promise<void>((_, reject) => {
-              rejectA = reject
-            }),
-        )
-        .mockImplementationOnce(async () => {})
-      bridge.hostLocalStop.mockImplementationOnce(
-        () =>
-          new Promise<boolean>((resolve) => {
-            settleStop = resolve
-          }),
-      )
-
-      const pendingA = useHostLocalStore.getState().start()
-      await vi.waitFor(() => expect(bridge.hostLocalStart).toHaveBeenCalledTimes(1))
-      expect(useHostLocalStore.getState().hostId).toBe("host-A")
-
-      const cancelled = useHostLocalStore.getState().stop()
-      expect(useHostLocalStore.getState().phase).toBe("idle")
-
-      const pendingB = useHostLocalStore.getState().start()
-      await vi.waitFor(() => expect(bridge.hostLocalStart).toHaveBeenCalledTimes(2))
-      expect(useHostLocalStore.getState().hostId).toBe("host-B")
-      expect(useHostLocalStore.getState().phase).toBe("starting")
-
-      settleStop(false)
-      await cancelled
-
-      rejectA(new Error("a local server is already running"))
-      await pendingA
-      await pendingB
-
-      const state = useHostLocalStore.getState()
-      expect(state.hostId).toBe("host-B")
-      expect(state.phase).toBe("starting")
-      expect(state.error).toBeNull()
-    } finally {
-      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
-    }
-  })
-
-  it("drops a late Ready after Exit so a dead server cannot become ready again", () => {
-    useConnectionStore.setState({ connect: vi.fn(async () => {}) } as never)
-    useHostLocalStore.setState({
-      phase: "ready",
-      hostedSession: true,
-      hostId: HOST,
-      error: null,
-      exitKind: null,
-    })
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 1 }))
-    useHostLocalStore.getState().ingest(ev({ kind: "ready", ticket: "late", key: "kee" }))
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("error")
-    expect(state.hostedSession).toBe(false)
-    expect(state.exitKind).toBe("unexpected")
-    expect(state.lastTicket).not.toBe("late")
-  })
-
-  it("drops a queued Exit from a previous host after a new start", () => {
-    useHostLocalStore.setState({ phase: "starting", hostId: "new-host", hostedSession: false })
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 1 }, "old-host"))
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("starting")
-    expect(state.exitKind).toBeNull()
-    expect(state.hostedSession).toBe(false)
-    expect(state.hostId).toBe("new-host")
-  })
-
-  it("does not let a follow-up Exit overwrite a readiness error", () => {
-    useHostLocalStore.setState({
-      phase: "starting",
-      hostedSession: false,
-      error: null,
-      log: [],
-      hostId: HOST,
-    })
-    useHostLocalStore.getState().ingest(
-      ev({
-        kind: "error",
-        message: "the server exited before it was ready",
-      }),
-    )
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: 1 }))
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("error")
-    expect(state.hostedSession).toBe(false)
-    expect(state.error).toBe("the server exited before it was ready")
-    expect(state.hostId).toBeNull()
-  })
-
-  it("does not treat the confirming Exit of an explicit stop as a crash", async () => {
-    useHostLocalStore.setState({
-      phase: "ready",
-      hostedSession: true,
-      error: null,
-      log: ["up"],
-      hostId: HOST,
-    })
-    await useHostLocalStore.getState().stop()
     expect(useHostLocalStore.getState().phase).toBe("idle")
-    expect(useHostLocalStore.getState().hostedSession).toBe(false)
-    expect(useHostLocalStore.getState().hostId).toBeNull()
-    expect(useHostLocalStore.getState().stoppingHostId).toBe(HOST)
-    useHostLocalStore.getState().ingest(ev({ kind: "exit", code: null }))
-    const state = useHostLocalStore.getState()
-    expect(state.phase).toBe("idle")
-    expect(state.hostedSession).toBe(false)
-    expect(state.error).toBeNull()
-    expect(state.exitKind).toBeNull()
-    expect(state.log).toEqual(["up"])
-    expect(state.stoppingHostId).toBeNull()
   })
 
-  it("drops a late Ready after an explicit stop", async () => {
-    useConnectionStore.setState({ connect: vi.fn(async () => {}) } as never)
-    useHostLocalStore.setState({ phase: "ready", hostedSession: true, hostId: HOST })
-    await useHostLocalStore.getState().stop()
-    useHostLocalStore.getState().ingest(ev({ kind: "ready", ticket: "late", key: "kee" }))
-    expect(useHostLocalStore.getState().phase).toBe("idle")
-    expect(useHostLocalStore.getState().hostedSession).toBe(false)
+  it("a server that died ends the table and says so with its last lines", async () => {
+    bridge.hostLocalStart.mockResolvedValueOnce(READY)
+    await useHostLocalStore.getState().start()
+    const exited = bridge.exit
+    expect(exited).toBeDefined()
+    // Another server's death is not this one's.
+    exited?.({ hostId: "host-0", code: 1, stderr: [] })
+    expect(useHostLocalStore.getState().phase).toBe("hosting")
+    exited?.({ hostId: "host-1", code: 7, stderr: ["fatal: the store went away"] })
+    expect(useHostLocalStore.getState()).toMatchObject({
+      phase: "failed",
+      problem: { code: "died", exitCode: 7, stderr: ["fatal: the store went away"] },
+      hosted: null,
+      connection: null,
+    })
+    expect(connection.stop).toHaveBeenCalled()
   })
 
-  it("passes the picked server folder through to the bridge on start", async () => {
-    // jsdom is not the shell — fake it so start() reaches the bridge call.
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
-    try {
-      useHostLocalStore.setState({ homeOverride: "  /Volumes/Table/loreweaver  " })
-      await useHostLocalStore.getState().start()
-      expect(bridge.hostLocalStart).toHaveBeenCalledWith(
-        undefined,
-        "/Volumes/Table/loreweaver",
-        undefined,
-        "minted-host",
-      )
-    } finally {
-      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
-    }
-  })
-
-  it("remembers the dev-room source root it started with", async () => {
-    // `TRPG_DEV__SOURCE_ROOT` is read at STARTUP, so a caller that needs a
-    // different root has to restart — which it can only know by asking.
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
-    try {
-      await useHostLocalStore.getState().start("/Users/nyx/packs")
-      expect(bridge.hostLocalStart).toHaveBeenCalledWith(
-        undefined,
-        undefined,
-        "/Users/nyx/packs",
-        "minted-host",
-      )
-      expect(useHostLocalStore.getState().devSourceRoot).toBe("/Users/nyx/packs")
-      await useHostLocalStore.getState().stop()
-      expect(useHostLocalStore.getState().devSourceRoot).toBe("")
-    } finally {
-      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
-    }
-  })
-
-  it("quitTable stops the server only for sessions we hosted ourselves", async () => {
-    const disconnect = vi.fn(async () => {})
-    useConnectionStore.setState({ disconnect })
-
-    useHostLocalStore.setState({ hostedSession: false })
+  it("leaving the hosted table stops its server; leaving another table does not", async () => {
+    bridge.hostLocalStart.mockResolvedValueOnce(READY)
+    await useHostLocalStore.getState().start()
     await quitTable()
-    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(disconnect).toHaveBeenCalled()
+    expect(bridge.hostLocalStop).toHaveBeenCalledTimes(1)
+    expect(useHostLocalStore.getState().phase).toBe("idle")
+
+    vi.clearAllMocks()
+    connection = fakeConnection()
+    useConnectionStore.setState({ connection: connection as never })
+    await quitTable()
+    expect(disconnect).toHaveBeenCalled()
     expect(bridge.hostLocalStop).not.toHaveBeenCalled()
+  })
 
-    useHostLocalStore.setState({ hostedSession: true, hostId: HOST })
-    await quitTable()
-    expect(bridge.hostLocalStop).toHaveBeenCalledTimes(1)
-    expect(useHostLocalStore.getState().hostedSession).toBe(false)
+  it("a kept key the server turns down is forgotten and the server stopped", async () => {
+    bridge.hostLocalStart.mockResolvedValueOnce({ ...READY, keySource: "kept" })
+    await useHostLocalStore.getState().start()
+    connection.end({ kind: "refused", code: "bad_key", message: "unknown key" })
+    await settle()
+    expect(useHostLocalStore.getState()).toMatchObject({ phase: "failed", problem: { code: "key_refused" } })
+    expect(bridge.hostLocalForgetKey).toHaveBeenCalled()
+    expect(bridge.hostLocalStop).toHaveBeenCalled()
+  })
+
+  it("another way the hosted table ends leaves the server running", async () => {
+    bridge.hostLocalStart.mockResolvedValueOnce(READY)
+    await useHostLocalStore.getState().start()
+    connection.end({ kind: "lost", code: "connection_lost", detail: "gone" })
+    await settle()
+    expect(useHostLocalStore.getState().phase).toBe("hosting")
+    expect(bridge.hostLocalStop).not.toHaveBeenCalled()
+  })
+
+  it("keeps only the folder from what 2.x persisted", () => {
+    const migrate = useHostLocalStore.persist.getOptions().migrate
+    expect(
+      migrate?.({ homeOverride: "/old", lastTicket: "t", lastKey: "k", lastTicketHome: "/old" }, 0),
+    ).toEqual({
+      homeOverride: "/old",
+    })
+    expect(migrate?.(undefined, 0)).toEqual({ homeOverride: "" })
   })
 })

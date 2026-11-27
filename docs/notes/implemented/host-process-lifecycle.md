@@ -1,53 +1,46 @@
-# Implemented: host-process lifecycle — drain until death, one Exit per host id
+# Implemented: hosting a 3.0 server locally — one slot, a bounded start, no orphan
 
-- **Problem:** `host_local.rs` dropped the stderr reader the moment the iroh
-  ticket + sidecar key arrived (the comment claimed the pipe would keep
-  draining; the `ready` future owned the `BufReader` BY VALUE and took it
-  with it on return). That drop closed the READ end of the pipe, so the next
-  line the server wrote to stderr got EPIPE — the child was broken by the
-  reader going away, not by a pipe filling up and blocking. Separately, a
-  spontaneous crash or external kill never emitted `HostLocalEvent::Exit`, so
-  the WebView could sit at `phase: "ready"` / `hostedSession: true` forever.
-  A numeric generation that stayed current after `try_observe_exit` then let
-  `announce_ready` emit Ready after Exit. And a Rust emit-before-check cannot
-  see frames already in the Tauri/JS queue — the same gap the transport
-  session id closed — so an old Exit could land after a new start.
-- **Decision:** stdout and stderr are each drained line-by-line from spawn
-  until the process closes the fd. The **same** stderr reader scans for the
-  ticket; Ready is announced by a sidecar waiter that does not own the reader.
-  A readiness timeout emits only a readiness Error — it never wraps or drops
-  a drain. The WebView mints a `hostId` on `start` and passes it to Rust;
-  every `HostLocalEvent` carries it. `ingest` is the single filter
-  (`hostEventApplies`). Observed death clears Rust `current_host_id` so a
-  late Ready cannot follow; Exit is still emitted with that id. Explicit
-  `stop` moves the id to `stoppingHostId` (only the confirming Exit applies)
-  and waits up to 5s for death. After a WebView reload, `reconnectIfServing`
-  adopts `host_local_status.hostId` so the live child's Exit is still
-  accepted. Exit kind is structured (`exitKind` / `exitCode`); the connect
-  screen translates it.
-- **Reason:** the Child is not shareable across `wait()` and `start_kill()`
-  without a lock, and holding `std::sync::Mutex` across `.await` deadlocks
-  stop against the monitor. Polling `try_wait` under a short lock, and
-  waiting on a _taken_ Child outside the mutex, keeps kill_on_drop / status /
-  already-running / reconnect semantics. The host id — not a Rust-only
-  counter — is what makes a stale queued event structurally unable to poison
-  a new session or revive a dead one. The ticket scan window is capped
-  (64 KiB) so 90s of pre-ready stderr cannot grow without bound.
-- **Scope limit (deliberate):** acquisition (checkout / verified cache /
-  download), `kill_on_drop`, reload-reconnect via persisted ticket+key, and
-  the already-running refusal are unchanged. `stop` is synchronous with
-  process death up to `STOP_WAIT`; after that the taken Child is dropped and
-  `kill_on_drop` finishes the job — we do not block the command forever.
-- **Rule home:** `src-tauri/src/host_local.rs` (slot / host id / drain /
-  monitor helpers); `src/lib/hostLocal.ts` `hostEventApplies`;
-  `src/store/hostLocal.ts` `ingest` first line + `stop()`.
-- **Amended 2026-08-26:** the id is only meaningful for events that arrive
-  outside `stop`'s own await, so a Ready landing inside it is now PARKED and
-  reconciled with what the stop answers (killed a child → a dead process's
-  last word; found none → the announcement of the child the cancel could not
-  find); a readiness Error stops the server it cannot use rather than only
-  flipping `phase` (`watch_output` kills nothing, so the alternative is a live
-  server nobody holds credentials for); and both of `start`'s continuations are
-  guarded on still owning the store, since a cancel leaves `idle` and the next
-  press can outrun the invoke it cancelled.
-- **Date:** 2026-08-22.
+- **Problem:** "Host locally & play" ran the 2.x Python server: it downloaded a
+  release bundle (with checksum verification), read key files the server wrote
+  beside its data, scraped the ticket from stderr and streamed every line to the
+  WebView as events, with a WebView-minted host id to filter queued events and a
+  parked-Ready dance for a stop that crossed a Ready. None of that exists in 3.0,
+  and the event's `host_id` field went out in snake case (the enum's
+  `rename_all` renamed variants, not fields) while TypeScript read `hostId`.
+- **Decision:** `host_local.rs` is a small process owner, independent of Tauri
+  (`LocalHost`), with a thin command layer:
+  - the engine is found by the app's one probe (`engine::probe_candidates`,
+    first candidate answering `--version` with `3.x`);
+  - `start` claims the one slot first, then finds the engine, then (a data
+    directory already in use whose key the app lost) mints an admin key with
+    the server's `key` command, then spawns `serve --local` from an empty temp
+    working directory with the app's environment minus `TRPG_*` plus
+    `TRPG_DATA_DIR` (and `TRPG_LOCALE`), and resolves on the ONE ready line, or
+    fails with a coded `HostFailure` (refused + problems, exited + last stderr
+    lines, timeout, cancelled, no engine…). It is a plain async command: no
+    progress events, so nothing can arrive out of order;
+  - a supervisor task owns the child: it waits for death or a stop
+    (SIGTERM, 5s, then SIGKILL), releases the slot, and only a death nobody
+    asked for (ready, not stopping) is emitted — `HostExited {hostId, code,
+stderr}`, camelCase, pinned by a test;
+  - `stop` signals and waits until the slot is released; a stop during any
+    step of the start cancels it; the app's `RunEvent::Exit` stops the server;
+  - the admin key: `first_key` on a fresh data directory, kept in
+    `local-server-keys.json` in the app data folder (0600, keyed by data
+    directory) — not in the WebView's storage; the key reaches the WebView only
+    in `start`'s answer and goes straight to the connection;
+  - pressing the button again while the server runs for the same folder (after
+    a reload) returns its ready again (`reused`) instead of refusing.
+- **Reason:** with the ready line on stdout and a bounded wait, the start is a
+  request with an answer, so the generation machinery the streamed 2.x design
+  needed (host ids minted in the WebView, a stopping id, a parked Ready) has
+  nothing left to guard. Keeping the key beside the app rather than in
+  localStorage ties it to the data directory it belongs to, whatever the
+  WebView forgets.
+- **Not covered:** a crash or SIGKILL of the app itself leaves the server
+  running (nothing in the engine watches its parent); on Windows the server is
+  terminated without a graceful close, and a `loreweaver.cmd` shim would be
+  killed without its child.
+- **Rule home:** `src-tauri/src/host_local.rs` (+ its tests and
+  `src-tauri/tests/host_local_live.rs`), `src/store/hostLocal.ts`.
+- **Date:** 2026-08-22; rewritten for 3.0 on 2026-11-27.

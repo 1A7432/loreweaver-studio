@@ -29,7 +29,7 @@ export interface AiSettingsState {
   model: string
   maxTokens: number
   apiKey: string
-  /** Path to a checkout of the main repo — enables the `python -m app` CLI route. */
+  /** Path to an engine checkout (v3): run with Bun to build packs and to host a server locally. */
   engineRepoDir: string
 
   setConfig: (

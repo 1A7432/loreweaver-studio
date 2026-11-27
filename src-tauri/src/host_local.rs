@@ -1,1378 +1,1206 @@
-//! One-click local hosting — the studio face of the TUI's "Host locally &
-//! play" button (clients/tui/src/hostLocal.ts). Acquisition tiers, fastest
-//! first:
-//!   1. the user's engine checkout (AI & engine settings), its venv python
-//!      preferred exactly like the pack-build probe;
-//!   2. a previously downloaded prebuilt binary — executed only when its
-//!      integrity manifest still matches the executable's SHA-256;
-//!   3. download the prebuilt server for this OS/arch from GitHub Releases,
-//!      verified against the published `.sha256` sidecar before first run.
+//! "Host locally & play": run a protocol 3.0 server on this machine and hand
+//! the WebView what it needs to sit down at it as the room admin. The terminal
+//! client does the same (`clients/tui/src/hostLocal.ts` in the engine
+//! repository); this follows its decisions except where a desktop app differs.
 //!
-//! The TUI's further source-tarball + uv tier is not ported yet; when no tier
-//! applies the error says exactly that and points at the settings.
+//! - The engine is found the one way this app finds it ([`crate::engine`]): a
+//!   `loreweaver` on PATH, or the configured engine checkout run with Bun —
+//!   the first that answers `--version` like a 3.x engine.
+//! - It runs `serve --local` (loopback only; the WebView dials it with the
+//!   `local` network profile) as a child process, from an empty temporary
+//!   working directory (Bun loads `.env` from the working directory), with this
+//!   app's environment minus every `TRPG_*` variable, plus `TRPG_DATA_DIR` and
+//!   the few settings the caller passes (nothing secret goes on the command
+//!   line). The data directory is `<home>/data`; the home is the folder the
+//!   user picked, or `local-server` under this app's data folder.
+//! - Ready is the ONE JSON line the server prints on stdout,
+//!   `{ok, version, ticket, notes, first_key?}`; a refusal is one JSON object
+//!   on stderr, `{ok: false, code, problems?}`. The wait is bounded.
+//! - The admin key: `first_key` the first time a data directory is used; the
+//!   app keeps it (owner-only file in its data folder, keyed by data
+//!   directory) and uses it on every later start. A data directory that
+//!   already holds a server but whose key the app has lost gets a new admin
+//!   key from the server's own `key` command before the server starts (the
+//!   terminal client does exactly this).
+//! - The child is stopped when the user stops hosting, leaves the hosted
+//!   table, or quits the app (SIGTERM, which the server handles by closing
+//!   cleanly, then SIGKILL; on Windows the process is terminated). A server
+//!   that dies on its own is reported once, with the last lines it wrote to
+//!   stderr — bounded, and with every key this app knows replaced.
 //!
-//! Server contract (mirrors `app.py --serve` + clients/tui/src/localPaths.ts):
-//! home is `$TRPG_LOCAL_SERVER_HOME` → `$TRPG_HOME` → `~/.loreweaver`; keys
-//! live in `local-keys.toml`; an empty keys file makes the server mint a
-//! keeper key and write the `keeper-key.txt` sidecar next to it; readiness is
-//! the base32 iroh ticket appearing on stderr.
+//! The process side ([`LocalHost`]) knows nothing of Tauri, so the live gate
+//! (`tests/host_local_live.rs`) drives exactly this code against the real
+//! server; the commands at the bottom are a thin layer over it.
 
-use crate::asset_cache::sha256_hex;
-use serde::Serialize;
+use crate::engine::{self, EngineCandidate};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::{oneshot, watch};
 
+/// The event a hosted server that died on its own is reported on.
 pub const HOST_LOCAL_EVENT: &str = "loreweaver://host-local";
-const REPO: &str = "https://github.com/1A7432/loreweaver";
-const READY_TIMEOUT: Duration = Duration::from_secs(90);
-/// Cap on the pre-ready ticket scan window. The iroh ticket is tens of bytes;
-/// 90s of stderr chatter must not accumulate without bound.
-const TICKET_SCAN_CAP: usize = 64 * 1024;
-const SIDECAR_ATTEMPTS: u32 = 20;
-const SIDECAR_DELAY: Duration = Duration::from_millis(250);
-/// How often the exit monitor `try_wait`s. The Child stays in the slot; the
-/// monitor never calls `wait()` and never holds the mutex across this sleep.
-const EXIT_POLL: Duration = Duration::from_millis(100);
-/// Explicit stop kills, then waits this long for the process to disappear
-/// before returning. `kill_on_drop` still covers an uncooperative child.
-const STOP_WAIT: Duration = Duration::from_secs(5);
-const BINARY_INTEGRITY_MANIFEST: &str = ".loreweaver-integrity.json";
-const EXE_NAME: &str = if cfg!(windows) {
-    "loreweaver-server.exe"
-} else {
-    "loreweaver-server"
-};
+/// The room the first admin key of a fresh data directory belongs to (the
+/// server's `FIRST_ROOM`), and the room a re-minted admin key is made for.
+pub const LOCAL_ROOM: &str = "main";
+const ADMIN_NAME: &str = "Admin";
+/// How long the server gets to open its store and endpoint and print its
+/// ready line (`--local` waits for no relay; the terminal client allows 60s).
+pub const READY_TIMEOUT: Duration = Duration::from_secs(60);
+/// After SIGTERM, how long the server gets to close cleanly before SIGKILL.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+/// After SIGKILL (or Windows' terminate), how long to wait for it to be gone.
+const KILL_WAIT: Duration = Duration::from_secs(5);
+/// How long the output readers get to finish once the process is gone.
+const READER_SETTLE: Duration = Duration::from_secs(2);
+const MINT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Lines of the server's output kept for a failure report, and the length of each.
+const TAIL_LINES: usize = 40;
+const TAIL_LINE_CHARS: usize = 400;
+/// A line longer than this is cut (the ready line is a few hundred bytes).
+const MAX_LINE_BYTES: usize = 64 * 1024;
+/// A known secret is replaced by this wherever the server's words are shown.
+const REDACTED: &str = "[key]";
+/// The kept admin keys, in this app's data folder.
+const KEPT_KEYS_FILE: &str = "local-server-keys.json";
+/// The default home under this app's data folder.
+const DEFAULT_HOME: &str = "local-server";
 
-#[derive(Serialize, Clone)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum HostLocalEvent {
-    Log {
-        host_id: String,
-        level: String,
-        text: String,
-    },
-    Ready {
-        host_id: String,
-        ticket: String,
-        key: String,
-    },
-    Exit {
-        host_id: String,
-        code: Option<i32>,
-    },
-    Error {
-        host_id: String,
-        message: String,
-    },
+// ---------------------------------------------------------------------------
+// What crosses to the WebView
+// ---------------------------------------------------------------------------
+
+/// Where the admin key of a ready server came from.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeySource {
+    /// The server's `first_key`: this data directory was used for the first time.
+    First,
+    /// The key this app kept from an earlier start.
+    Kept,
+    /// The app had lost the key of a data directory already in use, and the
+    /// server's `key` command made a new one before the server started.
+    Minted,
 }
 
-/// Occupant of the one local-server slot. `host_id` is minted by the WebView
-/// (or, as a fallback, here) and travels on every event so the store can
-/// drop queued frames from a superseded session — a Rust emit-before-check
-/// cannot see the JS queue.
+/// A server that is up, and how to sit down at it as the room admin.
+#[derive(Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostReady {
+    pub host_id: String,
+    pub ticket: String,
+    /// The room admin's access key. A secret: never logged, never in `Debug`.
+    pub key: String,
+    pub room: String,
+    pub key_source: KeySource,
+    /// What the server said at start-up, as its stable codes (`model_not_configured`, …).
+    pub notes: Vec<String>,
+    pub version: String,
+    pub data_dir: String,
+    /// The server was already running for this data directory (the WebView
+    /// reloaded, say): this is its ready, again.
+    pub reused: bool,
+}
+
+impl std::fmt::Debug for HostReady {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostReady")
+            .field("host_id", &self.host_id)
+            .field("ticket", &self.ticket)
+            .field("key", &REDACTED)
+            .field("room", &self.room)
+            .field("key_source", &self.key_source)
+            .field("notes", &self.notes)
+            .field("version", &self.version)
+            .field("data_dir", &self.data_dir)
+            .field("reused", &self.reused)
+            .finish()
+    }
+}
+
+/// One problem of a `bad_settings` refusal, as the server names it (a
+/// variable and what is wrong with it — never its value).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConfigProblem {
+    pub variable: String,
+    pub problem: String,
+}
+
+/// An engine candidate that could not be used, for the "no engine" answer.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct EngineProblem {
+    pub kind: String,
+    pub program: String,
+    pub problem: String,
+}
+
+/// Why hosting did not start. Serialized as `{code, …fields in camelCase}`;
+/// the WebView words each code.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "code",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum HostFailure {
+    /// No engine was found, or none answered like a 3.x engine.
+    NoEngine { engines: Vec<EngineProblem> },
+    /// A server this app started is running for another data directory.
+    AlreadyRunning { data_dir: String },
+    /// The server refused to start, with its code (`bad_settings` carries its problems).
+    Refused {
+        refusal: String,
+        problems: Vec<ConfigProblem>,
+    },
+    /// The server exited before it was ready.
+    Exited {
+        exit_code: Option<i32>,
+        stderr: Vec<String>,
+    },
+    /// No ready line within [`READY_TIMEOUT`]; the server was stopped.
+    Timeout { stderr: Vec<String> },
+    /// The user stopped hosting before the server was ready.
+    Cancelled,
+    /// Making a new admin key for a data directory already in use failed.
+    MintFailed {
+        refusal: Option<String>,
+        stderr: Vec<String>,
+    },
+    /// The server is up but no admin key is known for it.
+    NoKey,
+    /// The process could not be started, or a file could not be written.
+    Io { detail: String },
+}
+
+/// A hosted server that died on its own (not stopped by this app). Sent on
+/// [`HOST_LOCAL_EVENT`]; the WebView matches `hostId` against the server it
+/// is sitting at.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostExited {
+    pub host_id: String,
+    pub code: Option<i32>,
+    pub stderr: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// The server's lines
+// ---------------------------------------------------------------------------
+
+/// The server's ready line.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ReadyLine {
+    pub ticket: String,
+    pub version: String,
+    pub notes: Vec<String>,
+    /// `(room, key)` — only the first time a data directory is used.
+    pub first_key: Option<(String, String)>,
+}
+
+/// A refusal to start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub code: String,
+    pub problems: Vec<ConfigProblem>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum ServerLine {
+    Ready(ReadyLine),
+    Refusal(Refusal),
+}
+
+/// The server's one JSON line — its ready line or its refusal — or None when
+/// `line` is anything else (an operator report, a stack trace).
+pub fn parse_server_line(line: &str) -> Option<ServerLine> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    let record = value.as_object()?;
+    match record.get("ok")?.as_bool()? {
+        false => {
+            let code = record
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_owned();
+            let problems = record
+                .get("problems")
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(ServerLine::Refusal(Refusal { code, problems }))
+        }
+        true => {
+            let ticket = record.get("ticket")?.as_str()?.trim();
+            if ticket.is_empty() {
+                return None;
+            }
+            let notes = record
+                .get("notes")
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let first_key = record.get("first_key").and_then(|first| {
+                let key = first.get("key")?.as_str()?.trim();
+                if key.is_empty() {
+                    return None;
+                }
+                let room = first
+                    .get("room")
+                    .and_then(Value::as_str)
+                    .unwrap_or(LOCAL_ROOM);
+                Some((room.to_owned(), key.to_owned()))
+            });
+            Some(ServerLine::Ready(ReadyLine {
+                ticket: ticket.to_owned(),
+                version: record
+                    .get("version")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                notes,
+                first_key,
+            }))
+        }
+    }
+}
+
+/// One line for a report: terminal colour codes and other control
+/// characters out, cut to [`TAIL_LINE_CHARS`] characters.
+fn clean_line(raw: &str) -> String {
+    let mut out = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // CSI: ESC [ params final-byte; any other escape: drop ESC and the next char.
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            } else {
+                chars.next();
+            }
+            continue;
+        }
+        if c.is_control() && c != '\t' {
+            continue;
+        }
+        out.push(c);
+    }
+    if out.chars().count() > TAIL_LINE_CHARS {
+        out = out.chars().take(TAIL_LINE_CHARS).collect();
+        out.push('…');
+    }
+    out
+}
+
+/// `line` with every known secret replaced.
+fn redact(line: &str, secrets: &[String]) -> String {
+    secrets
+        .iter()
+        .filter(|secret| secret.len() >= 8)
+        .fold(line.to_owned(), |text, secret| {
+            text.replace(secret.as_str(), REDACTED)
+        })
+}
+
+/// Read one line of at most `cap` bytes into `buf` (the rest of a longer line
+/// is read and dropped, so the pipe never stalls and memory stays bounded).
+/// None at end of stream.
+async fn read_line_capped<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    cap: usize,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<Option<()>> {
+    buf.clear();
+    let mut any = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(any.then_some(()));
+        }
+        any = true;
+        let (chunk, used, done) = match available.iter().position(|&b| b == b'\n') {
+            Some(at) => (&available[..at], at + 1, true),
+            None => (available, available.len(), false),
+        };
+        let room = cap.saturating_sub(buf.len());
+        buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        reader.consume(used);
+        if done {
+            return Ok(Some(()));
+        }
+    }
+}
+
+/// What the readers collected: the last lines (for a failure report), the
+/// refusal if the server printed one, and the secrets to keep out of both.
+#[derive(Default)]
+struct Output {
+    tail: VecDeque<String>,
+    refusal: Option<Refusal>,
+    secrets: Vec<String>,
+}
+
+impl Output {
+    fn push(&mut self, line: &str) {
+        let line = clean_line(line);
+        if line.trim().is_empty() {
+            return;
+        }
+        if self.tail.len() == TAIL_LINES {
+            self.tail.pop_front();
+        }
+        self.tail.push_back(line);
+    }
+
+    fn report(&self) -> Vec<String> {
+        self.tail
+            .iter()
+            .map(|line| redact(line, &self.secrets))
+            .collect()
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Drain stdout to its end: the ready line goes to `ready` (once), anything
+/// that is not JSON to the tail. A JSON line never enters the tail — the
+/// ready line carries the first admin key.
+async fn read_stdout<R: AsyncBufRead + Unpin>(
+    mut reader: R,
+    output: Arc<Mutex<Output>>,
+    ready: oneshot::Sender<ReadyLine>,
+) {
+    let mut ready = Some(ready);
+    let mut buf = Vec::new();
+    while let Ok(Some(())) = read_line_capped(&mut reader, MAX_LINE_BYTES, &mut buf).await {
+        let line = String::from_utf8_lossy(&buf);
+        match parse_server_line(&line) {
+            Some(ServerLine::Ready(parsed)) => {
+                if let Some((_, key)) = &parsed.first_key {
+                    lock(&output).secrets.push(key.clone());
+                }
+                if let Some(sender) = ready.take() {
+                    let _ = sender.send(parsed);
+                }
+            }
+            Some(ServerLine::Refusal(refusal)) => lock(&output).refusal = Some(refusal),
+            None if line.trim_start().starts_with('{') => {}
+            None => lock(&output).push(&line),
+        }
+    }
+}
+
+/// Drain stderr to its end: a refusal is kept, every other line goes to the tail.
+async fn read_stderr<R: AsyncBufRead + Unpin>(mut reader: R, output: Arc<Mutex<Output>>) {
+    let mut buf = Vec::new();
+    while let Ok(Some(())) = read_line_capped(&mut reader, MAX_LINE_BYTES, &mut buf).await {
+        let line = String::from_utf8_lossy(&buf);
+        match parse_server_line(&line) {
+            Some(ServerLine::Refusal(refusal)) => lock(&output).refusal = Some(refusal),
+            Some(ServerLine::Ready(_)) => {}
+            None => lock(&output).push(&line),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Paths and the kept keys
+// ---------------------------------------------------------------------------
+
+/// Where a hosted server lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostPaths {
+    pub home: PathBuf,
+    /// `TRPG_DATA_DIR`: the server's database, keys, transport identity, packs.
+    pub data_dir: PathBuf,
+    /// The kept admin keys (one file for every data directory this app hosted).
+    pub keys_file: PathBuf,
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    match (path, home) {
+        ("~", Some(home)) => PathBuf::from(home),
+        (path, Some(home)) if path.starts_with("~/") || path.starts_with("~\\") => {
+            PathBuf::from(home).join(&path[2..])
+        }
+        (path, _) => PathBuf::from(path),
+    }
+}
+
+/// The home is the folder the user picked, or `local-server` under this
+/// app's data folder; the data directory is `<home>/data`.
+pub fn resolve_paths(app_data_dir: &Path, home_override: Option<&str>) -> HostPaths {
+    let home = home_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(expand_home)
+        .unwrap_or_else(|| app_data_dir.join(DEFAULT_HOME));
+    HostPaths {
+        data_dir: home.join("data"),
+        keys_file: app_data_dir.join(KEPT_KEYS_FILE),
+        home,
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct KeptKey {
+    data_dir: String,
+    room: String,
+    key: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct KeptKeys {
+    keys: Vec<KeptKey>,
+}
+
+/// The data directory as the kept keys name it: canonical when it exists.
+fn key_name(data_dir: &Path) -> String {
+    data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| data_dir.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn read_kept(file: &Path) -> KeptKeys {
+    std::fs::read(file)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Write the kept keys: owner-only, replaced in one rename.
+fn write_kept(file: &Path, kept: &KeptKeys) -> std::io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let bytes = serde_json::to_vec_pretty(kept).map_err(std::io::Error::other)?;
+    let temp = file.with_extension(format!("tmp-{}", unique()));
+    {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut handle = options.open(&temp)?;
+        handle.write_all(&bytes)?;
+        handle.sync_all()?;
+    }
+    std::fs::rename(&temp, file)
+}
+
+/// The admin key kept for `data_dir`, as `(room, key)`.
+pub fn kept_key(file: &Path, data_dir: &Path) -> Option<(String, String)> {
+    let name = key_name(data_dir);
+    read_kept(file)
+        .keys
+        .into_iter()
+        .find(|entry| entry.data_dir == name && !entry.key.is_empty())
+        .map(|entry| (entry.room, entry.key))
+}
+
+pub fn keep_key(file: &Path, data_dir: &Path, room: &str, key: &str) -> std::io::Result<()> {
+    let name = key_name(data_dir);
+    let mut kept = read_kept(file);
+    kept.keys.retain(|entry| entry.data_dir != name);
+    kept.keys.push(KeptKey {
+        data_dir: name,
+        room: room.to_owned(),
+        key: key.to_owned(),
+    });
+    write_kept(file, &kept)
+}
+
+/// Forget the admin key kept for `data_dir`; true when there was one.
+pub fn forget_key(file: &Path, data_dir: &Path) -> std::io::Result<bool> {
+    let name = key_name(data_dir);
+    let mut kept = read_kept(file);
+    let before = kept.keys.len();
+    kept.keys.retain(|entry| entry.data_dir != name);
+    if kept.keys.len() == before {
+        return Ok(false);
+    }
+    write_kept(file, &kept).map(|()| true)
+}
+
+// ---------------------------------------------------------------------------
+// The child process
+// ---------------------------------------------------------------------------
+
+/// How to run the engine: the program and its leading arguments (a
+/// checkout's entry file); the subcommand goes after.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl From<&EngineCandidate> for EngineCommand {
+    fn from(candidate: &EngineCandidate) -> Self {
+        Self {
+            program: candidate.program.clone(),
+            args: candidate.args.clone(),
+        }
+    }
+}
+
+/// The engine to host with, or why there is none.
+pub async fn find_engine(engine_repo_dir: Option<String>) -> Result<EngineCommand, HostFailure> {
+    let candidates = engine::probe_candidates(engine_repo_dir).await;
+    if let Some(found) = engine::pick_engine(&candidates) {
+        return Ok(found.into());
+    }
+    Err(HostFailure::NoEngine {
+        engines: candidates
+            .iter()
+            .map(|candidate| EngineProblem {
+                kind: candidate.kind.clone(),
+                program: candidate.program.clone(),
+                problem: candidate.problem.clone().unwrap_or_else(|| {
+                    format!(
+                        "--version printed {:?}, not a 3.x version",
+                        clean_line(candidate.version.as_deref().unwrap_or_default())
+                    )
+                }),
+            })
+            .collect(),
+    })
+}
+
+/// The `serve --local` command: the engine's program and arguments, run from
+/// `cwd`, with this app's environment minus every `TRPG_*` variable, plus
+/// `TRPG_DATA_DIR` and `env`. Values go in the environment only — the command
+/// line is `<program> [<entry>] serve --local`, nothing else.
+pub fn serve_command(
+    engine: &EngineCommand,
+    cwd: &Path,
+    data_dir: &Path,
+    env: &[(String, String)],
+) -> Command {
+    let mut command = Command::new(&engine.program);
+    command
+        .args(&engine.args)
+        .args(["serve", "--local"])
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    engine::no_console_window(&mut command);
+    engine::scrub_trpg(&mut command);
+    command.env("TRPG_DATA_DIR", data_dir);
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    command
+}
+
+/// Stop a child: SIGTERM and a grace period on Unix (the server closes its
+/// store and endpoint), then a hard kill. Returns once it is gone (or the
+/// waits ran out).
+async fn terminate(child: &mut Child) -> Option<ExitStatus> {
+    #[cfg(unix)]
+    if let Some(pid) = child.id().and_then(|pid| libc::pid_t::try_from(pid).ok()) {
+        // SAFETY: kill(2) with a pid this process spawned and has not reaped
+        // (tokio reaps only through `wait`, which nothing else calls).
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        if let Ok(status) = tokio::time::timeout(STOP_GRACE, child.wait()).await {
+            return status.ok();
+        }
+    }
+    let _ = child.start_kill();
+    tokio::time::timeout(KILL_WAIT, child.wait())
+        .await
+        .ok()
+        .and_then(Result::ok)
+}
+
+/// An empty working directory of its own for one server: Bun loads `.env`
+/// (and `bunfig.toml`) from the working directory.
+fn make_run_dir() -> std::io::Result<PathBuf> {
+    loop {
+        let dir = std::env::temp_dir().join(format!("lw-studio-host-{}", unique()));
+        // `create_dir`, not `create_dir_all`: a directory that already exists is
+        // someone else's, and is removed by them when their server ends.
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// `<pid>-<clock>-<count>`: unique in this process even where the clock ticks
+/// in microseconds (macOS) and two starts land in the same tick.
+fn unique() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    format!(
+        "{}-{stamp:x}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// The exit code the supervisor saw, once the process is gone.
+async fn exit_code(exit: &mut watch::Receiver<Option<Option<i32>>>) -> Option<i32> {
+    exit.wait_for(Option::is_some)
+        .await
+        .ok()
+        .and_then(|code| *code)
+        .flatten()
+}
+
+/// Resolves once a stop was asked for (at once if it already was). Holds no
+/// borrow of the channel afterwards.
+///
+/// The sender lives in the slot, so it is dropped when the slot is released —
+/// by the supervisor, after the process ended. That is not a stop: a closed
+/// channel never resolves here, or a start could read its own server's exit
+/// as a cancel.
+async fn stopped(stop: &mut watch::Receiver<bool>) {
+    if stop.wait_for(|stop| *stop).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+fn mint_host_id() -> String {
+    format!("host-{}", unique())
+}
+
+/// A new admin key from the server's own `key` command (the server must not
+/// be running for this data directory).
+async fn mint_admin_key(
+    engine: &EngineCommand,
+    cwd: &Path,
+    data_dir: &Path,
+    env: &[(String, String)],
+) -> Result<String, HostFailure> {
+    let mut args = engine.args.clone();
+    args.extend(
+        ["key", LOCAL_ROOM, "admin", ADMIN_NAME]
+            .iter()
+            .map(|part| (*part).to_owned()),
+    );
+    let mut overlay: std::collections::HashMap<String, String> = env.iter().cloned().collect();
+    overlay.insert(
+        "TRPG_DATA_DIR".to_owned(),
+        data_dir.to_string_lossy().into_owned(),
+    );
+    let result = engine::run_engine_command(
+        &engine.program,
+        &args,
+        Some(&cwd.to_string_lossy()),
+        Some(overlay),
+        true,
+        MINT_TIMEOUT,
+        64 * 1024,
+    )
+    .await
+    .map_err(|detail| HostFailure::Io { detail })?;
+    let parsed: Option<Value> = serde_json::from_str(result.stdout.trim())
+        .ok()
+        .or_else(|| serde_json::from_str(result.stderr.trim()).ok());
+    if let Some(key) = parsed
+        .as_ref()
+        .filter(|value| value.get("ok").and_then(Value::as_bool) == Some(true))
+        .and_then(|value| value.get("key"))
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty())
+    {
+        return Ok(key.to_owned());
+    }
+    let refusal = parsed
+        .as_ref()
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    Err(HostFailure::MintFailed {
+        refusal,
+        stderr: result
+            .stderr
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('{'))
+            .map(clean_line)
+            .filter(|line| !line.trim().is_empty())
+            .rev()
+            .take(TAIL_LINES)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The one slot
+// ---------------------------------------------------------------------------
+
+/// What a start needs.
+pub struct HostConfig {
+    pub paths: HostPaths,
+    /// Settings for the server beyond `TRPG_DATA_DIR` (its default language).
+    pub env: Vec<(String, String)>,
+    pub ready_timeout: Duration,
+}
+
 struct Hosted {
-    child: Child,
-    host_id: String,
+    id: String,
+    data_dir: PathBuf,
+    stop: watch::Sender<bool>,
+    /// Becomes true once the slot is released (the process is gone, or was
+    /// never started).
+    done: watch::Receiver<bool>,
+    ready: Option<HostReady>,
+    stopping: bool,
+    pid: Option<u32>,
 }
 
+/// The one local server this app may run.
 #[derive(Default)]
-struct Inner {
-    hosted: Option<Hosted>,
-    /// The host id that may still emit Log/Ready/Error. Cleared on stop and
-    /// on observed death so a late Ready cannot revive a dead server.
-    /// Exit is emitted with the claimed id *after* this is cleared.
-    current_host_id: Option<String>,
+pub struct LocalHost {
+    slot: Mutex<Option<Hosted>>,
 }
 
-/// The Child lives behind a `std::sync::Mutex` so `try_wait` / take are
-/// instantaneous. Callers must never hold this lock across `.await` — stop
-/// waits on a taken Child outside the mutex, and the monitor only polls.
-#[derive(Default)]
-pub struct HostLocalState {
-    inner: Mutex<Inner>,
+/// Release the slot if `id` still holds it. Returns whether it was a ready,
+/// not-stopping server — one whose death nobody asked for.
+fn release(slot: &Mutex<Option<Hosted>>, id: &str) -> bool {
+    let mut slot = lock(slot);
+    match slot.as_ref() {
+        Some(hosted) if hosted.id == id => {
+            let unasked = hosted.ready.is_some() && !hosted.stopping;
+            *slot = None;
+            unasked
+        }
+        _ => false,
+    }
 }
+
+impl LocalHost {
+    /// The running server's process id, if one is running (for the live gate).
+    pub fn pid(&self) -> Option<u32> {
+        lock(&self.slot).as_ref().and_then(|hosted| hosted.pid)
+    }
+
+    /// Whether a server is running (or starting), and for which data directory.
+    pub fn running(&self) -> Option<PathBuf> {
+        lock(&self.slot)
+            .as_ref()
+            .map(|hosted| hosted.data_dir.clone())
+    }
+
+    /// Start a server and wait for it to be ready. `engine` finds the engine
+    /// (awaited inside the slot, so a stop meanwhile cancels the start);
+    /// `on_exit` is told if the server later dies on its own. Starting again
+    /// for the data directory of the server already running returns its
+    /// ready (`reused`).
+    pub async fn start<E, X>(
+        self: &Arc<Self>,
+        config: HostConfig,
+        engine: E,
+        on_exit: X,
+    ) -> Result<HostReady, HostFailure>
+    where
+        E: std::future::Future<Output = Result<EngineCommand, HostFailure>>,
+        X: FnOnce(HostExited) + Send + 'static,
+    {
+        let data_dir = config.paths.data_dir.clone();
+        let id = mint_host_id();
+        let (stop_tx, mut stop_rx) = watch::channel(false);
+        let (done_tx, done_rx) = watch::channel(false);
+        {
+            let mut slot = lock(&self.slot);
+            if let Some(hosted) = slot.as_ref() {
+                return match &hosted.ready {
+                    Some(ready) if hosted.data_dir == data_dir && !hosted.stopping => {
+                        Ok(HostReady {
+                            reused: true,
+                            ..ready.clone()
+                        })
+                    }
+                    _ => Err(HostFailure::AlreadyRunning {
+                        data_dir: hosted.data_dir.to_string_lossy().into_owned(),
+                    }),
+                };
+            }
+            *slot = Some(Hosted {
+                id: id.clone(),
+                data_dir: data_dir.clone(),
+                stop: stop_tx,
+                done: done_rx,
+                ready: None,
+                stopping: false,
+                pid: None,
+            });
+        }
+        let run_dir = match make_run_dir() {
+            Ok(dir) => dir,
+            Err(err) => {
+                release(&self.slot, &id);
+                let _ = done_tx.send(true);
+                return Err(HostFailure::Io {
+                    detail: format!("creating a working directory failed: {err}"),
+                });
+            }
+        };
+        // Until a child is spawned, this function releases the slot (and the
+        // working directory) itself; after, the supervisor does.
+        let unspawned = |failure: HostFailure| {
+            let _ = std::fs::remove_dir_all(&run_dir);
+            release(&self.slot, &id);
+            let _ = done_tx.send(true);
+            Err(failure)
+        };
+
+        let engine = tokio::select! {
+            found = engine => found,
+            _ = stopped(&mut stop_rx) => return unspawned(HostFailure::Cancelled),
+        };
+        let engine = match engine {
+            Ok(engine) => engine,
+            Err(failure) => return unspawned(failure),
+        };
+        if let Err(err) = std::fs::create_dir_all(&data_dir) {
+            return unspawned(HostFailure::Io {
+                detail: format!("creating {} failed: {err}", data_dir.display()),
+            });
+        }
+
+        // The admin key: kept from before, or minted now for a data directory
+        // already in use whose key was lost. A fresh one prints `first_key`.
+        let keys_file = config.paths.keys_file.clone();
+        let fresh = !data_dir.join("keys.json").exists();
+        let mut known =
+            kept_key(&keys_file, &data_dir).map(|(room, key)| (room, key, KeySource::Kept));
+        if !fresh && known.is_none() {
+            let minted = tokio::select! {
+                minted = mint_admin_key(&engine, &run_dir, &data_dir, &config.env) => minted,
+                _ = stopped(&mut stop_rx) => Err(HostFailure::Cancelled),
+            };
+            match minted {
+                Ok(key) => {
+                    if let Err(err) = keep_key(&keys_file, &data_dir, LOCAL_ROOM, &key) {
+                        return unspawned(HostFailure::Io {
+                            detail: format!("keeping the admin key failed: {err}"),
+                        });
+                    }
+                    known = Some((LOCAL_ROOM.to_owned(), key, KeySource::Minted));
+                }
+                Err(failure) => return unspawned(failure),
+            }
+        }
+        if *stop_rx.borrow() {
+            return unspawned(HostFailure::Cancelled);
+        }
+
+        let mut child = match serve_command(&engine, &run_dir, &data_dir, &config.env).spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                return unspawned(HostFailure::Io {
+                    detail: format!("starting {} failed: {err}", engine.program),
+                })
+            }
+        };
+        if let Some(hosted) = lock(&self.slot).as_mut().filter(|hosted| hosted.id == id) {
+            hosted.pid = child.id();
+        }
+
+        let output = Arc::new(Mutex::new(Output::default()));
+        if let Some((_, key, _)) = &known {
+            lock(&output).secrets.push(key.clone());
+        }
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let readers = [
+            child.stdout.take().map(|pipe| {
+                tokio::spawn(read_stdout(BufReader::new(pipe), output.clone(), ready_tx))
+            }),
+            child
+                .stderr
+                .take()
+                .map(|pipe| tokio::spawn(read_stderr(BufReader::new(pipe), output.clone()))),
+        ];
+
+        // The supervisor owns the child from here: it waits for its death (or
+        // a stop), then releases the slot; a death nobody asked for is told.
+        let (exit_tx, mut exit_rx) = watch::channel::<Option<Option<i32>>>(None);
+        {
+            let host = Arc::clone(self);
+            let id = id.clone();
+            let output = output.clone();
+            let mut stop_rx = stop_rx.clone();
+            tokio::spawn(async move {
+                let status = tokio::select! {
+                    status = child.wait() => status.ok(),
+                    _ = stopped(&mut stop_rx) => terminate(&mut child).await,
+                };
+                for reader in readers.into_iter().flatten() {
+                    let _ = tokio::time::timeout(READER_SETTLE, reader).await;
+                }
+                let code = status.and_then(|status| status.code());
+                let _ = exit_tx.send(Some(code));
+                let unasked = release(&host.slot, &id);
+                let _ = std::fs::remove_dir_all(&run_dir);
+                let _ = done_tx.send(true);
+                if unasked {
+                    let stderr = lock(&output).report();
+                    on_exit(HostExited {
+                        host_id: id,
+                        code,
+                        stderr,
+                    });
+                }
+            });
+        }
+
+        enum Outcome {
+            Ready(ReadyLine),
+            Exited(Option<i32>),
+            Cancelled,
+            Timeout,
+        }
+        let outcome = tokio::select! {
+            ready = ready_rx => match ready {
+                Ok(ready) => Outcome::Ready(ready),
+                // stdout closed without a ready line: the process is ending.
+                Err(_) => Outcome::Exited(exit_code(&mut exit_rx).await),
+            },
+            code = exit_code(&mut exit_rx) => Outcome::Exited(code),
+            _ = stopped(&mut stop_rx) => Outcome::Cancelled,
+            () = tokio::time::sleep(config.ready_timeout) => Outcome::Timeout,
+        };
+
+        let failure = match outcome {
+            Outcome::Ready(ready) => {
+                let key = match (&ready.first_key, known) {
+                    (Some((room, key)), _) => {
+                        // A fresh data directory: this key is the one to keep. A key
+                        // kept for an earlier directory of the same name is replaced.
+                        if let Err(err) = keep_key(&keys_file, &data_dir, room, key) {
+                            Err(HostFailure::Io {
+                                detail: format!("keeping the admin key failed: {err}"),
+                            })
+                        } else {
+                            Ok((room.clone(), key.clone(), KeySource::First))
+                        }
+                    }
+                    (None, Some(known)) => Ok(known),
+                    (None, None) => Err(HostFailure::NoKey),
+                };
+                match key {
+                    Ok((room, key, key_source)) => {
+                        let ready = HostReady {
+                            host_id: id.clone(),
+                            ticket: ready.ticket,
+                            key,
+                            room,
+                            key_source,
+                            notes: ready.notes,
+                            version: ready.version,
+                            data_dir: data_dir.to_string_lossy().into_owned(),
+                            reused: false,
+                        };
+                        let mut slot = lock(&self.slot);
+                        match slot.as_mut() {
+                            Some(hosted) if hosted.id == id && !hosted.stopping => {
+                                hosted.ready = Some(ready.clone());
+                                return Ok(ready);
+                            }
+                            // A stop landed meanwhile; the supervisor is ending it.
+                            _ => HostFailure::Cancelled,
+                        }
+                    }
+                    Err(failure) => failure,
+                }
+            }
+            Outcome::Exited(code) => {
+                let output = lock(&output);
+                match &output.refusal {
+                    Some(refusal) => HostFailure::Refused {
+                        refusal: refusal.code.clone(),
+                        problems: refusal.problems.clone(),
+                    },
+                    None => HostFailure::Exited {
+                        exit_code: code,
+                        stderr: output.report(),
+                    },
+                }
+            }
+            Outcome::Cancelled => HostFailure::Cancelled,
+            Outcome::Timeout => HostFailure::Timeout {
+                stderr: lock(&output).report(),
+            },
+        };
+        // Not ready, and not going to be: make sure the process is gone.
+        self.stop_id(&id).await;
+        Err(failure)
+    }
+
+    /// Stop the server (or the start in progress) and wait until it is gone.
+    /// False when nothing was running.
+    pub async fn stop(&self) -> bool {
+        let id = match lock(&self.slot).as_ref() {
+            Some(hosted) => hosted.id.clone(),
+            None => return false,
+        };
+        self.stop_id(&id).await;
+        true
+    }
+
+    async fn stop_id(&self, id: &str) {
+        let done = {
+            let mut slot = lock(&self.slot);
+            match slot.as_mut() {
+                Some(hosted) if hosted.id == id => {
+                    hosted.stopping = true;
+                    let _ = hosted.stop.send(true);
+                    hosted.done.clone()
+                }
+                _ => return,
+            }
+        };
+        let mut done = done;
+        let _ = tokio::time::timeout(
+            STOP_GRACE + KILL_WAIT + READER_SETTLE + Duration::from_secs(1),
+            done.wait_for(|done| *done),
+        )
+        .await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tauri commands
+// ---------------------------------------------------------------------------
+
+/// The app's one [`LocalHost`].
+#[derive(Default)]
+pub struct HostLocalState(pub Arc<LocalHost>);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostLocalStatus {
-    pub running: bool,
+    /// The home a start would use now (the picked folder, or the default).
     pub home: String,
-    /// What the local server runs with as `TRPG_DATA_DIR`. Anything that must
-    /// be visible to it — an installed pack above all — has to land here, so
-    /// the caller needs the resolved path, not just the home.
     pub data_dir: String,
-    /// Host session id of the live child, when one is running. The WebView
-    /// adopts this after a reload so a later Exit still belongs to it.
-    pub host_id: Option<String>,
+    /// A server this app started is running (or starting).
+    pub running: bool,
 }
 
-struct LocalPaths {
-    home: PathBuf,
-    binary_dir: PathBuf,
-    data_dir: PathBuf,
-    env_file: PathBuf,
-    keys_file: PathBuf,
-    keeper_sidecar: PathBuf,
+fn app_paths(
+    app: &tauri::AppHandle,
+    home_override: Option<&str>,
+) -> Result<HostPaths, HostFailure> {
+    use tauri::Manager;
+    let app_data = app.path().app_data_dir().map_err(|err| HostFailure::Io {
+        detail: format!("this app's data folder is unknown: {err}"),
+    })?;
+    Ok(resolve_paths(&app_data, home_override))
 }
 
-fn nonempty(value: std::result::Result<String, std::env::VarError>) -> Option<String> {
-    value
-        .ok()
-        .map(|v| v.trim().to_owned())
-        .filter(|v| !v.is_empty())
-}
-
-fn user_home() -> PathBuf {
-    nonempty(std::env::var("HOME"))
-        .or_else(|| nonempty(std::env::var("USERPROFILE")))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn expand_home(path: &str) -> PathBuf {
-    if path == "~" {
-        return user_home();
-    }
-    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
-        return user_home().join(rest);
-    }
-    PathBuf::from(path)
-}
-
-fn resolve_paths(home_override: Option<&str>) -> LocalPaths {
-    // Precedence mirrors the TUI: the folder picked in the UI wins, then the
-    // TRPG_LOCAL_SERVER_HOME / TRPG_HOME environment, then ~/.loreweaver.
-    let override_root = home_override
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(expand_home);
-    let root = override_root
-        .or_else(|| {
-            nonempty(std::env::var("TRPG_LOCAL_SERVER_HOME")).map(|value| expand_home(&value))
-        })
-        .or_else(|| nonempty(std::env::var("TRPG_HOME")).map(|value| expand_home(&value)))
-        .unwrap_or_else(|| user_home().join(".loreweaver"));
-    LocalPaths {
-        binary_dir: root.join("server-bin"),
-        data_dir: root.join("data"),
-        env_file: root.join(".env"),
-        keys_file: root.join("local-keys.toml"),
-        keeper_sidecar: root.join("keeper-key.txt"),
-        home: root,
-    }
-}
-
-/// The released asset for this OS/arch, or None when no prebuilt exists.
-fn asset_name() -> Option<&'static str> {
-    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        Some("loreweaver-server-macos-arm64.tar.gz")
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        Some("loreweaver-server-linux-x64.tar.gz")
-    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-        Some("loreweaver-server-linux-arm64.tar.gz")
-    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        Some("loreweaver-server-windows-x64.zip")
-    } else {
-        None
-    }
-}
-
-fn release_url(asset: &str) -> String {
-    let tag = nonempty(std::env::var("TRPG_SERVER_RELEASE_TAG"))
-        .or_else(|| nonempty(std::env::var("TRPG_RELEASE_TAG")))
-        .unwrap_or_else(|| "latest".to_owned());
-    if tag == "latest" {
-        format!("{REPO}/releases/latest/download/{asset}")
-    } else {
-        format!("{REPO}/releases/download/{tag}/{asset}")
-    }
-}
-
-/// Parse a `<sha256>  <filename>` sidecar line; the filename (when present)
-/// must match the asset (an optional leading `*` marks binary mode).
-fn parse_sha256_sidecar(text: &str, asset: &str) -> Option<String> {
-    let mut parts = text.split_whitespace();
-    let digest = parts.next()?.to_lowercase();
-    if digest.len() != 64 || !digest.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    if let Some(filename) = parts.next() {
-        if filename.trim_start_matches('*') != asset {
-            return None;
-        }
-    }
-    Some(digest)
-}
-
-/// First `endpoint[a-z0-9]{20,}` run in `text` — the locale-independent iroh
-/// ticket the server prints once its relay handshake completes.
-fn extract_ticket(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut from = 0;
-    while let Some(at) = text[from..].find("endpoint") {
-        let start = from + at;
-        let mut end = start + "endpoint".len();
-        while end < bytes.len() && (bytes[end].is_ascii_lowercase() || bytes[end].is_ascii_digit())
-        {
-            end += 1;
-        }
-        if end - (start + "endpoint".len()) >= 20 {
-            return Some(text[start..end].to_owned());
-        }
-        from = start + "endpoint".len();
-    }
-    None
-}
-
-/// `key=…` from the keeper sidecar the server writes on first --serve.
-fn parse_sidecar_key(text: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        let key = line.strip_prefix("key=")?.trim();
-        let valid = key.len() >= 16
-            && key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-        valid.then(|| key.to_owned())
-    })
-}
-
-#[derive(serde::Deserialize, Serialize)]
-struct IntegrityManifest {
-    version: u32,
-    asset: String,
-    source_url: String,
-    archive_sha256: String,
-    executable_sha256: String,
-}
-
-fn binary_exe(binary_dir: &Path) -> PathBuf {
-    binary_dir.join("loreweaver-server").join(EXE_NAME)
-}
-
-/// Never run a cached binary on existence alone: the manifest must parse, be
-/// for this asset, and the executable's hash must still match it.
-async fn verified_cached_binary(binary_dir: &Path, asset: &str) -> Option<PathBuf> {
-    let exe = binary_exe(binary_dir);
-    if !exe.is_file() {
-        return None;
-    }
-    let manifest_text = tokio::fs::read_to_string(binary_dir.join(BINARY_INTEGRITY_MANIFEST))
-        .await
-        .ok()?;
-    let manifest: IntegrityManifest = serde_json::from_str(&manifest_text).ok()?;
-    if manifest.version != 1 || manifest.asset != asset || !manifest.source_url.starts_with(REPO) {
-        return None;
-    }
-    let bytes = tokio::fs::read(&exe).await.ok()?;
-    (sha256_hex(&bytes) == manifest.executable_sha256).then_some(exe)
-}
-
-fn emit_log(app: &AppHandle, host_id: &str, level: &str, text: impl Into<String>) {
-    let _ = app.emit(
-        HOST_LOCAL_EVENT,
-        HostLocalEvent::Log {
-            host_id: host_id.to_owned(),
-            level: level.to_owned(),
-            text: text.into(),
-        },
-    );
-}
-
-fn resolve_host_id(host_id: Option<String>) -> String {
-    let trimmed = host_id.unwrap_or_default();
-    let trimmed = trimmed.trim();
-    if !trimmed.is_empty() {
-        return trimmed.to_owned();
-    }
-    format!(
-        "host-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    )
-}
-
-/// Download + verify + unpack the prebuilt server; returns the executable.
-async fn download_binary(
-    app: &AppHandle,
-    paths: &LocalPaths,
-    asset: &str,
-    host_id: &str,
-) -> Result<PathBuf, String> {
-    let url = release_url(asset);
-    emit_log(app, host_id, "step", format!("Downloading {asset}…"));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(600))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let archive_bytes = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|err| format!("download failed: {err}"))?
-        .error_for_status()
-        .map_err(|err| format!("download failed: {err}"))?
-        .bytes()
-        .await
-        .map_err(|err| format!("download failed: {err}"))?;
-
-    let sidecar_text = client
-        .get(format!("{url}.sha256"))
-        .send()
-        .await
-        .map_err(|err| format!("SHA-256 metadata fetch failed: {err}"))?
-        .error_for_status()
-        .map_err(|err| format!("SHA-256 metadata fetch failed: {err}"))?
-        .text()
-        .await
-        .map_err(|err| format!("SHA-256 metadata fetch failed: {err}"))?;
-    let expected = parse_sha256_sidecar(&sidecar_text, asset)
-        .ok_or_else(|| "invalid SHA-256 metadata for the server download".to_owned())?;
-    let actual = sha256_hex(&archive_bytes);
-    if actual != expected {
-        return Err(format!(
-            "server download SHA-256 mismatch for {asset} — refusing to run it"
-        ));
-    }
-    emit_log(
-        app,
-        host_id,
-        "ok",
-        "Download verified against its published SHA-256",
-    );
-
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let archive = paths.home.join(format!("{asset}.{stamp}.tmp"));
-    let staging = paths.home.join(format!("server-bin.staging-{stamp}"));
-    tokio::fs::create_dir_all(&staging)
-        .await
-        .map_err(|err| err.to_string())?;
-    tokio::fs::write(&archive, &archive_bytes)
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let result: Result<PathBuf, String> = async {
-        // System tar (bsdtar on Windows handles the .zip asset too, same as the TUI).
-        let status = Command::new("tar")
-            .arg("-xf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(&staging)
-            .status()
-            .await
-            .map_err(|err| format!("running tar failed: {err}"))?;
-        if !status.success() {
-            return Err("extracting the verified server archive failed".to_owned());
-        }
-        let staged_exe = binary_exe(&staging);
-        if !staged_exe.is_file() {
-            return Err("verified server archive has an unexpected layout".to_owned());
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&staged_exe, std::fs::Permissions::from_mode(0o755));
-        }
-        let exe_bytes = tokio::fs::read(&staged_exe)
-            .await
-            .map_err(|err| err.to_string())?;
-        let manifest = IntegrityManifest {
-            version: 1,
-            asset: asset.to_owned(),
-            source_url: url.clone(),
-            archive_sha256: actual.clone(),
-            executable_sha256: sha256_hex(&exe_bytes),
-        };
-        let manifest_json =
-            serde_json::to_string_pretty(&manifest).map_err(|err| err.to_string())?;
-        tokio::fs::write(staging.join(BINARY_INTEGRITY_MANIFEST), manifest_json)
-            .await
-            .map_err(|err| err.to_string())?;
-        // Commit atomically: move any previous cache aside, then rename staging in.
-        let backup = paths.home.join(format!("server-bin.backup-{stamp}"));
-        let had_previous = paths.binary_dir.exists();
-        if had_previous {
-            tokio::fs::rename(&paths.binary_dir, &backup)
-                .await
-                .map_err(|err| err.to_string())?;
-        }
-        if let Err(err) = tokio::fs::rename(&staging, &paths.binary_dir).await {
-            if had_previous {
-                let _ = tokio::fs::rename(&backup, &paths.binary_dir).await;
-            }
-            return Err(err.to_string());
-        }
-        if had_previous {
-            let _ = tokio::fs::remove_dir_all(&backup).await;
-        }
-        Ok(binary_exe(&paths.binary_dir))
-    }
-    .await;
-
-    let _ = tokio::fs::remove_file(&archive).await;
-    let _ = tokio::fs::remove_dir_all(&staging).await;
-    result
-}
-
-enum Launch {
-    Python { program: PathBuf, repo: PathBuf },
-    Binary { exe: PathBuf },
-}
-
-/// The acquisition chain: checkout (venv python first) → verified cached
-/// binary → fresh download. No tier left = a pointed error, not a hang.
-async fn resolve_launch(
-    app: &AppHandle,
-    paths: &LocalPaths,
-    engine_repo_dir: Option<String>,
-    host_id: &str,
-) -> Result<Launch, String> {
-    if let Some(repo) = engine_repo_dir.map(|value| expand_home(value.trim())) {
-        if repo.join("app.py").is_file() {
-            let venv_pythons = [
-                repo.join(".venv").join("bin").join("python"),
-                repo.join(".venv").join("Scripts").join("python.exe"),
-                repo.join("venv").join("bin").join("python"),
-                repo.join("venv").join("Scripts").join("python.exe"),
-            ];
-            if let Some(python) = venv_pythons.into_iter().find(|p| p.is_file()) {
-                emit_log(
-                    app,
-                    host_id,
-                    "ok",
-                    format!("Using the engine checkout at {}", repo.display()),
-                );
-                return Ok(Launch::Python {
-                    program: python,
-                    repo,
-                });
-            }
-            for name in ["python3", "python"] {
-                if which_in_path(name).is_some() {
-                    emit_log(
-                        app,
-                        host_id,
-                        "ok",
-                        format!(
-                            "Using the engine checkout at {} (system {name})",
-                            repo.display()
-                        ),
-                    );
-                    return Ok(Launch::Python {
-                        program: PathBuf::from(name),
-                        repo,
-                    });
-                }
-            }
-        }
-    }
-
-    let Some(asset) = asset_name() else {
-        return Err(
-            "no prebuilt server exists for this platform and no engine checkout is configured — \
-             set the engine repo in AI & engine settings"
-                .to_owned(),
-        );
-    };
-    if let Some(exe) = verified_cached_binary(&paths.binary_dir, asset).await {
-        emit_log(
-            app,
-            host_id,
-            "ok",
-            "Using the verified prebuilt server downloaded earlier",
-        );
-        return Ok(Launch::Binary { exe });
-    }
-    if binary_exe(&paths.binary_dir).is_file() {
-        emit_log(
-            app,
-            host_id,
-            "err",
-            "Ignoring an unverified or changed prebuilt server cache",
-        );
-    }
-    let exe = download_binary(app, paths, asset, host_id).await?;
-    Ok(Launch::Binary { exe })
-}
-
-fn which_in_path(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let full = dir.join(name);
-        if full.is_file() {
-            return Some(full);
-        }
-        #[cfg(windows)]
-        {
-            let exe = dir.join(format!("{name}.exe"));
-            if exe.is_file() {
-                return Some(exe);
-            }
-        }
-    }
-    None
-}
-
-/// Rolling window the ticket scanner walks. Each `push_line` also scans the
-/// line alone so a ticket on one banner line cannot be lost to a cap trim.
-struct TicketScan {
-    buf: String,
-    cap: usize,
-}
-
-impl TicketScan {
-    fn new(cap: usize) -> Self {
-        Self {
-            buf: String::new(),
-            cap: cap.max(1),
-        }
-    }
-
-    fn push_line(&mut self, line: &str) -> Option<String> {
-        if let Some(ticket) = extract_ticket(line) {
-            return Some(ticket);
-        }
-        self.buf.push_str(line);
-        self.buf.push('\n');
-        if self.buf.len() > self.cap {
-            let overflow = self.buf.len() - self.cap;
-            let mut start = overflow.min(self.buf.len());
-            while start < self.buf.len() && !self.buf.is_char_boundary(start) {
-                start += 1;
-            }
-            self.buf.drain(..start);
-        }
-        extract_ticket(&self.buf)
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.buf.len()
-    }
-}
-
-/// Line-oriented drain of one pipe. Returns only on EOF (the process closed
-/// the fd). A readiness timeout must never wrap this future — dropping it
-/// would drop the reader and stall the child on a full pipe.
-async fn drain_lines<R, F>(reader: R, mut on_line: F)
-where
-    R: AsyncBufRead + Unpin,
-    F: FnMut(String),
-{
-    let mut lines = reader.lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        on_line(line);
-    }
-}
-
-/// Poll the keeper sidecar without touching the stderr reader.
-async fn await_sidecar_key(path: &Path, attempts: u32, delay: Duration) -> Option<String> {
-    poll_sidecar_key(path, attempts, || tokio::time::sleep(delay)).await
-}
-
-/// [`await_sidecar_key`] with the wait between misses injected: production
-/// sleeps `delay`, a test uses the pause to act at an exact point (after the
-/// first miss) instead of racing a wall-clock budget.
-async fn poll_sidecar_key<P, F>(path: &Path, attempts: u32, mut pause: P) -> Option<String>
-where
-    P: FnMut() -> F,
-    F: std::future::Future<Output = ()>,
-{
-    for _ in 0..attempts {
-        if let Ok(text) = tokio::fs::read_to_string(path).await {
-            if let Some(key) = parse_sidecar_key(&text) {
-                return Some(key);
-            }
-        }
-        pause().await;
-    }
-    None
-}
-
-/// Sleep `timeout`, then report whether readiness is still outstanding.
-/// Never cancels a drain — the caller emits an Error and leaves the readers.
-async fn wait_readiness_timeout(timeout: Duration, already_reported: &AtomicBool) -> bool {
-    tokio::time::sleep(timeout).await;
-    !already_reported.load(Ordering::SeqCst)
-}
-
-fn lock_inner(state: &HostLocalState) -> Result<MutexGuard<'_, Inner>, String> {
-    state
-        .inner
-        .lock()
-        .map_err(|_| "host state poisoned".to_owned())
-}
-
-fn host_id_is_current(inner: &Inner, host_id: &str) -> bool {
-    inner.current_host_id.as_deref() == Some(host_id)
-}
-
-fn host_id_is_current_in(state: &HostLocalState, host_id: &str) -> bool {
-    lock_inner(state)
-        .map(|inner| host_id_is_current(&inner, host_id))
-        .unwrap_or(false)
-}
-
-fn is_live(inner: &mut Inner) -> bool {
-    match inner.hosted.as_mut() {
-        Some(hosted) => matches!(hosted.child.try_wait(), Ok(None)),
-        None => false,
-    }
-}
-
-/// Outcome of one monitor poll. `Stale` means this watcher must go quiet —
-/// another start/stop already owns the slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ObserveExit {
-    Stale,
-    Running,
-    Exited(Option<i32>),
-}
-
-fn exit_code(status: ExitStatus) -> Option<i32> {
-    status.code()
-}
-
-fn clear_current_if(inner: &mut Inner, host_id: &str) {
-    if inner.current_host_id.as_deref() == Some(host_id) {
-        inner.current_host_id = None;
-    }
-}
-
-/// Claim a spontaneous exit for `expected` at most once. Takes the Child
-/// and clears `current_host_id` so a late Ready for this id cannot follow.
-/// The caller still emits Exit tagged with `expected` — the WebView filter,
-/// not this flag, is what accepts that Exit.
-fn try_observe_exit(inner: &mut Inner, expected: &str) -> ObserveExit {
-    match inner.hosted.as_mut() {
-        Some(hosted) if hosted.host_id == expected => match hosted.child.try_wait() {
-            Ok(None) => ObserveExit::Running,
-            Ok(Some(status)) => {
-                inner.hosted = None;
-                clear_current_if(inner, expected);
-                ObserveExit::Exited(exit_code(status))
-            }
-            Err(_) => {
-                inner.hosted = None;
-                clear_current_if(inner, expected);
-                ObserveExit::Exited(None)
-            }
-        },
-        _ => ObserveExit::Stale,
-    }
-}
-
-/// Take the Child for an explicit stop and invalidate every watcher. The
-/// caller kills + waits *outside* the mutex, then emits Exit with this id.
-fn take_for_stop(inner: &mut Inner) -> Option<(Child, String)> {
-    let hosted = inner.hosted.take()?;
-    clear_current_if(inner, &hosted.host_id);
-    Some((hosted.child, hosted.host_id))
-}
-
-/// Poll `observe` until the child exits or this host id is superseded.
-/// Returns `Some(code)` exactly when *this* watcher claimed the death.
-async fn monitor_child_exit<F>(mut observe: F, poll: Duration) -> Option<Option<i32>>
-where
-    F: FnMut() -> ObserveExit,
-{
-    loop {
-        match observe() {
-            ObserveExit::Stale => return None,
-            ObserveExit::Exited(code) => return Some(code),
-            ObserveExit::Running => tokio::time::sleep(poll).await,
-        }
-    }
-}
-
-fn emit_if_current(app: &AppHandle, host_id: &str, event: HostLocalEvent) {
-    if !host_id_is_current_in(&app.state::<HostLocalState>(), host_id) {
-        return;
-    }
-    let _ = app.emit(HOST_LOCAL_EVENT, event);
-}
-
-fn claim_ready(flag: &AtomicBool) -> bool {
-    flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_ok()
-}
-
-/// Announce Ready (or a sidecar Error) without holding the stderr reader.
-async fn announce_ready(
-    app: AppHandle,
-    sidecar: PathBuf,
-    ticket: String,
-    host_id: String,
-    reported: Arc<AtomicBool>,
-) {
-    if let Some(key) = await_sidecar_key(&sidecar, SIDECAR_ATTEMPTS, SIDECAR_DELAY).await {
-        if host_id_is_current_in(&app.state::<HostLocalState>(), &host_id) && claim_ready(&reported)
-        {
-            emit_if_current(
-                &app,
-                &host_id,
-                HostLocalEvent::Ready {
-                    host_id: host_id.clone(),
-                    ticket,
-                    key,
-                },
-            );
-        }
-        return;
-    }
-    if host_id_is_current_in(&app.state::<HostLocalState>(), &host_id) && claim_ready(&reported) {
-        emit_if_current(
-            &app,
-            &host_id,
-            HostLocalEvent::Error {
-                host_id: host_id.clone(),
-                message: "server is up but its keeper-key.txt sidecar never appeared".to_owned(),
-            },
-        );
-    }
-}
-
-/// Drain stdout + stderr until EOF. The same stderr reader scans for the
-/// ticket, fires Ready via a sidecar waiter, then keeps draining. A ready
-/// timeout only emits an Error — it does not drop either reader.
-async fn watch_output(
-    app: AppHandle,
-    sidecar: PathBuf,
-    stdout: Option<tokio::process::ChildStdout>,
-    stderr: Option<tokio::process::ChildStderr>,
-    host_id: String,
-    ready_timeout: Duration,
-) {
-    let reported = Arc::new(AtomicBool::new(false));
-
-    let out_app = app.clone();
-    let out_host = host_id.clone();
-    let stdout_task = tauri::async_runtime::spawn(async move {
-        if let Some(stdout) = stdout {
-            let state_app = out_app.clone();
-            drain_lines(BufReader::new(stdout), move |line| {
-                if host_id_is_current_in(&state_app.state::<HostLocalState>(), &out_host) {
-                    emit_log(&state_app, &out_host, "out", line);
-                }
-            })
-            .await;
-        }
-    });
-
-    let err_app = app.clone();
-    let err_reported = reported.clone();
-    let err_host = host_id.clone();
-    let stderr_task = tauri::async_runtime::spawn(async move {
-        let Some(stderr) = stderr else {
-            return;
-        };
-        let mut scan = TicketScan::new(TICKET_SCAN_CAP);
-        let mut looking = true;
-        let drain_app = err_app.clone();
-        let drain_reported = err_reported.clone();
-        let drain_host = err_host.clone();
-        drain_lines(BufReader::new(stderr), move |line| {
-            if host_id_is_current_in(&drain_app.state::<HostLocalState>(), &drain_host) {
-                emit_log(&drain_app, &drain_host, "out", line.clone());
-            }
-            if looking {
-                if let Some(ticket) = scan.push_line(&line) {
-                    looking = false;
-                    tauri::async_runtime::spawn(announce_ready(
-                        drain_app.clone(),
-                        sidecar.clone(),
-                        ticket,
-                        drain_host.clone(),
-                        drain_reported.clone(),
-                    ));
-                }
-            }
-        })
-        .await;
-        if looking
-            && host_id_is_current_in(&err_app.state::<HostLocalState>(), &err_host)
-            && claim_ready(&err_reported)
-        {
-            emit_if_current(
-                &err_app,
-                &err_host,
-                HostLocalEvent::Error {
-                    host_id: err_host.clone(),
-                    message: "the server exited before it was ready".to_owned(),
-                },
-            );
-        }
-    });
-
-    let timeout_app = app.clone();
-    let timeout_reported = reported.clone();
-    let timeout_host = host_id.clone();
-    let timeout_task = tauri::async_runtime::spawn(async move {
-        if wait_readiness_timeout(ready_timeout, &timeout_reported).await
-            && host_id_is_current_in(&timeout_app.state::<HostLocalState>(), &timeout_host)
-            && claim_ready(&timeout_reported)
-        {
-            emit_if_current(
-                &timeout_app,
-                &timeout_host,
-                HostLocalEvent::Error {
-                    host_id: timeout_host.clone(),
-                    message: "the server did not become ready in time (no iroh ticket after 90s)"
-                        .to_owned(),
-                },
-            );
-        }
-    });
-
-    let _ = stdout_task.await;
-    let _ = stderr_task.await;
-    timeout_task.abort();
-}
-
-async fn watch_exit(app: AppHandle, host_id: String) {
-    let watch_app = app.clone();
-    let watch_id = host_id.clone();
-    let observed = monitor_child_exit(
-        move || {
-            let state = watch_app.state::<HostLocalState>();
-            let observed = match lock_inner(&state) {
-                Ok(mut inner) => try_observe_exit(&mut inner, &watch_id),
-                Err(_) => ObserveExit::Stale,
-            };
-            observed
-        },
-        EXIT_POLL,
-    )
-    .await;
-    // Emit Exit even though current_host_id is already cleared — the
-    // WebView accepts it by matching the id it still holds (or the
-    // stopping id). A later start has a different id and will drop this.
-    if let Some(code) = observed {
-        let _ = app.emit(HOST_LOCAL_EVENT, HostLocalEvent::Exit { host_id, code });
+/// The server's default language: the app's, when it is one the server speaks.
+fn locale_env(locale: Option<&str>) -> Vec<(String, String)> {
+    match locale.map(str::trim) {
+        Some(locale @ ("en" | "zh")) => vec![("TRPG_LOCALE".to_owned(), locale.to_owned())],
+        _ => Vec::new(),
     }
 }
 
 #[tauri::command]
 pub async fn host_local_start(
-    app: AppHandle,
-    state: State<'_, HostLocalState>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, HostLocalState>,
     engine_repo_dir: Option<String>,
     home_override: Option<String>,
-    dev_source_root: Option<String>,
-    host_id: Option<String>,
-) -> Result<(), String> {
-    let host_id = resolve_host_id(host_id);
-    {
-        let mut inner = lock_inner(&state)?;
-        if is_live(&mut inner) {
-            return Err("a local server is already running".to_owned());
-        }
-        // A dead occupant is still visible to the old monitor. Drop it and
-        // clear the current id *before* the acquire path so a late Ready
-        // from that child cannot land after we have moved on.
-        if let Some(dead) = inner.hosted.take() {
-            clear_current_if(&mut inner, &dead.host_id);
-        }
-    }
-
-    let paths = resolve_paths(home_override.as_deref());
-    tokio::fs::create_dir_all(&paths.home)
-        .await
-        .map_err(|err| format!("creating {} failed: {err}", paths.home.display()))?;
-    tokio::fs::create_dir_all(&paths.data_dir)
-        .await
-        .map_err(|err| err.to_string())?;
-    emit_log(
-        &app,
-        &host_id,
-        "step",
-        format!("Local server home: {}", paths.home.display()),
-    );
-
-    let launch = resolve_launch(&app, &paths, engine_repo_dir, &host_id).await?;
-
-    let mut command = match &launch {
-        Launch::Python { program, repo } => {
-            let mut cmd = Command::new(program);
-            cmd.args(["-m", "app"]).current_dir(repo);
-            cmd
-        }
-        Launch::Binary { exe } => {
-            let mut cmd = Command::new(exe);
-            if let Some(dir) = exe.parent() {
-                cmd.current_dir(dir);
-            }
-            cmd
-        }
+    locale: Option<String>,
+) -> Result<HostReady, HostFailure> {
+    use tauri::Emitter;
+    let paths = app_paths(&app, home_override.as_deref())?;
+    let config = HostConfig {
+        paths,
+        env: locale_env(locale.as_deref()),
+        ready_timeout: READY_TIMEOUT,
     };
-    command
-        .arg("--serve")
-        .arg("--keys")
-        .arg(&paths.keys_file)
-        .env("TRPG_LOCAL_SERVER_HOME", &paths.home)
-        .env("TRPG_DATA_DIR", &paths.data_dir)
-        .env("TRPG_ENV_FILE", &paths.env_file)
-        .env("TRPG_TUI_KEYS", &paths.keys_file)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    // Author dev rooms (`gateway/dev_room.py`): `.dev mount` resolves ONLY
-    // under this root and the whole surface is off while it is unset, so the
-    // studio sets it exactly when the author asked to mount a source tree.
-    // Settings are read at startup, which is why turning this on restarts the
-    // server rather than reconfiguring a running one.
-    if let Some(root) = dev_source_root
-        .as_deref()
-        .map(str::trim)
-        .filter(|r| !r.is_empty())
-    {
-        command.env("TRPG_DEV__SOURCE_ROOT", root);
-        emit_log(
-            &app,
-            &host_id,
-            "step",
-            format!("Dev-room source root: {root}"),
-        );
-    }
-
-    emit_log(
-        &app,
-        &host_id,
-        "step",
-        "Starting the local p2p server — waiting for a relay, ~10s…",
-    );
-    let mut child = command
-        .spawn()
-        .map_err(|err| format!("starting the server failed: {err}"))?;
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let seated = {
-        let mut inner = lock_inner(&state)?;
-        if is_live(&mut inner) {
-            Err(child)
-        } else {
-            inner.current_host_id = Some(host_id.clone());
-            inner.hosted = Some(Hosted {
-                child,
-                host_id: host_id.clone(),
-            });
-            Ok(())
-        }
-    };
-    if let Err(mut leftover) = seated {
-        let _ = leftover.start_kill();
-        let _ = tokio::time::timeout(STOP_WAIT, leftover.wait()).await;
-        return Err("a local server is already running".to_owned());
-    }
-    tauri::async_runtime::spawn(watch_output(
-        app.clone(),
-        paths.keeper_sidecar.clone(),
-        stdout,
-        stderr,
-        host_id.clone(),
-        READY_TIMEOUT,
-    ));
-    tauri::async_runtime::spawn(watch_exit(app, host_id));
-    Ok(())
+    let host = Arc::clone(&state.0);
+    host.start(config, find_engine(engine_repo_dir), move |exited| {
+        let _ = app.emit(HOST_LOCAL_EVENT, exited);
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn host_local_stop(
-    app: AppHandle,
-    state: State<'_, HostLocalState>,
-) -> Result<bool, String> {
-    let Some((mut child, host_id)) = ({
-        let mut inner = lock_inner(&state)?;
-        take_for_stop(&mut inner)
-    }) else {
-        return Ok(false);
-    };
-    let _ = child.start_kill();
-    // Confirm the process is gone (or give up after STOP_WAIT). The monitor
-    // cannot `wait()` this Child — we took it — so the two cannot deadlock.
-    let code = match tokio::time::timeout(STOP_WAIT, child.wait()).await {
-        Ok(Ok(status)) => exit_code(status),
-        _ => None,
-    };
-    let _ = app.emit(HOST_LOCAL_EVENT, HostLocalEvent::Exit { host_id, code });
-    Ok(true)
+pub async fn host_local_stop(state: tauri::State<'_, HostLocalState>) -> Result<bool, ()> {
+    Ok(state.0.stop().await)
 }
 
 #[tauri::command]
-pub async fn host_local_status(
-    state: State<'_, HostLocalState>,
+pub fn host_local_status(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, HostLocalState>,
     home_override: Option<String>,
-) -> Result<HostLocalStatus, String> {
-    let (running, host_id) = {
-        let mut inner = lock_inner(&state)?;
-        if is_live(&mut inner) {
-            (
-                true,
-                inner.hosted.as_ref().map(|hosted| hosted.host_id.clone()),
-            )
-        } else {
-            (false, None)
-        }
-    };
-    let paths = resolve_paths(home_override.as_deref());
+) -> Result<HostLocalStatus, HostFailure> {
+    let paths = app_paths(&app, home_override.as_deref())?;
     Ok(HostLocalStatus {
-        running,
         home: paths.home.to_string_lossy().into_owned(),
         data_dir: paths.data_dir.to_string_lossy().into_owned(),
-        host_id,
+        running: state.0.running().is_some(),
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        drain_lines, extract_ticket, host_id_is_current, is_live, monitor_child_exit,
-        parse_sha256_sidecar, parse_sidecar_key, poll_sidecar_key, resolve_host_id, resolve_paths,
-        take_for_stop, try_observe_exit, wait_readiness_timeout, Hosted, Inner, ObserveExit,
-        TicketScan, TICKET_SCAN_CAP,
-    };
-    use std::process::Stdio;
-    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-    use tokio::io::BufReader;
-    use tokio::process::Command;
-
-    const SAMPLE_TICKET: &str = "endpointac5qv3krex5jrly5kpdrkxhy67gxq3ases";
-
-    #[test]
-    fn home_override_outranks_the_env_chain() {
-        let paths = resolve_paths(Some("/tmp/custom-lw-home"));
-        assert!(paths.home.ends_with("custom-lw-home"));
-        assert!(paths.keys_file.ends_with("custom-lw-home/local-keys.toml"));
-        // Blank override falls through to the default chain.
-        let fallback = resolve_paths(Some("   "));
-        assert!(!fallback.home.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn ticket_scanner_finds_the_base32_run() {
-        let banner =
-            "★ Iroh p2p ready\n  Ticket：endpointac5qv3krex5jrly5kpdrkxhy67gxq3ases\n  saved";
-        assert_eq!(
-            extract_ticket(banner).as_deref(),
-            Some("endpointac5qv3krex5jrly5kpdrkxhy67gxq3ases")
-        );
-        assert_eq!(extract_ticket("endpoint short"), None);
-        assert_eq!(extract_ticket("no ticket here"), None);
-    }
-
-    #[test]
-    fn sidecar_key_parses_the_bootstrap_format() {
-        let sidecar = "room=table\nrole=keeper\nkey=UHEYQm7dvCvNujUglSaj8Px-\n";
-        assert_eq!(
-            parse_sidecar_key(sidecar).as_deref(),
-            Some("UHEYQm7dvCvNujUglSaj8Px-")
-        );
-        assert_eq!(parse_sidecar_key("key=short"), None);
-        assert_eq!(parse_sidecar_key("nothing"), None);
-    }
-
-    #[test]
-    fn sha256_sidecar_accepts_plain_and_filename_forms() {
-        let digest = "a".repeat(64);
-        assert_eq!(
-            parse_sha256_sidecar(&digest, "x.tar.gz").as_deref(),
-            Some(digest.as_str())
-        );
-        let with_name = format!("{digest}  *x.tar.gz");
-        assert_eq!(
-            parse_sha256_sidecar(&with_name, "x.tar.gz").as_deref(),
-            Some(digest.as_str())
-        );
-        let wrong_name = format!("{digest}  other.tar.gz");
-        assert_eq!(parse_sha256_sidecar(&wrong_name, "x.tar.gz"), None);
-        assert_eq!(parse_sha256_sidecar("zz", "x.tar.gz"), None);
-    }
-
-    #[test]
-    fn ticket_scan_caps_the_window_and_still_finds_a_late_ticket() {
-        let mut scan = TicketScan::new(64);
-        for i in 0..200 {
-            assert_eq!(scan.push_line(&format!("noise {i} with no ticket")), None);
-        }
-        assert!(scan.len() <= 64);
-        assert_eq!(
-            scan.push_line(&format!("Ticket：{SAMPLE_TICKET}"))
-                .as_deref(),
-            Some(SAMPLE_TICKET)
-        );
-    }
-
-    #[test]
-    fn ticket_scan_reads_a_ticket_on_the_line_even_when_the_window_is_full() {
-        let mut scan = TicketScan::new(8);
-        scan.push_line("xxxxxxxx");
-        assert_eq!(
-            scan.push_line(&format!("  {SAMPLE_TICKET}")).as_deref(),
-            Some(SAMPLE_TICKET)
-        );
-    }
-
-    #[tokio::test]
-    async fn drain_lines_reads_every_line_until_eof() {
-        let cursor = std::io::Cursor::new("one\ntwo\nthree\n");
-        let mut got = Vec::new();
-        drain_lines(BufReader::new(cursor), |line| got.push(line)).await;
-        assert_eq!(got, ["one", "two", "three"]);
-    }
-
-    #[tokio::test]
-    async fn readiness_timeout_reports_only_when_still_outstanding() {
-        let pending = AtomicBool::new(false);
-        assert!(wait_readiness_timeout(Duration::from_millis(5), &pending).await);
-        let done = AtomicBool::new(true);
-        assert!(!wait_readiness_timeout(Duration::from_millis(5), &done).await);
-    }
-
-    #[tokio::test]
-    async fn sidecar_waiter_sees_a_key_written_after_the_first_miss() {
-        let dir = std::env::temp_dir().join(format!(
-            "lw-sidecar-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let path = dir.join("keeper-key.txt");
-        // The key lands in the pause after the first read, which found no
-        // file: the waiter must see it on a later poll.
-        let misses = std::cell::Cell::new(0u32);
-        let key = poll_sidecar_key(&path, 20, || {
-            misses.set(misses.get() + 1);
-            if misses.get() == 1 {
-                std::fs::write(&path, "room=table\nkey=UHEYQm7dvCvNujUglSaj8Px-\n").unwrap();
-            }
-            std::future::ready(())
-        })
-        .await;
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        assert_eq!(misses.get(), 1, "exactly one miss before the key was read");
-        assert_eq!(key.as_deref(), Some("UHEYQm7dvCvNujUglSaj8Px-"));
-    }
-
-    #[tokio::test]
-    async fn monitor_claims_an_exit_exactly_once() {
-        let step = AtomicU8::new(0);
-        let first = monitor_child_exit(
-            || match step.fetch_add(1, Ordering::SeqCst) {
-                0 => ObserveExit::Running,
-                _ => ObserveExit::Exited(Some(7)),
-            },
-            Duration::from_millis(1),
-        )
-        .await;
-        assert_eq!(first, Some(Some(7)));
-        let stale = monitor_child_exit(|| ObserveExit::Stale, Duration::from_millis(1)).await;
-        assert_eq!(stale, None);
-    }
-
-    fn spawn_sh(script: &str) -> tokio::process::Child {
-        Command::new("sh")
-            .args(["-c", script])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .expect("spawn sh")
-    }
-
-    #[tokio::test]
-    async fn short_command_stdout_and_stderr_drain_until_exit() {
-        let mut child = spawn_sh(&format!(
-            "echo out-a; echo pre >&2; echo Ticket：{SAMPLE_TICKET} >&2; echo out-b; echo post >&2; exit 3"
-        ));
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let out = Arc::new(Mutex::new(Vec::new()));
-        let err = Arc::new(Mutex::new(Vec::new()));
-        let mut scan = TicketScan::new(TICKET_SCAN_CAP);
-        let ticket = Arc::new(Mutex::new(None));
-        let out_c = out.clone();
-        let err_c = err.clone();
-        let ticket_c = ticket.clone();
-        let drain_out = drain_lines(BufReader::new(stdout), move |line| {
-            out_c.lock().unwrap().push(line);
-        });
-        let drain_err = drain_lines(BufReader::new(stderr), move |line| {
-            if ticket_c.lock().unwrap().is_none() {
-                *ticket_c.lock().unwrap() = scan.push_line(&line);
-            }
-            err_c.lock().unwrap().push(line);
-        });
-        let reported = AtomicBool::new(false);
-        let ((), (), timed_out) = tokio::join!(
-            drain_out,
-            drain_err,
-            wait_readiness_timeout(Duration::from_millis(5), &reported),
-        );
-        // Timeout is a readiness signal only — both pipes still drained to EOF.
-        let _ = timed_out;
-        let status = child.wait().await.unwrap();
-        assert_eq!(status.code(), Some(3));
-        assert_eq!(*out.lock().unwrap(), ["out-a", "out-b"]);
-        assert_eq!(
-            *err.lock().unwrap(),
-            vec![
-                "pre".to_string(),
-                format!("Ticket：{SAMPLE_TICKET}"),
-                "post".to_string()
-            ]
-        );
-        assert_eq!(ticket.lock().unwrap().as_deref(), Some(SAMPLE_TICKET));
-    }
-
-    #[tokio::test]
-    async fn readiness_timeout_leaves_the_stderr_reader_in_place() {
-        let mut child = spawn_sh(&format!(
-            "echo pre >&2; sleep 0.15; echo Ticket：{SAMPLE_TICKET} >&2; echo post >&2"
-        ));
-        let stderr = child.stderr.take().unwrap();
-        let lines = Arc::new(Mutex::new(Vec::new()));
-        let lines_c = lines.clone();
-        let mut scan = TicketScan::new(TICKET_SCAN_CAP);
-        let ticket = Arc::new(Mutex::new(None));
-        let ticket_c = ticket.clone();
-        let drain = tokio::spawn(async move {
-            drain_lines(BufReader::new(stderr), move |line| {
-                if ticket_c.lock().unwrap().is_none() {
-                    *ticket_c.lock().unwrap() = scan.push_line(&line);
-                }
-                lines_c.lock().unwrap().push(line);
-            })
-            .await;
-        });
-        let reported = AtomicBool::new(false);
-        assert!(wait_readiness_timeout(Duration::from_millis(40), &reported).await);
-        // The timeout fired while the process was still writing; drain continues.
-        drain.await.unwrap();
-        let collected = lines.lock().unwrap().clone();
-        assert!(collected.iter().any(|line| line == "pre"));
-        assert!(collected.iter().any(|line| line == "post"));
-        assert_eq!(ticket.lock().unwrap().as_deref(), Some(SAMPLE_TICKET));
-        let _ = child.wait().await;
-    }
-
-    #[test]
-    fn resolve_host_id_keeps_a_nonempty_mint_and_fills_a_blank() {
-        assert_eq!(resolve_host_id(Some("  minted-1  ".into())), "minted-1");
-        let fallback = resolve_host_id(Some("   ".into()));
-        assert!(fallback.starts_with("host-"));
-        assert_ne!(fallback, "minted-1");
-    }
-
-    #[tokio::test]
-    async fn observe_exit_of_a_short_command_is_once_per_host_id() {
-        let child = spawn_sh("exit 9");
-        let mut inner = Inner {
-            hosted: Some(Hosted {
-                child,
-                host_id: "sess-1".into(),
-            }),
-            current_host_id: Some("sess-1".into()),
-        };
-        let mut saw = ObserveExit::Running;
-        for _ in 0..50 {
-            saw = try_observe_exit(&mut inner, "sess-1");
-            if saw != ObserveExit::Running {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_eq!(saw, ObserveExit::Exited(Some(9)));
-        assert!(!host_id_is_current(&inner, "sess-1"));
-        assert_eq!(try_observe_exit(&mut inner, "sess-1"), ObserveExit::Stale);
-        assert_eq!(try_observe_exit(&mut inner, "sess-2"), ObserveExit::Stale);
-        assert!(!is_live(&mut inner));
-    }
-
-    #[tokio::test]
-    async fn observed_exit_clears_current_id_so_ready_cannot_follow() {
-        // The bug: try_observe_exit took hosted but left generation current,
-        // so announce_ready still emitted Ready after Exit.
-        let child = spawn_sh("exit 0");
-        let mut inner = Inner {
-            hosted: Some(Hosted {
-                child,
-                host_id: "dead".into(),
-            }),
-            current_host_id: Some("dead".into()),
-        };
-        let mut saw = ObserveExit::Running;
-        for _ in 0..50 {
-            saw = try_observe_exit(&mut inner, "dead");
-            if saw != ObserveExit::Running {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_eq!(saw, ObserveExit::Exited(Some(0)));
-        assert!(
-            !host_id_is_current(&inner, "dead"),
-            "late Ready must not see this id as current"
-        );
-    }
-
-    #[tokio::test]
-    async fn stop_takes_the_child_and_the_monitor_does_not_claim_exit() {
-        let child = spawn_sh("sleep 30");
-        let mut inner = Inner {
-            hosted: Some(Hosted {
-                child,
-                host_id: "sess-4".into(),
-            }),
-            current_host_id: Some("sess-4".into()),
-        };
-        assert!(is_live(&mut inner));
-        let (mut taken, stopped_id) = take_for_stop(&mut inner).expect("child");
-        assert_eq!(stopped_id, "sess-4");
-        assert!(!host_id_is_current(&inner, "sess-4"));
-        assert_eq!(try_observe_exit(&mut inner, "sess-4"), ObserveExit::Stale);
-        assert!(!is_live(&mut inner));
-        let _ = taken.start_kill();
-        let status = tokio::time::timeout(Duration::from_secs(2), taken.wait())
-            .await
-            .expect("stop wait")
-            .expect("wait");
-        // SIGKILL has no numeric code on Unix; the point is the wait finished.
-        let _ = status.code();
-    }
-
-    #[tokio::test]
-    async fn stale_host_id_never_claims_a_live_child() {
-        let child = spawn_sh("sleep 30");
-        let mut inner = Inner {
-            hosted: Some(Hosted {
-                child,
-                host_id: "live".into(),
-            }),
-            current_host_id: Some("live".into()),
-        };
-        assert_eq!(try_observe_exit(&mut inner, "dead"), ObserveExit::Stale);
-        assert!(host_id_is_current(&inner, "live"));
-        assert!(is_live(&mut inner));
-        if let Some((mut child, _)) = take_for_stop(&mut inner) {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-        }
-    }
+/// Forget the admin key kept for a home's data directory (the server turned
+/// it down): the next start makes a new one.
+#[tauri::command]
+pub fn host_local_forget_key(
+    app: tauri::AppHandle,
+    home_override: Option<String>,
+) -> Result<bool, HostFailure> {
+    let paths = app_paths(&app, home_override.as_deref())?;
+    forget_key(&paths.keys_file, &paths.data_dir).map_err(|err| HostFailure::Io {
+        detail: format!("forgetting the admin key failed: {err}"),
+    })
 }
+
+/// The app is quitting: stop the server it started, and wait for it.
+pub fn shutdown(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let host = Arc::clone(&app.state::<HostLocalState>().0);
+    tauri::async_runtime::block_on(async move {
+        host.stop().await;
+    });
+}
+
+#[cfg(test)]
+mod tests;

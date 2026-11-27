@@ -86,9 +86,10 @@ jobs:
           releaseName: "Loreweaver Studio v__VERSION__"
           releaseBody: |
             Unsigned builds — the README's install section has the one-step
-            macOS Gatekeeper and Windows SmartScreen workarounds. On first
-            "Host locally & play" the app downloads the matching engine server
-            and verifies it by SHA-256; nothing else is bundled.
+            macOS Gatekeeper and Windows SmartScreen workarounds. "Host
+            locally & play" needs a Loreweaver 3.x server on this machine (a
+            `loreweaver` executable, or Bun and an engine checkout); none is
+            bundled or downloaded.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

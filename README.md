@@ -30,8 +30,34 @@ bun tauri dev            # or run it unbundled, with hot reload
 ```
 
 Then open the app and, on the connect screen, paste the **ticket** and **invite key** your room
-admin sent you. (**Host locally & play** — the one-click local server — is not on 3.0 yet:
-to play, connect to a running 3.0 server.)
+admin sent you — or press **Host locally & play** to run a server on this computer and sit down
+at it as its room admin.
+
+### Host locally & play
+
+One press starts a protocol 3.0 server on this machine (`serve --local`: loopback only, no
+relay, no network needed) and connects you to it as the room admin; you are also the operator
+of that server. Leaving the table, pressing **Stop the server**, or quitting the app stops it.
+
+What it needs — there is **no published 3.0 server to download yet**, so the app does not
+download one:
+
+- a `loreweaver` executable (3.x) on your PATH, **or**
+- [Bun](https://bun.sh) and a checkout of the [engine](https://github.com/1A7432/loreweaver)
+  on its `v3` branch with `bun install` run at its root, set as **Engine checkout** in the
+  studio's _AI & engine settings_ (the same setting the pack builder uses).
+
+Where things live: the server's folder is the one you pick on the connect screen, or by
+default `local-server` in the app's data folder — `~/Library/Application Support/dev.loreweaver.studio/`
+on macOS, `%APPDATA%\dev.loreweaver.studio\` on Windows, `~/.local/share/dev.loreweaver.studio/`
+on Linux. Its data (database, keys, installed packs) is in `data/` inside it. The first start
+prints the room admin's key; the app keeps it in `local-server-keys.json` in its data folder
+(readable by you alone) and uses it every time after. If that key is lost, the next start makes
+a new admin key with the server's own `key` command and says so.
+
+The model: the server starts **without** one (it says so on the menu). Set it on the **Models**
+screen as the room admin — no restart; the server keeps it in its own database. None of the
+app's AI-drafting settings and none of your shell's `TRPG_*` variables reach it.
 
 Two modes, one app:
 
@@ -39,8 +65,8 @@ Two modes, one app:
   fields, streaming drafts, character / party / scene / variables cards fed by views, the
   claimable characters, a pack's template panels (evaluated by the protocol package's
   `panelBlocks`, the one evaluation every client shares), media, audio, the session report and
-  the admin screens (access keys, models, content and packs, the room). **Not yet on 3.0:**
-  running page panels (a page panel shows its fallback) and hosting a server locally.
+  the admin screens (access keys, models, content and packs, the room), and hosting a server
+  locally. **Not yet on 3.0:** running page panels (a page panel shows its fallback).
 - **Studio**: a local-first authoring bench:
   - **Forge** — typed module variables and worldbook entries, exported as a native
     `*.lorecard.json` or a SillyTavern card (JSON or PNG). Hook scripts and a pregenerated
@@ -78,11 +104,12 @@ The formats themselves are the engine's, specified in its
 - **Engine command line** (`src-tauri/src/engine.rs`): a `loreweaver` executable on PATH, or an
   engine checkout run as `bun <dir>/server/src/cli/main.ts`, always from a temporary working
   directory and with the caller's `TRPG_*` variables removed. Each command prints one JSON
-  object (on stdout when it succeeds, on stderr when it refuses).
+  object (on stdout when it succeeds, on stderr when it refuses). The pack builder and local
+  hosting (`src-tauri/src/host_local.rs`) find it the same way.
 
 ## Status
 
-- **Play mode**: on protocol 3.0, except page panels and local hosting (above).
+- **Play mode**: on protocol 3.0, except page panels (above).
 - **Studio**: writes 3.0 packs; the round-trip gate builds and installs one with the real
   engine on every CI run.
 - **Desktop (macOS)**: release build + `.app` bundle verified. **Windows / Linux**: CI compiles
@@ -128,7 +155,13 @@ own code writes, and fails on any mismatch:
   `panelBlocks` over sample views, compared with Studio's checks and preview
   (`scripts/roundtrip_check.ts`);
 - **f. live connect** — a real 3.0 server (`serve --local`) dialled through the real Rust link
-  (`scripts/check_live_connect.sh`; `LIVE_CONNECT=0` skips it).
+  (`scripts/check_live_connect.sh`);
+- **g. host locally** — the app's own host-local code (`src-tauri/tests/host_local_live.rs`)
+  finds the engine checkout with the app's probe and starts the real server three times over
+  one data directory (its first key, the key the app kept, a key made after the app lost it),
+  each time connecting through the real link as the room admin, stopping it and checking the
+  process is gone; a `TRPG_*` model setting the server would refuse is exported to prove none
+  reaches it. `LIVE_CONNECT=0` skips f and g.
 
 It needs the engine checkout (default `../trpg_kp`, override with `TRPG_KP_REPO`), on its `v3`
 branch, with `bun install` run at its root:
@@ -140,7 +173,7 @@ bun run roundtrip
 ```
 
 The engine runs from a temporary working directory (its `.env` is never read); temporary
-directories are removed on every exit.
+directories are removed, and any server a stage started is stopped, on every exit.
 
 ## License
 

@@ -1,357 +1,227 @@
-// One-click local hosting state. `start` brings the server up through the
-// Rust bridge, the event stream lands here, and the moment the ticket +
-// auto-minted keeper key arrive we dial the connection — the TUI's "Host
-// locally & play" in one press. Quitting the table stops the server we
-// started (and only then; reconnects never kill it).
+// "Host locally & play": the state of the one local server this app may run, and
+// the press that brings it up and sits the person down at it as the room admin.
+//
+// `start` asks Rust to start the server (it finds the engine, starts `serve --local`,
+// waits for the ready line and hands back the ticket and the admin key) and dials it
+// through the normal connection owner with the `local` network profile. The key goes
+// from Rust's answer straight into the connection and is kept nowhere here: pressing
+// the button again while that server runs (after a reload, say) gets the same answer
+// back from Rust (`reused`). Leaving the hosted table stops the server; a server that
+// dies on its own ends the table and says so, with its last lines.
 
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import { guardedLocalStorage } from "../lib/persistStorage"
+import i18n from "../i18n"
+import type { Connection } from "../lib/connection"
 import {
-  hostEventApplies,
+  asHostFailure,
+  hostLocalForgetKey,
   hostLocalStart,
   hostLocalStatus,
   hostLocalStop,
-  mintHostId,
-  onHostLocalEvent,
-  type HostLocalEvent,
+  onHostLocalExit,
+  type HostExited,
+  type HostFailure,
+  type KeySource,
 } from "../lib/hostLocal"
+import { guardedLocalStorage } from "../lib/persistStorage"
 import { isTauri } from "../lib/transport"
 import { useAiStore } from "../features/studio/ai/provider"
 import { useConnectionStore } from "./connection"
 
-const MAX_LOG_LINES = 400
+export type HostPhase = "idle" | "starting" | "hosting" | "failed"
 
-export type HostLocalPhase = "idle" | "starting" | "ready" | "error"
-export type HostLocalExitKind = "before-ready" | "unexpected"
+/** Why hosting is not going: what Rust answered, or what happened after. */
+export type HostProblem =
+  | HostFailure
+  /** The hosted server stopped on its own. */
+  | { code: "died"; exitCode: number | null; stderr: string[] }
+  /** The server turned down the admin key this app kept; it has been forgotten. */
+  | { code: "key_refused" }
+  | { code: "desktop_only" }
 
-interface HostLocalState {
-  phase: HostLocalPhase
-  log: string[]
-  error: string | null
-  /** Structured death of THIS host session. The connect screen translates it. */
-  exitKind: HostLocalExitKind | null
-  exitCode: number | null
-  /** Host session the WebView currently accepts events for. Minted on start,
-   * adopted from `host_local_status` after a reload. */
-  hostId: string | null
-  /** After an explicit stop, only the confirming Exit for this id is accepted. */
-  stoppingHostId: string | null
-  /** A Ready that arrived while an explicit stop was still in flight. HELD, not
-   * applied: whether it belongs to a child the stop killed or to one still on
-   * its way is a question only the stop's own answer settles, and it settles
-   * after the event has already crossed the bridge. */
-  parkedReady: HostLocalEvent | null
-  /** Whether the CURRENT connection came from our own local server. */
-  hostedSession: boolean
-  /** User-picked server folder ("" = the TUI-shared default chain). Persisted. */
-  homeOverride: string
-  /** The resolved effective home, for display (refreshed by refreshHome). */
-  effectiveHome: string
-  /** The credentials the LAST server we started handed us, kept for the home they
-   * belong to. Persisted, because the case they exist for is the front end coming
-   * back without them: the WebView reloads, the Rust side is still serving, and
-   * `start` can then only answer "a local server is already running" — a dead end
-   * that made a keeper dig a ticket out of a text file to sit back down at their own
-   * table (2026-08-20 play-test). Local credentials for a local server, stored beside
-   * the API key this app already keeps. */
-  lastTicket: string
-  lastKey: string
-  lastTicketHome: string
-  /** The dev-room source root the RUNNING server was started with ("" = none).
-   * `TRPG_DEV__SOURCE_ROOT` is read at startup, so a caller that needs a
-   * different one has to restart rather than reconfigure. */
-  devSourceRoot: string
-
-  setHomeOverride: (path: string) => void
-  refreshHome: () => Promise<void>
-  start: (devSourceRoot?: string) => Promise<void>
-  /** Sit back down at a server this app already started; false when there is none
-   * to sit at (or its credentials belong to another home). */
-  reconnectIfServing: () => Promise<boolean>
-  stop: () => Promise<void>
-  ingest: (event: HostLocalEvent) => void
+/** What is shown about the hosted server (never its key). */
+export interface Hosted {
+  hostId: string
+  dataDir: string
+  room: string
+  keySource: KeySource
+  notes: string[]
 }
 
-let subscribed = false
+interface HostLocalState {
+  phase: HostPhase
+  problem: HostProblem | null
+  hosted: Hosted | null
+  /** The connection to the hosted server, while it is the current one. */
+  connection: Connection | null
+  /** The start-up notes were read and put away. */
+  notesDismissed: boolean
+  /** The folder the person picked ("" = the default in this app's data folder). Persisted. */
+  homeOverride: string
+  /** The folder a start would use now, for display. */
+  effectiveHome: string
+  /** A server this app started is running (seen when the screen opened). */
+  running: boolean
 
-async function subscribeOnce(ingest: (event: HostLocalEvent) => void): Promise<void> {
-  if (subscribed) return
-  subscribed = true
-  await onHostLocalEvent(ingest)
+  setHomeOverride: (path: string) => void
+  refresh: () => Promise<void>
+  start: () => Promise<void>
+  stop: () => Promise<void>
+  dismissNotes: () => void
+  onExited: (event: HostExited) => void
+}
+
+let subscribed: Promise<unknown> | null = null
+/** Every start and stop takes the next number: an answer for an older one is stale. */
+let attempts = 0
+
+function homeOverride(): string | undefined {
+  return useHostLocalStore.getState().homeOverride.trim() || undefined
 }
 
 export const useHostLocalStore = create<HostLocalState>()(
   persist(
     (set, get) => ({
       phase: "idle",
-      log: [],
-      error: null,
-      exitKind: null,
-      exitCode: null,
-      hostId: null,
-      stoppingHostId: null,
-      parkedReady: null,
-      hostedSession: false,
+      problem: null,
+      hosted: null,
+      connection: null,
+      notesDismissed: false,
       homeOverride: "",
       effectiveHome: "",
-      devSourceRoot: "",
-      lastTicket: "",
-      lastKey: "",
-      lastTicketHome: "",
+      running: false,
 
       setHomeOverride: (path) => {
         set({ homeOverride: path })
-        void get().refreshHome()
+        void get().refresh()
       },
 
-      refreshHome: async () => {
+      refresh: async () => {
         if (!isTauri()) return
         try {
-          const status = await hostLocalStatus(get().homeOverride.trim() || undefined)
-          set({ effectiveHome: status.home })
+          const status = await hostLocalStatus(homeOverride())
+          set({ effectiveHome: status.home, running: status.running })
         } catch {
-          // Display-only; the start path surfaces real errors.
+          // Display only; a start says what is wrong.
         }
       },
 
-      start: async (devSourceRoot = "") => {
+      start: async () => {
         if (!isTauri()) {
-          set({ phase: "error", error: "local hosting needs the desktop app" })
+          set({ phase: "failed", problem: { code: "desktop_only" } })
           return
         }
         if (get().phase === "starting") return
-        const hostId = mintHostId()
-        set({
-          phase: "starting",
-          log: [],
-          error: null,
-          exitKind: null,
-          exitCode: null,
-          hostedSession: false,
-          devSourceRoot,
-          hostId,
-          stoppingHostId: null,
-          parkedReady: null,
-        })
-        // Does this press still own the store? A cancel that is still in flight
-        // owns it too — it holds this id as `stoppingHostId` and may hand it
-        // back — but a LATER press has replaced us outright, and an abandoned
-        // start may neither seat a child nobody is listening for nor report a
-        // verdict about a session that is no longer on screen.
-        const owns = () => {
-          const state = get()
-          return state.hostId === hostId || state.stoppingHostId === hostId
-        }
-        let failure: string | null = null
+        const attempt = ++attempts
+        set({ phase: "starting", problem: null, hosted: null, notesDismissed: false })
+        subscribed ??= onHostLocalExit((event) => useHostLocalStore.getState().onExited(event))
+        let ready
         try {
-          await subscribeOnce(get().ingest)
-          if (!owns()) return
-          // Already serving? Then this press means "sit me back down", not "start one":
-          // the Rust side would refuse, and refusing is the whole dead end.
-          if (await get().reconnectIfServing()) return
-          if (!owns()) return
-          await hostLocalStart(
-            useAiStore.getState().engineRepoDir.trim() || undefined,
-            get().homeOverride.trim() || undefined,
-            devSourceRoot || undefined,
-            hostId,
-          )
+          await subscribed
+          ready = await hostLocalStart({
+            engineRepoDir: useAiStore.getState().engineRepoDir.trim() || undefined,
+            homeOverride: homeOverride(),
+            locale: i18n.resolvedLanguage ?? i18n.language,
+          })
         } catch (cause) {
-          failure = cause instanceof Error ? cause.message : String(cause)
+          if (attempt !== attempts) return
+          set({ phase: "failed", problem: asHostFailure(cause), running: false })
+          return
         }
-        // One guard over BOTH continuations: whatever this dial has to say, only
-        // the generation that still owns the store may say it.
-        if (!owns() || failure === null) return
-        // Nothing seated under this id — Rust either never spawned or killed
-        // its own leftover — so let the id go, and with it any cancel that is
-        // still waiting for a child this start will never deliver.
-        set((s) => ({
-          phase: "error",
-          error: failure,
-          hostId: null,
-          stoppingHostId: s.stoppingHostId === hostId ? null : s.stoppingHostId,
-        }))
-      },
-
-      reconnectIfServing: async () => {
-        if (!isTauri()) return false
-        let status
-        try {
-          status = await hostLocalStatus(get().homeOverride.trim() || undefined)
-        } catch {
-          return false
+        if (attempt !== attempts) {
+          // Stopped while starting, and the stop may have reached Rust before the start
+          // did: a server is up that nobody wants. Stop it again.
+          void hostLocalStop().catch(() => undefined)
+          return
         }
-        const { lastTicket, lastKey, lastTicketHome } = get()
-        // Credentials belong to the home that minted them: a different folder is a
-        // different server with different keys, and dialing it with these would fail
-        // in a way that reads like a bug rather than a mismatch.
-        if (!status.running || !lastTicket || !lastKey || lastTicketHome !== status.home) return false
-        // Adopt the live child's id so a later Exit (and only that child's
-        // Exit) still reaches ingest after a WebView reload.
-        set({
-          phase: "ready",
-          hostedSession: true,
-          error: null,
-          exitKind: null,
-          exitCode: null,
-          hostId: status.hostId ?? get().hostId,
-          stoppingHostId: null,
+        const hosted: Hosted = {
+          hostId: ready.hostId,
+          dataDir: ready.dataDir,
+          room: ready.room,
+          keySource: ready.keySource,
+          notes: ready.notes,
+        }
+        set({ phase: "hosting", hosted, running: true })
+        await useConnectionStore
+          .getState()
+          .connect({ ticket: ready.ticket, key: ready.key, network: "local" })
+        const connection = useConnectionStore.getState().connection
+        if (attempt !== attempts || connection === null) return
+        set({ connection })
+        // The server turned the kept key down (an admin revoked it): forget it, so the
+        // next start makes a new one, and stop the server it is no use for.
+        const unsubscribe = connection.subscribe(() => {
+          const state = connection.getState()
+          if (state.phase !== "ended") return
+          unsubscribe()
+          if (state.failure?.kind !== "refused" || state.failure.code !== "bad_key") return
+          if (get().connection !== connection) return
+          attempts += 1
+          set({ phase: "failed", problem: { code: "key_refused" }, hosted: null, connection: null })
+          void hostLocalForgetKey(homeOverride())
+            .catch(() => undefined)
+            .then(() => hostLocalStop())
+            .catch(() => undefined)
+            .then(() => get().refresh())
         })
-        await useConnectionStore.getState().connect({ ticket: lastTicket, key: lastKey })
-        return true
       },
 
       stop: async () => {
-        // Invalidate the current id first so a late Ready cannot revive us.
-        // Keep it as stoppingHostId so the confirming Exit is still applied
-        // (and only as a confirmation — we are already idle).
-        const current = get().hostId
-        const wasStarting = get().phase === "starting"
-        set({
-          phase: "idle",
-          hostedSession: false,
-          devSourceRoot: "",
-          error: null,
-          exitKind: null,
-          exitCode: null,
-          hostId: null,
-          stoppingHostId: current,
-          parkedReady: null,
-        })
-        let stopped = false
+        attempts += 1
+        const connection = get().connection
+        set({ phase: "idle", problem: null, hosted: null, connection: null })
+        if (connection !== null && useConnectionStore.getState().connection === connection) connection.stop()
         try {
-          stopped = await hostLocalStop()
+          await hostLocalStop()
         } catch {
-          // Nothing to stop is fine.
+          // Nothing to stop.
         }
-        // A Ready that crossed the bridge during the await is parked, not
-        // applied (see `ingest`). Reconcile it with the answer we just got:
-        // a stop that killed something makes it a dead child's last word.
-        const parked = get().parkedReady
-        set({ parkedReady: null })
-        if (stopped || !wasStarting || current === null) return
-        // Nothing was there to stop, yet we were mid-start: the cancel landed
-        // during ACQUISITION (checkout / verified cache / a download that may
-        // take minutes), before Rust had a child to kill. That child is still
-        // coming, and it will seat itself under this same id — so take the id
-        // back. Dropping it would leave a server nobody can see: every event
-        // it emits gets filtered out, and the next press of start is refused
-        // with "a local server is already running". Back in `starting`, the
-        // cancel button is still on screen and it will find a child this time.
-        set((s) =>
-          s.hostId === null && s.stoppingHostId === current
-            ? { phase: "starting", hostId: current, stoppingHostId: null }
-            : {},
-        )
-        // The id is ours again, so the Ready we parked belongs to us after all:
-        // it announced the child this cancel could not find. Dropping it here
-        // would leave the table `starting` forever with the only ticket it will
-        // ever be handed already thrown away.
-        if (parked !== null && get().hostId === current) get().ingest(parked)
+        set({ running: false })
       },
 
-      ingest: (event) => {
-        const { hostId, stoppingHostId } = get()
-        // A stop in flight has cleared `hostId` but not yet learned whether it
-        // killed anything. Hold this Ready until it does — see `stop`.
-        if (event.kind === "ready" && hostId === null && stoppingHostId === event.hostId) {
-          set({ parkedReady: event })
-          return
-        }
-        if (!hostEventApplies(event, hostId, stoppingHostId)) return
-        switch (event.kind) {
-          case "log":
-            set((s) => ({ log: [...s.log.slice(-(MAX_LOG_LINES - 1)), event.text] }))
-            return
-          case "ready":
-            set({
-              phase: "ready",
-              hostedSession: true,
-              lastTicket: event.ticket,
-              lastKey: event.key,
-              error: null,
-              exitKind: null,
-              exitCode: null,
-            })
-            // Which home these credentials belong to is a question only the Rust side
-            // can answer, and `ingest` is synchronous — so ask, and record what comes
-            // back. `effectiveHome` may never have been refreshed in this session.
-            void hostLocalStatus(get().homeOverride.trim() || undefined)
-              .then((status) => set({ lastTicketHome: status.home, effectiveHome: status.home }))
-              .catch(() => {})
-            void useConnectionStore.getState().connect({ ticket: event.ticket, key: event.key })
-            return
-          case "exit":
-            set((s) => {
-              if (s.stoppingHostId !== null && event.hostId === s.stoppingHostId) {
-                return { stoppingHostId: null }
-              }
-              if (s.phase === "starting") {
-                return {
-                  phase: "error" as const,
-                  hostedSession: false,
-                  exitKind: "before-ready" as const,
-                  exitCode: event.code,
-                  hostId: null,
-                }
-              }
-              if (s.phase === "ready" || s.hostedSession) {
-                return {
-                  phase: "error" as const,
-                  hostedSession: false,
-                  exitKind: "unexpected" as const,
-                  exitCode: event.code,
-                  hostId: null,
-                }
-              }
-              // A readiness Error already named the failure. Clear the id so
-              // a late Ready for this dead child cannot revive the session.
-              return { hostId: null }
-            })
-            return
-          case "error":
-            // A readiness failure does not kill anything: `watch_output` emits
-            // the Error and leaves the child and its drains exactly where they
-            // were. Flipping `phase` alone therefore strands a LIVE server
-            // under an id the screen has stopped showing — Start comes back,
-            // and the next press is refused with "a local server is already
-            // running" while a first run has no persisted credentials to sit
-            // back down with. Nobody can adopt a server that never announced a
-            // ticket, so answer the process question the only way left: stop
-            // it, keeping the id as the stopping one so the Exit that confirms
-            // the kill reads as a confirmation rather than a second failure.
-            set((s) => ({
-              phase: "error",
-              error: event.message,
-              hostedSession: false,
-              hostId: null,
-              stoppingHostId: s.hostId ?? s.stoppingHostId,
-            }))
-            void hostLocalStop().catch(() => {
-              // Nothing to stop is fine — the child may have died already.
-            })
-            return
-        }
+      dismissNotes: () => set({ notesDismissed: true }),
+
+      onExited: (event) => {
+        if (get().hosted?.hostId !== event.hostId) return
+        attempts += 1
+        const connection = get().connection
+        set({
+          phase: "failed",
+          problem: { code: "died", exitCode: event.code, stderr: event.stderr },
+          hosted: null,
+          connection: null,
+          running: false,
+        })
+        // The ticket is gone for good: the table ends instead of redialling it.
+        if (connection !== null && useConnectionStore.getState().connection === connection) connection.stop()
       },
     }),
     {
       name: "loreweaver-studio-host-local",
+      version: 1,
       storage: guardedLocalStorage,
-      partialize: (s) => ({
-        homeOverride: s.homeOverride,
-        lastTicket: s.lastTicket,
-        lastKey: s.lastKey,
-        lastTicketHome: s.lastTicketHome,
-      }),
+      partialize: (state) => ({ homeOverride: state.homeOverride }),
+      // Version 0 (2.x) also kept a server ticket and key here; only the folder survives.
+      migrate: (persisted) => {
+        const old = (persisted ?? {}) as { homeOverride?: unknown }
+        return { homeOverride: typeof old.homeOverride === "string" ? old.homeOverride : "" }
+      },
     },
   ),
 )
 
-/** Disconnect from the table; when we hosted the server ourselves, stop it
- * too (the TUI's quit semantics). Reconnect logic never routes through here. */
+/** Whether the current connection is the one to the server this app hosts. */
+export function useIsHostedTable(): boolean {
+  const hosted = useHostLocalStore((state) => state.connection)
+  const current = useConnectionStore((slot) => slot.connection)
+  return hosted !== null && hosted === current
+}
+
+/** Leave the table; when it is the one this app hosts, stop its server too. */
 export async function quitTable(): Promise<void> {
   const host = useHostLocalStore.getState()
+  const hosted = host.connection !== null && host.connection === useConnectionStore.getState().connection
   await useConnectionStore.getState().disconnect()
-  if (host.hostedSession) await host.stop()
+  if (hosted) await host.stop()
 }

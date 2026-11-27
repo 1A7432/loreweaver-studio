@@ -52,14 +52,43 @@
     "hostLocal": {
       "button": "本地托管并游玩",
       "starting": "正在启动服务器…",
-      "hint": "一键完成：使用你的引擎检出或下载预编译服务器（SHA-256 校验），启动后以管理员身份自动登录。",
+      "return": "回到牌桌",
+      "stop": "停止服务器",
+      "hint": "一键在本机启动 Loreweaver 服务器，并以房间管理员身份进入。这台服务器的运营者也是你。",
+      "running": "本应用启动的本地服务器还在运行。",
       "desktopOnly": "本地托管需要桌面端。",
       "cancel": "取消",
-      "home": "服务器目录（数据、钥匙、缓存）",
-      "homePlaceholder": "~/.loreweaver",
-      "exitedBeforeReady": "本地服务器在就绪前退出了。",
-      "exitedUnexpectedly": "本地服务器意外停止。",
-      "exitedUnexpectedlyCode": "本地服务器意外停止（代码 {{code}}）。"
+      "home": "服务器目录（数据存放在其中的 data 目录）",
+      "notesTitle": "本地服务器提示",
+      "openModels": "打开模型设置",
+      "keyMinted": "本应用找不到这个服务器目录的管理员钥匙了，服务器已重新生成一把。",
+      "setting": {
+        "missing": "缺少 {{variable}}",
+        "invalid": "{{variable}} 的值无效"
+      },
+      "note": {
+        "model_not_configured": "还没有设置模型，守秘人暂时无法回应。请以房间管理员身份在模型设置里选一个，不用重启，服务器会记住。",
+        "recall_off": "未设置嵌入模型，按语义回忆已关闭。",
+        "context_window_unknown": "服务器不知道这个模型的上下文长度，暂按 32,000 词元计算。",
+        "model_override_unusable": "模型设置里保存的某个模型已无法使用，请去那里检查。",
+        "other": "服务器提示：{{code}}"
+      },
+      "problem": {
+        "no_engine": "找不到 Loreweaver 服务器。请安装一个，让 PATH 里有 `loreweaver` 可执行文件；或者安装 Bun，并在创作工作室“AI 与引擎设置”的“引擎检出目录”里指向 Loreweaver 仓库的副本（v3 分支，已运行 `bun install`）。目前还没有可下载的 3.0 服务器。",
+        "already_running": "本应用启动的本地服务器正在另一个目录运行（{{dir}}）。请先停止它。",
+        "bad_settings": "服务器拒绝了它的设置：",
+        "refused": "服务器拒绝启动（{{code}}）。",
+        "exited": "本地服务器在就绪前退出了。最后几行输出：",
+        "exitedCode": "本地服务器在就绪前退出了（代码 {{code}}）。最后几行输出：",
+        "timeout": "本地服务器一分钟内没有就绪，已停止。最后几行输出：",
+        "mint_failed": "没能为这个服务器目录生成新的管理员钥匙（{{code}}）。",
+        "no_key": "服务器已启动，但没有它的管理员钥匙。请停止后重新托管。",
+        "io": "无法启动本地服务器：",
+        "cancelled": "已停止。",
+        "died": "本地服务器停止了。最后几行输出：",
+        "diedCode": "本地服务器停止了（代码 {{code}}）。最后几行输出：",
+        "key_refused": "服务器不认本应用保存的管理员钥匙，已把它忘掉。请重新托管，会生成一把新的。"
+      }
     },
     "lastTable": {
       "label": "上一张牌桌：{{table}}",
@@ -868,7 +897,7 @@
       "forgetKey": "清除",
       "keyHint": "与其他设置一起明文存在本地。请求由原生侧发出，密钥不会进入页面。能访问这台机器用户配置的人都读得到——请使用你愿意放在这里的密钥。",
       "engineRepo": "引擎检出目录（可选）",
-      "engineRepoHint": "loreweaver 仓库的检出目录（v3 分支，已运行 `bun install`）。PATH 上没有 `loreweaver` 时，Studio 用 `bun <目录>/server/src/cli/main.ts` 打包。",
+      "engineRepoHint": "loreweaver 仓库的检出目录（v3 分支，已运行 `bun install`）。PATH 上没有 `loreweaver` 时，Studio 用 `bun <目录>/server/src/cli/main.ts` 打包和本地托管服务器。",
       "browse": "浏览…",
       "done": "完成",
       "panelTitle": "AI 制卡",

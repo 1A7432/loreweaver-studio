@@ -3450,7 +3450,7 @@ button.npc-line-toggle {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 180px;
+  max-height: 240px;
   overflow-y: auto;
 }
 
@@ -3472,6 +3472,30 @@ button.npc-line-toggle {
 
 .host-local-home input {
   font: 12px/1.4 var(--font-mono);
+}
+
+.host-local-lines {
+  margin-top: 6px;
+}
+
+.hosted-notes {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hosted-notes-head {
+  font-weight: 600;
+  margin: 0;
+}
+
+.hosted-notes-actions {
+  display: flex;
+  gap: 8px;
 }
 
 /* --- undo toast ---------------------------------------------------------- */

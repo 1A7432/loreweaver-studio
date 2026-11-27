@@ -22,7 +22,13 @@
 #                 evaluated with the shared `panelBlocks` over sample view values, compared
 #                 with Studio's checks and live preview for the same values;
 #   f. live       a REAL 3.0 server (`serve --local`) dialled through the REAL Rust link
-#                 (scripts/check_live_connect.sh). LIVE_CONNECT=0 skips it on a machine
+#                 (scripts/check_live_connect.sh);
+#   g. host       "Host locally & play" without a GUI: the app's own host-local code
+#                 (src-tauri/tests/host_local_live.rs) finds the engine checkout with the
+#                 app's probe, starts the real server three times over one data directory
+#                 (its first key, the key the app kept, a key made after the app lost it),
+#                 sits down through the real link as the room admin each time, stops it,
+#                 and checks the process is gone. LIVE_CONNECT=0 skips f and g on a machine
 #                 without cargo.
 #
 # The engine always runs from a temporary working directory (Bun loads `.env` from the
@@ -52,9 +58,36 @@ ENTRY="$ENGINE_REPO/server/src/cli/main.ts"
 command -v bun >/dev/null 2>&1 || fail "bun not found on PATH"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/lw-roundtrip.XXXXXX")"
+# Stage g's test hands this mark to every server it hosts (in the server's environment),
+# so a server it could not stop itself — the test was killed, even mid-start — is found.
+HOST_MARK="LOREWEAVER_HOST_MARK=$WORK"
+
+# The engine servers carrying the mark, one pid per line.
+hosted_pids() {
+  local pid
+  for pid in $(pgrep -f "serve --local" 2>/dev/null || true); do
+    ps eww -o command= -p "$pid" 2>/dev/null | grep -qF -- "$HOST_MARK" && echo "$pid"
+  done
+  return 0
+}
+
+# SIGTERM (the server closes cleanly), then SIGKILL.
+stop_hosted() {
+  local pid
+  for pid in $(hosted_pids); do
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.25
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  stop_hosted
   rm -rf "$WORK"
   exit "$status"
 }
@@ -121,6 +154,34 @@ if [ "${LIVE_CONNECT:-1}" = "0" ]; then
   echo "skipped (LIVE_CONNECT=0)"
 else
   TRPG_KP_REPO="$ENGINE_REPO" bash "$STUDIO_ROOT/scripts/check_live_connect.sh"
+fi
+
+say "g. host locally: the app's own host-local code runs the real server, and stops it"
+if [ "${LIVE_CONNECT:-1}" = "0" ]; then
+  echo "skipped (LIVE_CONNECT=0)"
+else
+  command -v cargo >/dev/null 2>&1 || fail "cargo not found on PATH"
+  HOST_LOG="$WORK/host.log"
+  mkdir -p "$WORK/tmp"
+  (
+    cd "$STUDIO_ROOT"
+    # The test's scratch folders and the server's working directory land in $WORK,
+    # removed on every exit even if the test is killed before it can clean up.
+    export TMPDIR="$WORK/tmp"
+    # A model setting in the caller's environment that the server would refuse
+    # (`bad_settings`): the app must strip every TRPG_* it has before the server sees it.
+    TRPG_LLM__PROVIDER=openai \
+    TRPG_LLM__BASE_URL=not-a-url \
+    LOREWEAVER_HOST_ENGINE_REPO="$ENGINE_REPO" \
+    LOREWEAVER_HOST_MARK="$WORK" \
+      cargo test -p loreweaver-studio --test host_local_live -- --ignored --nocapture 2>&1 | tee "$HOST_LOG"
+  )
+  # A filter that matches no test still exits 0: assert one actually passed.
+  grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$HOST_LOG" \
+    || fail "the host-local test did not run, or failed"
+  LEFT="$(hosted_pids)"
+  [ -z "$LEFT" ] || fail "a hosted server is still running after the test stopped it: $LEFT"
+  echo "ok: three hosted runs, no server left behind"
 fi
 
 say "round-trip gate: PASS"

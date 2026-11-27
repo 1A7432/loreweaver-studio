@@ -9,88 +9,102 @@ import { useConnectionState, useConnectionStore } from "../../store/connection"
 import { useHostLocalStore } from "../../store/hostLocal"
 import { useLastTableStore } from "../../store/lastTable"
 import { describeFailure } from "./connectFailure"
+import { describeHostProblem } from "./hostLocalText"
 import OnlineView from "./OnlineView"
 import StatusPill from "./StatusPill"
 
-/** The TUI's green button: bring a local server up and log straight in as the
- * room admin. While it's starting the real bring-up log streams below. */
+/** "Host locally & play": start a server on this machine and sit down at it as the
+ * room admin. While one runs and the table is not on screen (the link dropped, the
+ * app reloaded), the same button returns to it and Stop ends it. */
 function HostLocalBlock() {
   const { t } = useTranslation()
   const phase = useHostLocalStore((s) => s.phase)
-  const log = useHostLocalStore((s) => s.log)
-  const error = useHostLocalStore((s) => s.error)
-  const exitKind = useHostLocalStore((s) => s.exitKind)
-  const exitCode = useHostLocalStore((s) => s.exitCode)
+  const problem = useHostLocalStore((s) => s.problem)
+  const running = useHostLocalStore((s) => s.running)
   const homeOverride = useHostLocalStore((s) => s.homeOverride)
   const effectiveHome = useHostLocalStore((s) => s.effectiveHome)
   const setHomeOverride = useHostLocalStore((s) => s.setHomeOverride)
-  const refreshHome = useHostLocalStore((s) => s.refreshHome)
+  const refresh = useHostLocalStore((s) => s.refresh)
   const start = useHostLocalStore((s) => s.start)
   const stop = useHostLocalStore((s) => s.stop)
   const native = isTauri()
 
   useEffect(() => {
-    void refreshHome()
-  }, [refreshHome])
+    void refresh()
+  }, [refresh])
 
   const browse = async () => {
     const dir = await pickDirectory()
     if (dir !== null) setHomeOverride(dir)
   }
 
+  const starting = phase === "starting"
+  // A server this app started is up, but the table is not on screen.
+  const serving = phase === "hosting" || (phase === "idle" && running)
+  const described = problem !== null && problem.code !== "cancelled" ? describeHostProblem(problem, t) : null
+  const offerStop = starting || serving || problem?.code === "already_running"
+
   return (
     <div className="host-local">
       <button
         type="button"
         className="host-local-button"
-        disabled={!native || phase === "starting"}
+        disabled={!native || starting}
         onClick={() => void start()}
       >
-        {phase === "starting" ? t("connect.hostLocal.starting") : t("connect.hostLocal.button")}
+        {starting ? <span className="spinner spinner-inline" aria-hidden="true" /> : null}
+        {starting
+          ? t("connect.hostLocal.starting")
+          : serving
+            ? t("connect.hostLocal.return")
+            : t("connect.hostLocal.button")}
       </button>
       <p className="studio-hint">
-        {native ? t("connect.hostLocal.hint") : t("connect.hostLocal.desktopOnly")}
+        {!native
+          ? t("connect.hostLocal.desktopOnly")
+          : serving
+            ? t("connect.hostLocal.running")
+            : t("connect.hostLocal.hint")}
       </p>
       <div className="host-local-home">
         <label className="field">
           {t("connect.hostLocal.home")}
           <input
             value={homeOverride}
-            placeholder={effectiveHome || t("connect.hostLocal.homePlaceholder")}
+            placeholder={effectiveHome}
             spellCheck={false}
-            disabled={!native || phase === "starting"}
+            disabled={!native || starting || serving}
             onChange={(e) => setHomeOverride(e.target.value)}
           />
         </label>
         <button
           type="button"
           className="ghost-button"
-          disabled={!native || phase === "starting"}
+          disabled={!native || starting || serving}
           onClick={() => void browse()}
         >
           {t("studio.ai.browse")}
         </button>
       </div>
-      {phase !== "idle" && (log.length > 0 || error !== null || exitKind !== null) ? (
-        <div className="host-local-log" role="log">
-          {log.slice(-12).map((line, index) => (
-            <div key={index} className="host-local-line">
-              {line}
+      {described !== null || offerStop ? (
+        <div className="host-local-log">
+          {described !== null ? (
+            <div className="connect-error" role="alert">
+              <p>{described.text}</p>
+              {described.lines.length > 0 ? (
+                <div className="host-local-lines">
+                  {described.lines.map((line, index) => (
+                    <div key={index} className="host-local-line">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
-          ))}
-          {error !== null || exitKind !== null ? (
-            <p className="connect-error" role="alert">
-              {error ??
-                (exitKind === "before-ready"
-                  ? t("connect.hostLocal.exitedBeforeReady")
-                  : exitCode === null
-                    ? t("connect.hostLocal.exitedUnexpectedly")
-                    : t("connect.hostLocal.exitedUnexpectedlyCode", { code: exitCode }))}
-            </p>
           ) : null}
-          {phase === "starting" ? (
+          {offerStop ? (
             <button type="button" className="ghost-button" onClick={() => void stop()}>
-              {t("connect.hostLocal.cancel")}
+              {starting ? t("connect.hostLocal.cancel") : t("connect.hostLocal.stop")}
             </button>
           ) : null}
         </div>

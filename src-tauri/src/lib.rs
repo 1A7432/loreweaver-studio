@@ -1,8 +1,8 @@
 mod asset_cache;
-mod engine;
+pub mod engine;
 mod failure;
 mod files;
-mod host_local;
+pub mod host_local;
 mod llm;
 mod media;
 mod panel_serve;
@@ -54,6 +54,7 @@ pub fn run() {
             host_local::host_local_start,
             host_local::host_local_stop,
             host_local::host_local_status,
+            host_local::host_local_forget_key,
             llm::llm_chat,
             asset_cache::asset_cache_status,
             asset_cache::asset_fetch,
@@ -66,6 +67,12 @@ pub fn run() {
             panel_serve::panel_serve_register,
             panel_serve::panel_serve_unregister
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Quitting stops the server "Host locally" started: no orphan process.
+            if let tauri::RunEvent::Exit = event {
+                host_local::shutdown(app);
+            }
+        });
 }
