@@ -8,7 +8,8 @@ This repository keeps no copy of it.
 In this repository:
 
 - **Play mode** renders a template panel, and a page panel's fallback, with the protocol
-  package's `panelBlocks` (`src/features/play/panels/Tier1Blocks.tsx`). Running pages
-  (`Tier2Frame.tsx`, `bridge.ts`, `src-tauri/src/panel_serve.rs`) is not on 3.0 yet.
+  package's `panelBlocks` (`src/features/play/panels/Tier1Blocks.tsx`), and runs a page in a
+  sandboxed frame (`Tier2Frame.tsx`, `bridge.ts`, `src-tauri/src/panel_serve.rs`) through the
+  page bridge, specified in [PAGE-BRIDGE.md](PAGE-BRIDGE.md).
 - **The studio** edits panels 3.0 and previews them with the same `panelBlocks`
   (`src/features/studio/pack/PanelsEditor.tsx`); see [FORMATS.md](FORMATS.md).

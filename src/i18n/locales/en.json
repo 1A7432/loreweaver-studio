@@ -87,7 +87,9 @@
         "cancelled": "Stopped.",
         "died": "The local server stopped. Its last lines:",
         "diedCode": "The local server stopped (code {{code}}). Its last lines:",
-        "key_refused": "The server turned down the admin key this app kept for it, so the key is forgotten. Host again and a new one will be made."
+        "key_refused": "The server turned down the admin key this app kept for it, so the key is forgotten. Host again and a new one will be made.",
+        "data_dir_in_use": "Another server is already running on this server folder (perhaps one started by the terminal client or another copy of this app). Stop it, or pick another folder.",
+        "startup_failed": "The local server could not start:"
       }
     },
     "lastTable": {
@@ -182,9 +184,10 @@
     "noticeOk": "Got it",
     "richOnly": "This panel is available in the rich client.",
     "loading": "Loading panel…",
-    "stalled": "This panel never started (its code may be blocked). Showing its fallback.",
+    "stalled": "This panel did not start (its code may be blocked). Showing its fallback.",
     "crashDetail": "The panel reported: {{message}}",
-    "assetError": "Panel assets failed to load.",
+    "pageError": "This page could not be fetched.",
+    "legacyPage": "This page was written for an older client. Showing its fallback.",
     "imageLoading": "Loading image…",
     "imageUnavailable": "image unavailable",
     "retry": "Retry",
@@ -197,6 +200,24 @@
       "sidebar": "Sidebar",
       "tray": "Tray",
       "modal": "Overlay"
+    },
+    "page": {
+      "confirm": {
+        "title": "Run this command?",
+        "body": "The panel “{{panel}}” wants to run “{{command}}” ({{id}}) as you. It is marked as destructive.",
+        "run": "Run it",
+        "cancel": "Cancel"
+      },
+      "refused": {
+        "invalid_params": "The panel asked for a command in a shape that cannot be sent.",
+        "too_large": "The command's arguments are too large (over {{max}} bytes).",
+        "rate_limited": "This panel is sending commands too fast. Wait a moment.",
+        "unavailable": "“{{command}}” is not available here ({{reason}}).",
+        "cancelled": "You declined to run it.",
+        "busy": "Another command from this panel is waiting for your answer.",
+        "not_ready": "The panel has not started yet.",
+        "not_sent": "The command did not reach the room ({{code}})."
+      }
     }
   },
   "log": {
@@ -1484,7 +1505,7 @@
       "kindTemplate": "Template (blocks)",
       "kindPage": "Page (one HTML file)",
       "entry": "Page file",
-      "pageHint": "A page is ONE self-contained HTML file (scripts, styles and pictures inline); a rich client runs it in a sandbox. Studio does not run pages yet — the preview shows the fallback.",
+      "pageHint": "A page is ONE self-contained HTML file (scripts, styles and pictures inline), run by this app in a sandbox with no network. It reads the views it declares and acts only through commands, through `window.loreweaver` — the page bridge, documented in docs/PAGE-BRIDGE.md in the Loreweaver Studio repository. The preview shows the fallback; the page itself runs at the table.",
       "fallbackBlocks": "Fallback blocks for clients that cannot run the page",
       "fallbackNull": "No fallback: other clients show one “needs a rich client” line.",
       "repeatEach": "List",

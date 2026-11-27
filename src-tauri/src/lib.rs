@@ -34,8 +34,8 @@ pub fn run() {
         .manage(transport_bridge::TransportState::default())
         .manage(panel_serve::PanelServeState::default())
         .manage(host_local::HostLocalState::default())
-        // Tier-2 panel iframes load from this opaque-origin static scheme;
-        // it serves only registered, hash-verified panel assets.
+        // A page panel's frame loads from this scheme: it serves only a
+        // registered page, from the hash-verified cache, under the page CSP.
         .register_uri_scheme_protocol("panel", |ctx, request| {
             panel_serve::handle_panel_request(ctx.app_handle(), &request)
         })

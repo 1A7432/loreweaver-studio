@@ -36,6 +36,15 @@ export function describeHostProblem(problem: HostProblem, t: TFunction): HostPro
           ),
         }
       }
+      if (problem.refusal === "data_dir_in_use") {
+        return { text: t("connect.hostLocal.problem.data_dir_in_use"), lines: [] }
+      }
+      if (problem.refusal === "startup_failed") {
+        return {
+          text: t("connect.hostLocal.problem.startup_failed"),
+          lines: problem.detail ? [problem.detail] : [],
+        }
+      }
       return { text: t("connect.hostLocal.problem.refused", { code: problem.refusal }), lines: [] }
     case "exited":
       return {
@@ -48,6 +57,10 @@ export function describeHostProblem(problem: HostProblem, t: TFunction): HostPro
     case "timeout":
       return { text: t("connect.hostLocal.problem.timeout"), lines: problem.stderr }
     case "mint_failed":
+      // `key` refuses while a server holds the folder: the same situation as `data_dir_in_use`.
+      if (problem.refusal === "server_running") {
+        return { text: t("connect.hostLocal.problem.data_dir_in_use"), lines: [] }
+      }
       return {
         text: t("connect.hostLocal.problem.mint_failed", { code: problem.refusal ?? "?" }),
         lines: problem.stderr,

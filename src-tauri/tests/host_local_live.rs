@@ -5,7 +5,10 @@
 //! host leaves no process behind. It runs three times over one data directory:
 //! the first run (the server's `first_key`), a second run (the key the app
 //! kept), and a run after the app lost its key (a new one from the server's
-//! `key` command).
+//! `key` command). Then two app instances over that one directory: the second
+//! is refused with `data_dir_in_use`, and the first is dropped without being
+//! stopped — what a crash does — and its server must stop by itself, because
+//! the input pipe it was started with (`--until-stdin-closes`) has ended.
 //!
 //! Ignored by default — it needs Bun and an engine checkout — and driven by
 //! `scripts/check_roundtrip.sh` (stage g):
@@ -21,8 +24,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use loreweaver_studio_lib::engine::{is_engine_version, probe_candidates};
 use loreweaver_studio_lib::host_local::{
-    forget_key, resolve_paths, EngineCommand, HostConfig, HostPaths, HostReady, KeySource,
-    LocalHost, READY_TIMEOUT,
+    forget_key, resolve_paths, EngineCommand, HostConfig, HostFailure, HostPaths, HostReady,
+    KeySource, LocalHost, READY_TIMEOUT,
 };
 use loreweaver_transport::link::{connect, LinkEvent, LinkParams, LinkStatus, NetworkProfile};
 use serde_json::{json, Value};
@@ -222,4 +225,52 @@ async fn the_app_hosts_the_real_server_sits_down_as_admin_and_stops_it() {
     let third = run(&host, &paths, &engine).await;
     assert_eq!(third.key_source, KeySource::Minted);
     assert_ne!(third.key, first.key);
+
+    // Two app instances, one data directory. The first hosts it; the second is
+    // refused by the server itself, in its own code.
+    let crashing = Arc::new(LocalHost::default());
+    let start = |host: Arc<LocalHost>| {
+        let engine = engine.clone();
+        let paths = paths.clone();
+        async move {
+            host.start(
+                HostConfig {
+                    paths,
+                    env: env(),
+                    ready_timeout: READY_TIMEOUT,
+                },
+                async move { Ok(engine) },
+                |_| {},
+            )
+            .await
+        }
+    };
+    start(Arc::clone(&crashing))
+        .await
+        .unwrap_or_else(|failure| panic!("hosting failed: {failure:?}"));
+    let pid = crashing.pid().expect("a running server has a pid");
+    let other = Arc::new(LocalHost::default());
+    let refused = start(Arc::clone(&other)).await.unwrap_err();
+    assert!(
+        matches!(&refused, HostFailure::Refused { refusal, .. } if refusal == "data_dir_in_use"),
+        "{refused:?}"
+    );
+    assert!(
+        alive(pid),
+        "the refused start must not touch the running server"
+    );
+
+    // The first instance goes away without stopping anything, as a crashed app
+    // does: its end of the server's input closes, and the server stops.
+    drop(crashing);
+    let mut waited = Duration::ZERO;
+    while alive(pid) && waited < DEADLINE {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        waited += Duration::from_millis(100);
+    }
+    assert!(
+        !alive(pid),
+        "the server {pid} outlived the app that hosted it"
+    );
+    println!("an abandoned server stopped by itself after {waited:?}");
 }

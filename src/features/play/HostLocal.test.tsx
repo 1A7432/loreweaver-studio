@@ -1,9 +1,10 @@
 // "Host locally & play" on screen: the connect screen's block in each state the
 // store can be in, and the hosted server's start-up notes on the menu.
 
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import i18n from "../../i18n"
 import { useConnectionStore } from "../../store/connection"
 import { useHostLocalStore, type HostProblem } from "../../store/hostLocal"
 import HostedNotes from "./HostedNotes"
@@ -114,6 +115,30 @@ describe("the host-locally block", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "The server refused to start (review_wordlist_missing).",
     )
+  })
+
+  it("a folder another server holds has its own words, in both languages", async () => {
+    failed({ code: "refused", refusal: "data_dir_in_use", problems: [], detail: null })
+    const { unmount } = render(<PlayView />)
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Another server is already running on this server folder",
+    )
+    unmount()
+    await act(() => i18n.changeLanguage("zh"))
+    try {
+      render(<PlayView />)
+      expect(screen.getByRole("alert")).toHaveTextContent("这个服务器目录已经有一台服务器在运行")
+    } finally {
+      await act(() => i18n.changeLanguage("en"))
+    }
+  })
+
+  it("a start-up failure says so and shows the server's detail", () => {
+    failed({ code: "refused", refusal: "startup_failed", problems: [], detail: "EADDRINUSE: bind failed" })
+    render(<PlayView />)
+    const alert = screen.getByRole("alert")
+    expect(alert).toHaveTextContent("The local server could not start:")
+    expect(alert).toHaveTextContent("EADDRINUSE: bind failed")
   })
 
   it("no engine says what to install or set, and lists what was tried", () => {

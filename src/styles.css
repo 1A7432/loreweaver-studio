@@ -2431,7 +2431,7 @@ button.npc-line-toggle {
   overflow-y: auto;
 }
 
-/* Tier-2 iframe: the sandboxed document owns its own visuals. */
+/* A page panel's frame: the sandboxed document owns its own visuals. */
 
 .panel-frame {
   width: 100%;
@@ -2441,9 +2441,9 @@ button.npc-line-toggle {
   background: var(--bg-inset);
 }
 
-/* A panel that never completed the bridge handshake keeps its frame mounted
-   (a late `ready` still wins) but yields the space to the fallback blocks. */
-.panel-frame.stalled {
+/* A page that has not completed the bridge handshake (yet, or in time) keeps its
+   frame mounted — a late `ready` still wins — but yields the space to its fallback. */
+.panel-frame.waiting {
   min-height: 0;
   height: 0;
 }
@@ -2684,8 +2684,22 @@ button.npc-line-toggle {
   min-height: 0;
 }
 
-.panel-modal .panel-frame {
+.panel-modal .panel-frame:not(.waiting) {
   min-height: 50vh;
+}
+
+/* The host's own confirmation before a page runs a destructive command. */
+.panel-confirm-backdrop {
+  z-index: 50;
+}
+
+.panel-confirm {
+  width: min(460px, 100%);
+}
+
+.panel-confirm-detail {
+  font-size: 12px;
+  color: var(--ink-faint);
 }
 
 /* --- ST prompt-preset manager --- */

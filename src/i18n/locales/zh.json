@@ -87,7 +87,9 @@
         "cancelled": "已停止。",
         "died": "本地服务器停止了。最后几行输出：",
         "diedCode": "本地服务器停止了（代码 {{code}}）。最后几行输出：",
-        "key_refused": "服务器不认本应用保存的管理员钥匙，已把它忘掉。请重新托管，会生成一把新的。"
+        "key_refused": "服务器不认本应用保存的管理员钥匙，已把它忘掉。请重新托管，会生成一把新的。",
+        "data_dir_in_use": "这个服务器目录已经有一台服务器在运行（可能是终端客户端或另一个本应用开的）。请先停止它，或者换一个目录。",
+        "startup_failed": "本地服务器启动失败："
       }
     },
     "lastTable": {
@@ -184,7 +186,8 @@
     "loading": "面板加载中…",
     "stalled": "该面板没有启动（代码可能被拦截），下面显示它的降级内容。",
     "crashDetail": "面板报错：{{message}}",
-    "assetError": "面板资源加载失败。",
+    "pageError": "取不到这个页面。",
+    "legacyPage": "这个页面是为旧版客户端写的，下面显示它的降级内容。",
     "imageLoading": "图片加载中…",
     "imageUnavailable": "图片不可用",
     "retry": "重试",
@@ -197,6 +200,24 @@
       "sidebar": "侧栏",
       "tray": "底栏",
       "modal": "弹层"
+    },
+    "page": {
+      "confirm": {
+        "title": "要执行这个命令吗？",
+        "body": "面板“{{panel}}”想以你的身份执行“{{command}}”（{{id}}）。这是一个破坏性命令。",
+        "run": "执行",
+        "cancel": "取消"
+      },
+      "refused": {
+        "invalid_params": "面板请求的命令格式不对，发不出去。",
+        "too_large": "命令参数太大（超过 {{max}} 字节）。",
+        "rate_limited": "这个面板发命令太快了，请稍等。",
+        "unavailable": "这里不能用“{{command}}”（{{reason}}）。",
+        "cancelled": "你没有同意执行。",
+        "busy": "这个面板还有一个命令在等你确认。",
+        "not_ready": "面板还没有启动。",
+        "not_sent": "命令没有送到房间（{{code}}）。"
+      }
     }
   },
   "log": {
@@ -1484,7 +1505,7 @@
       "kindTemplate": "模板（区块）",
       "kindPage": "页面（单个 HTML 文件）",
       "entry": "页面文件",
-      "pageHint": "页面是一个自包含的 HTML 文件（脚本、样式、图片都内联），由富客户端在沙箱里运行。Studio 暂不运行页面，预览显示后备区块。",
+      "pageHint": "页面是一个自包含的 HTML 文件（脚本、样式、图片都内联），由本应用在不联网的沙箱里运行。它只能读自己声明的视图，只能通过命令行动，用的是 `window.loreweaver`——页面桥，说明见 Loreweaver Studio 仓库里的 docs/PAGE-BRIDGE.md。预览显示的是后备区块，页面本身在牌桌上运行。",
       "fallbackBlocks": "给不能运行页面的客户端准备后备区块",
       "fallbackNull": "无后备：其他客户端只显示一行“需要富客户端”。",
       "repeatEach": "列表",

@@ -6,11 +6,12 @@
 // document — which is why opening the overlay moves focus onto it (otherwise
 // the key goes to whatever sat behind the backdrop) and closing it hands focus
 // back. What no listener here can hear is Esc pressed while focus is INSIDE a
-// tier-2 panel's sandboxed iframe: a sandbox without `allow-same-origin` is an
+// page panel's sandboxed frame: a sandbox without `allow-same-origin` is an
 // opaque origin, its key events never leave its own document, and the bridge
 // has no message for them. Two things keep that from being a trap: clicking the
 // overlay's own chrome (title bar, padding) takes focus back out of the frame,
-// and Shift+Tab from the frame's first control lands on the × button.
+// and Shift+Tab from the frame's first control lands on the × button. Esc while
+// a page's own confirmation is open closes the overlay, which declines it.
 
 import { useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
@@ -64,7 +65,7 @@ export default function PanelModalHost() {
       <div
         ref={dialogRef}
         // Focusable by script and by a click on its chrome, not by Tab: that is
-        // what lets a click on the title bar pull focus back out of a tier-2 frame.
+        // what lets a click on the title bar pull focus back out of a page's frame.
         tabIndex={-1}
         className="panel-modal"
         role="dialog"

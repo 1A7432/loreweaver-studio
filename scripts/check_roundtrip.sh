@@ -22,14 +22,20 @@
 #                 evaluated with the shared `panelBlocks` over sample view values, compared
 #                 with Studio's checks and live preview for the same values;
 #   f. live       a REAL 3.0 server (`serve --local`) dialled through the REAL Rust link
-#                 (scripts/check_live_connect.sh);
+#                 (scripts/check_live_connect.sh); the room admin installs the pack of a.
+#                 (`pack install`), subscribes `panels`, and GETs the page panel's HTML by
+#                 the hash the view gives: the file's sha256, and exactly the bytes Studio
+#                 wrote;
 #   g. host       "Host locally & play" without a GUI: the app's own host-local code
 #                 (src-tauri/tests/host_local_live.rs) finds the engine checkout with the
 #                 app's probe, starts the real server three times over one data directory
 #                 (its first key, the key the app kept, a key made after the app lost it),
 #                 sits down through the real link as the room admin each time, stops it,
-#                 and checks the process is gone. LIVE_CONNECT=0 skips f and g on a machine
-#                 without cargo.
+#                 and checks the process is gone; then a second instance over the same
+#                 directory is refused (`data_dir_in_use`), and the first is dropped
+#                 without being stopped — its server must stop by itself when its input
+#                 pipe ends (`--until-stdin-closes`). LIVE_CONNECT=0 skips f and g on a
+#                 machine without cargo.
 #
 # The engine always runs from a temporary working directory (Bun loads `.env` from the
 # working directory, and the engine checkout's `.env` must not be read) with every `TRPG_*`
@@ -153,7 +159,11 @@ say "f. live connect: a real 3.0 server through the real link"
 if [ "${LIVE_CONNECT:-1}" = "0" ]; then
   echo "skipped (LIVE_CONNECT=0)"
 else
-  TRPG_KP_REPO="$ENGINE_REPO" bash "$STUDIO_ROOT/scripts/check_live_connect.sh"
+  TRPG_KP_REPO="$ENGINE_REPO" \
+  LIVE_PAGE_PACK="$WORK/pack.lwpack" \
+  LIVE_PAGE_PANEL="corridor-apartment/case-board" \
+  LIVE_PAGE_HTML="$PACK_DIR/ui/case-board/index.html" \
+    bash "$STUDIO_ROOT/scripts/check_live_connect.sh"
 fi
 
 say "g. host locally: the app's own host-local code runs the real server, and stops it"
@@ -181,7 +191,7 @@ else
     || fail "the host-local test did not run, or failed"
   LEFT="$(hosted_pids)"
   [ -z "$LEFT" ] || fail "a hosted server is still running after the test stopped it: $LEFT"
-  echo "ok: three hosted runs, no server left behind"
+  echo "ok: three hosted runs, a refused second instance, an abandoned server that stopped itself, no server left behind"
 fi
 
 say "round-trip gate: PASS"

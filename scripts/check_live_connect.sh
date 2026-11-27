@@ -9,7 +9,12 @@
 # whatever the client believes. Only a real server catches an ALPN, framing or
 # byte-channel drift between the two repositories.
 #
-# Usage:  bash scripts/check_live_connect.sh   (also the one live stage of check_roundtrip.sh)
+# With LIVE_PAGE_PACK (a built .lwpack), LIVE_PAGE_PANEL (one of its page panels,
+# <pack>/<panel>) and LIVE_PAGE_HTML (the page file Studio wrote), the session goes on: the
+# room admin installs the pack, subscribes `panels`, and GETs the page by the hash the view
+# gives — the hash must be the file's sha256 and the bytes the file's (check_roundtrip.sh f).
+#
+# Usage:  bash scripts/check_live_connect.sh   (also the live stage of check_roundtrip.sh)
 # Engine repo: $TRPG_KP_REPO, default ../trpg_kp (sibling checkout, branch v3,
 # with `bun install` run at its root).
 #
@@ -110,9 +115,24 @@ KEY="$(field key)" || fail "the ready line carries no first admin key (is the da
 echo "ok: server pid $SERVER_PID, ticket ${TICKET:0:24}…"
 
 say "2/3 dial it through the real link crate: hello, welcome, ping, a refused GET"
+PAGE_ENV=()
+if [ -n "${LIVE_PAGE_PACK:-}" ]; then
+  [ -f "$LIVE_PAGE_PACK" ] || fail "LIVE_PAGE_PACK is not a file: $LIVE_PAGE_PACK"
+  [ -f "${LIVE_PAGE_HTML:-}" ] || fail "LIVE_PAGE_HTML is not a file: ${LIVE_PAGE_HTML:-}"
+  [ -n "${LIVE_PAGE_PANEL:-}" ] || fail "LIVE_PAGE_PANEL must name the page panel"
+  PAGE_SHA="$(shasum -a 256 "$LIVE_PAGE_HTML" | cut -d' ' -f1)"
+  PAGE_ENV=(
+    "LOREWEAVER_LIVE_PACK=$LIVE_PAGE_PACK"
+    "LOREWEAVER_LIVE_PAGE=$LIVE_PAGE_HTML"
+    "LOREWEAVER_LIVE_PAGE_PANEL=$LIVE_PAGE_PANEL"
+    "LOREWEAVER_LIVE_PAGE_SHA256=$PAGE_SHA"
+  )
+  echo "and then: install the pack, read panels, GET page $LIVE_PAGE_PANEL (sha256 ${PAGE_SHA:0:16}…)"
+fi
 CARGO_LOG="$SANDBOX/cargo.log"
 (
   cd "$STUDIO_ROOT"
+  env ${PAGE_ENV[@]+"${PAGE_ENV[@]}"} \
   LOREWEAVER_LIVE_TICKET="$TICKET" \
   LOREWEAVER_LIVE_KEY="$KEY" \
   LOREWEAVER_LIVE_NETWORK=local \
@@ -122,6 +142,9 @@ CARGO_LOG="$SANDBOX/cargo.log"
 # would let this gate pass vacuously. Assert that a test actually passed.
 grep -Eq '^test result: ok\. [1-9][0-9]* passed' "$CARGO_LOG" \
   || fail "the live-connect test did not actually run (a filter that matches no test still exits 0) — check the test name and its #[ignore] attribute"
+if [ -n "${LIVE_PAGE_PACK:-}" ]; then
+  grep -q "as the studio wrote it" "$CARGO_LOG" || fail "the page stage did not run"
+fi
 
 say "3/3 the server survived the session"
 kill -0 "$SERVER_PID" 2>/dev/null || fail "the server died during the session"

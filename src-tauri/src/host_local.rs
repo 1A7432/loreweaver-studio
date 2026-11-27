@@ -6,8 +6,8 @@
 //! - The engine is found the one way this app finds it ([`crate::engine`]): a
 //!   `loreweaver` on PATH, or the configured engine checkout run with Bun —
 //!   the first that answers `--version` like a 3.x engine.
-//! - It runs `serve --local` (loopback only; the WebView dials it with the
-//!   `local` network profile) as a child process, from an empty temporary
+//! - It runs `serve --local --until-stdin-closes` (loopback only; the WebView
+//!   dials it with the `local` network profile) as a child process, from an empty temporary
 //!   working directory (Bun loads `.env` from the working directory), with this
 //!   app's environment minus every `TRPG_*` variable, plus `TRPG_DATA_DIR` and
 //!   the few settings the caller passes (nothing secret goes on the command
@@ -15,7 +15,15 @@
 //!   user picked, or `local-server` under this app's data folder.
 //! - Ready is the ONE JSON line the server prints on stdout,
 //!   `{ok, version, ticket, notes, first_key?}`; a refusal is one JSON object
-//!   on stderr, `{ok: false, code, problems?}`. The wait is bounded.
+//!   on stderr, `{ok: false, code, problems?, detail?}` (`bad_settings`,
+//!   `data_dir_in_use`, `startup_failed` with a `detail`). The wait is bounded.
+//! - The child's standard input is a pipe this process holds for the child's
+//!   whole life, and the server is told to stop when it ends
+//!   (`--until-stdin-closes`, the engine's `docs/deploy.md`, "Hosting it from
+//!   another program"). If this app crashes or is killed, the operating system
+//!   closes the pipe and the server stops instead of outliving it. The flag is
+//!   always passed: the engine probe only accepts a 3.x engine, and the 3.0
+//!   engine has it.
 //! - The admin key: `first_key` the first time a data directory is used; the
 //!   app keeps it (owner-only file in its data folder, keyed by data
 //!   directory) and uses it on every later start. A data directory that
@@ -23,8 +31,9 @@
 //!   key from the server's own `key` command before the server starts (the
 //!   terminal client does exactly this).
 //! - The child is stopped when the user stops hosting, leaves the hosted
-//!   table, or quits the app (SIGTERM, which the server handles by closing
-//!   cleanly, then SIGKILL; on Windows the process is terminated). A server
+//!   table, or quits the app: its standard input is closed (and on Unix it is
+//!   sent SIGTERM too), it gets a grace period to close cleanly, then it is
+//!   killed. A server
 //!   that dies on its own is reported once, with the last lines it wrote to
 //!   stderr — bounded, and with every key this app knows replaced.
 //!
@@ -38,10 +47,10 @@ use serde_json::Value;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, watch};
 
 /// The event a hosted server that died on its own is reported on.
@@ -53,7 +62,9 @@ const ADMIN_NAME: &str = "Admin";
 /// How long the server gets to open its store and endpoint and print its
 /// ready line (`--local` waits for no relay; the terminal client allows 60s).
 pub const READY_TIMEOUT: Duration = Duration::from_secs(60);
-/// After SIGTERM, how long the server gets to close cleanly before SIGKILL.
+/// Tells `serve` to stop when its standard input ends.
+pub const UNTIL_STDIN_CLOSES: &str = "--until-stdin-closes";
+/// After its input closes (and SIGTERM), how long the server gets to close cleanly before SIGKILL.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 /// After SIGKILL (or Windows' terminate), how long to wait for it to be gone.
 const KILL_WAIT: Duration = Duration::from_secs(5);
@@ -153,10 +164,12 @@ pub enum HostFailure {
     NoEngine { engines: Vec<EngineProblem> },
     /// A server this app started is running for another data directory.
     AlreadyRunning { data_dir: String },
-    /// The server refused to start, with its code (`bad_settings` carries its problems).
+    /// The server refused to start, with its code (`bad_settings` carries its
+    /// problems, `startup_failed` its `detail`).
     Refused {
         refusal: String,
         problems: Vec<ConfigProblem>,
+        detail: Option<String>,
     },
     /// The server exited before it was ready.
     Exited {
@@ -208,6 +221,8 @@ pub struct ReadyLine {
 pub struct Refusal {
     pub code: String,
     pub problems: Vec<ConfigProblem>,
+    /// `startup_failed`: what went wrong, in the server's words.
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -237,7 +252,16 @@ pub fn parse_server_line(line: &str) -> Option<ServerLine> {
                         .collect()
                 })
                 .unwrap_or_default();
-            Some(ServerLine::Refusal(Refusal { code, problems }))
+            let detail = record
+                .get("detail")
+                .and_then(Value::as_str)
+                .map(clean_line)
+                .filter(|detail| !detail.trim().is_empty());
+            Some(ServerLine::Refusal(Refusal {
+                code,
+                problems,
+                detail,
+            }))
         }
         true => {
             let ticket = record.get("ticket")?.as_str()?.trim();
@@ -596,10 +620,12 @@ pub async fn find_engine(engine_repo_dir: Option<String>) -> Result<EngineComman
     })
 }
 
-/// The `serve --local` command: the engine's program and arguments, run from
-/// `cwd`, with this app's environment minus every `TRPG_*` variable, plus
-/// `TRPG_DATA_DIR` and `env`. Values go in the environment only — the command
-/// line is `<program> [<entry>] serve --local`, nothing else.
+/// The `serve --local --until-stdin-closes` command: the engine's program and
+/// arguments, run from `cwd`, with this app's environment minus every `TRPG_*`
+/// variable, plus `TRPG_DATA_DIR` and `env`, and its standard input a pipe
+/// (the caller holds it for the child's life). Values go in the environment
+/// only — the command line is `<program> [<entry>] serve --local
+/// --until-stdin-closes`, nothing else.
 pub fn serve_command(
     engine: &EngineCommand,
     cwd: &Path,
@@ -609,9 +635,9 @@ pub fn serve_command(
     let mut command = Command::new(&engine.program);
     command
         .args(&engine.args)
-        .args(["serve", "--local"])
+        .args(["serve", "--local", UNTIL_STDIN_CLOSES])
         .current_dir(cwd)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -624,9 +650,10 @@ pub fn serve_command(
     command
 }
 
-/// Stop a child: SIGTERM and a grace period on Unix (the server closes its
-/// store and endpoint), then a hard kill. Returns once it is gone (or the
-/// waits ran out).
+/// Stop a child whose standard input the caller has already closed (which
+/// alone stops the server): SIGTERM as well on Unix, a grace period for the
+/// server to close its store and endpoint, then a hard kill. Returns once it
+/// is gone (or the waits ran out).
 async fn terminate(child: &mut Child) -> Option<ExitStatus> {
     #[cfg(unix)]
     if let Some(pid) = child.id().and_then(|pid| libc::pid_t::try_from(pid).ok()) {
@@ -635,9 +662,9 @@ async fn terminate(child: &mut Child) -> Option<ExitStatus> {
         unsafe {
             libc::kill(pid, libc::SIGTERM);
         }
-        if let Ok(status) = tokio::time::timeout(STOP_GRACE, child.wait()).await {
-            return status.ok();
-        }
+    }
+    if let Ok(status) = tokio::time::timeout(STOP_GRACE, child.wait()).await {
+        return status.ok();
     }
     let _ = child.start_kill();
     tokio::time::timeout(KILL_WAIT, child.wait())
@@ -789,6 +816,11 @@ struct Hosted {
     ready: Option<HostReady>,
     stopping: bool,
     pid: Option<u32>,
+    /// The write end of the child's standard input. Held here for the child's
+    /// whole life: it closes when the slot is released, when hosting stops,
+    /// or when this `LocalHost` itself goes away — and with this app, by the
+    /// operating system — and the server stops when it closes.
+    stdin: Option<ChildStdin>,
 }
 
 /// The one local server this app may run.
@@ -866,6 +898,7 @@ impl LocalHost {
                 ready: None,
                 stopping: false,
                 pid: None,
+                stdin: None,
             });
         }
         let run_dir = match make_run_dir() {
@@ -936,8 +969,10 @@ impl LocalHost {
                 })
             }
         };
+        let stdin = child.stdin.take();
         if let Some(hosted) = lock(&self.slot).as_mut().filter(|hosted| hosted.id == id) {
             hosted.pid = child.id();
+            hosted.stdin = stdin;
         }
 
         let output = Arc::new(Mutex::new(Output::default()));
@@ -957,9 +992,11 @@ impl LocalHost {
 
         // The supervisor owns the child from here: it waits for its death (or
         // a stop), then releases the slot; a death nobody asked for is told.
+        // It holds the host weakly, so the host's own end (and with it the
+        // child's input pipe) is not kept alive by the task watching it.
         let (exit_tx, mut exit_rx) = watch::channel::<Option<Option<i32>>>(None);
         {
-            let host = Arc::clone(self);
+            let host: Weak<LocalHost> = Arc::downgrade(self);
             let id = id.clone();
             let output = output.clone();
             let mut stop_rx = stop_rx.clone();
@@ -973,7 +1010,7 @@ impl LocalHost {
                 }
                 let code = status.and_then(|status| status.code());
                 let _ = exit_tx.send(Some(code));
-                let unasked = release(&host.slot, &id);
+                let unasked = host.upgrade().is_some_and(|host| release(&host.slot, &id));
                 let _ = std::fs::remove_dir_all(&run_dir);
                 let _ = done_tx.send(true);
                 if unasked {
@@ -1053,6 +1090,7 @@ impl LocalHost {
                     Some(refusal) => HostFailure::Refused {
                         refusal: refusal.code.clone(),
                         problems: refusal.problems.clone(),
+                        detail: refusal.detail.clone(),
                     },
                     None => HostFailure::Exited {
                         exit_code: code,
@@ -1087,6 +1125,8 @@ impl LocalHost {
             match slot.as_mut() {
                 Some(hosted) if hosted.id == id => {
                     hosted.stopping = true;
+                    // Closing its input is the stop the server listens for.
+                    drop(hosted.stdin.take());
                     let _ = hosted.stop.send(true);
                     hosted.done.clone()
                 }

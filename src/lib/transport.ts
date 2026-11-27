@@ -108,15 +108,3 @@ export async function linkDisconnect(connectionId: string): Promise<void> {
 export function onLinkEvent(handler: (event: LinkEvent) => void): Promise<UnlistenFn> {
   return listen<LinkEvent>(TRANSPORT_EVENT, (event) => handler(event.payload))
 }
-
-/**
- * The 2.x screens' way to send a frame, kept so they compile until they move
- * to 3.0 (later steps). It sends NOTHING: a 2.x frame has no place on a 3.0
- * link, and anything on the wire must go through the protocol `Session` (which
- * says `hello` first and numbers every request). Callers already treat a
- * rejection as "not sent".
- */
-export async function transportSend(frame: unknown): Promise<void> {
-  void frame
-  throw new Error("not_migrated: this screen still speaks protocol 2.x")
-}

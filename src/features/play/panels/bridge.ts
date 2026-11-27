@@ -1,221 +1,389 @@
-// The host side of the Tier-2 panel bridge (spec M15, "Tier-2 runtime").
+// The page bridge, version 2: how a page panel (LWF panels §7) talks to this client. The
+// reference is `docs/PAGE-BRIDGE.md`; the page-side object is `window.loreweaver`, defined by
+// the bootstrap below, which the `panel://` scheme splices into the page's `<head>`.
 //
-// PARKED (protocol 3.0 move): this is the protocol 2.x page bridge — `state` projections
-// in, `panel_intent` out — and nothing renders a page yet: a 3.0 `page` panel shows its
-// `fallback` (`PanelCard.tsx`). It stays, compiling and tested, as the starting point of
-// the 3.0 page bridge, which the desktop client defines in a later step.
+// A page runs in a frame with an OPAQUE origin (`sandbox="allow-scripts"`), so the only
+// channel between it and the host is `postMessage`. Every message carries the mount's nonce
+// (128 bits, minted per mount, known only to the bootstrap served under the mount's secret
+// token) and the host accepts a message only from the mounted frame's own window.
 //
-// A panel iframe is an OPAQUE origin; the only channel between host and panel
-// is postMessage, authenticated by a per-mount 128-bit nonce that the panel
-// learns from its host-injected bootstrap (served over the panel's own secret
-// token namespace). Inbound the bridge forwards exactly the viewer-filtered
-// data this client already received (`state` projections + `panel_event`
-// payloads); outbound it accepts only `panel_intent` — what this player could
-// have typed — validated and capped before it reaches the wire. There is no
-// second data path.
+// What crosses, and nothing else:
+// - in: the values of the views the panel declared, keyed by the panel's handles, exactly as
+//   this member's session holds them (minus list elements flagged `hidden`, which a panel
+//   never shows — LWF panels §4.2); the room's log events that arrive after the page is ready;
+// - out: `command.run`, as this member, through the connection owner — after the host has
+//   checked the `commands` view, asked the person for a `danger` command, and applied a
+//   per-page rate limit and size caps.
 
-import type {
-  CharacterState,
-  ClockState,
-  InitiativeEntry,
-  ModuleVariable,
-  PanelIntentFrame,
-  PanelIntentKind,
-  PartyMember,
-  PregenEntry,
-  SceneState,
-  StateFrame,
-  UsageState,
-} from "@loreweaver/protocol"
+import type { EventFrame, PanelEntry, Result, Role, ViewCommand } from "loreweaver-protocol/v3"
 
-export const BRIDGE_VERSION = "1"
-/** Mirror of the server-side `panel_intent.value` cap. */
-export const MAX_INTENT_VALUE_CHARS = 2000
-/** Events queued for a panel that has not completed `ready()` yet. */
+export const BRIDGE_VERSION = "2"
+/** The 2.x bridge's version: a page that speaks it gets its fallback. */
+export const LEGACY_BRIDGE_VERSION = "1"
+
+/** A message from a page larger than this (as JSON, in bytes) is dropped. */
+export const MAX_PAGE_MESSAGE_BYTES = 64 * 1024
+/** The `args` of one `run`, as JSON, in bytes. */
+export const MAX_RUN_ARGS_BYTES = 16 * 1024
+/** A command id, in code points (the protocol's own cap, §12.4). */
+export const MAX_COMMAND_ID_CHARS = 200
+/** Per page: at most this many `run`s at once, then one more every {@link PAGE_RUN_REFILL_MS}. */
+export const PAGE_RUN_BURST = 4
+export const PAGE_RUN_REFILL_MS = 2500
+/** Events a page receives before it registered an `onEvent` callback are queued, up to this. */
 export const MAX_QUEUED_EVENTS = 32
-/** A panel's crash report is one line; anything longer is truncated here. */
+/** A page's crash report is one line; anything longer is cut here. */
 export const MAX_PANEL_ERROR_CHARS = 200
+/** How long a page gets to call `ready()` before the host shows its fallback. */
+export const HANDSHAKE_TIMEOUT_MS = 6000
 
-const INTENT_KINDS: readonly PanelIntentKind[] = ["choice", "input", "roll"]
+/** The refusals the host answers a `run` with itself, before anything reaches the room. */
+export const LOCAL_REFUSALS = [
+  "invalid_params",
+  "too_large",
+  "rate_limited",
+  "unavailable",
+  "cancelled",
+  "busy",
+  "not_ready",
+  "not_sent",
+] as const
+export type LocalRefusal = (typeof LOCAL_REFUSALS)[number]
 
-/**
- * What a panel's `onState` receives: the SAME per-viewer-filtered shapes the
- * protocol `state` frame carries (minus transport bookkeeping like `reset`),
- * with keeper-flagged hidden variables stripped — identical to what tier-1
- * templates may bind.
- */
-export interface PanelStateSnapshot {
-  variables: ModuleVariable[]
-  character?: CharacterState
-  party: PartyMember[]
-  scene?: SceneState
-  clock?: ClockState
-  initiative: InitiativeEntry[]
-  online: number
-  usage?: UsageState
-  pregens?: PregenEntry[]
+export interface PageMember {
+  name: string
+  role: Role
 }
 
-/** The variables a panel may read: a keeper-flagged hidden one never crosses. */
-function visibleVariables(variables: readonly ModuleVariable[]): ModuleVariable[] {
-  return variables.filter((variable) => variable.hidden !== true)
+/** What `ready()` resolves with on the page. */
+export interface PageReadyInfo {
+  panel: { id: string; title: string }
+  locale: string
+  theme: string
+  member: PageMember
 }
 
-/** A 2.x panel title (a locale map or a plain string): this locale, else `en`, else any. */
-export function pickText(value: unknown, locale?: string): string | undefined {
-  if (typeof value === "string") return value
-  if (typeof value !== "object" || value === null) return undefined
-  const map = value as Record<string, unknown>
-  const short = (locale ?? "en").slice(0, 2)
-  for (const candidate of [map[short], map.en, ...Object.values(map)]) {
-    if (typeof candidate === "string" && candidate) return candidate
-  }
-  return undefined
+/** One log event as a page receives it: the protocol's envelope without `type`. */
+export interface PageEvent {
+  seq: number
+  id: string
+  ts: number
+  kind: string
+  turn?: number
+  data: unknown
 }
 
-export function projectStateForPanel(frame: StateFrame | null): PanelStateSnapshot | null {
-  if (!frame) return null
-  return {
-    variables: visibleVariables(frame.variables ?? []),
-    character: frame.character,
-    party: frame.party,
-    scene: frame.scene,
-    clock: frame.clock,
-    initiative: frame.initiative,
-    online: frame.online,
-    usage: frame.usage,
-    pregens: frame.pregens,
-  }
-}
+export type PageRunResult =
+  { ok: true; text?: string; data?: unknown } | { ok: false; code: string; message: string; reason?: string }
 
-/** 32 lowercase hex chars (128 bits) — used for serve tokens and bridge nonces. */
+/** 32 lowercase hex chars (128 bits) — serve tokens and bridge nonces. */
 export function mintSecret(): string {
   const bytes = new Uint8Array(16)
   globalThis.crypto.getRandomValues(bytes)
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
-interface BridgeEnvelope {
-  lw: string
-  nonce: string
-  type: string
-  kind?: unknown
-  value?: unknown
-  message?: unknown
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function parseEnvelope(data: unknown): BridgeEnvelope | null {
-  if (typeof data !== "object" || data === null) return null
-  const env = data as Record<string, unknown>
-  if (env.lw !== BRIDGE_VERSION) return null
-  if (typeof env.nonce !== "string" || typeof env.type !== "string") return null
-  return env as unknown as BridgeEnvelope
+/** `value` without any list element flagged `hidden: true`, at any depth (LWF panels §4.2). */
+export function withoutHidden(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.filter((item) => !(isRecord(item) && item.hidden === true)).map(withoutHidden)
+  }
+  if (isRecord(value)) {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) out[key] = withoutHidden(item)
+    return out
+  }
+  return value
 }
 
-export interface PanelBridgeOptions {
-  panelId: string
+/**
+ * The views a page receives: each handle its panel declared → that view's value as this
+ * member's session holds it (null: not held yet, or the room has no such view), with hidden
+ * list elements removed. Nothing else of the snapshot.
+ */
+export function pageViews(
+  panel: Pick<PanelEntry, "views">,
+  held: ReadonlyMap<string, { readonly data: unknown }>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const ref of panel.views) {
+    if (!isRecord(ref) || typeof ref.as !== "string" || typeof ref.view !== "string") continue
+    const value = held.get(ref.view)
+    out[ref.as] = value === undefined ? null : withoutHidden(value.data)
+  }
+  return out
+}
+
+/** The size of `value` as JSON, in bytes; null when it is not JSON at all. */
+export function jsonBytes(value: unknown): number | null {
+  try {
+    const text = JSON.stringify(value)
+    return text === undefined ? null : new TextEncoder().encode(text).length
+  } catch {
+    return null
+  }
+}
+
+function toPageEvent(event: EventFrame): PageEvent {
+  return {
+    seq: event.seq,
+    id: event.id,
+    ts: event.ts,
+    kind: event.kind,
+    ...(event.turn === undefined ? {} : { turn: event.turn }),
+    data: event.data,
+  }
+}
+
+function newestSeq(events: readonly EventFrame[], head: number): number {
+  let newest = head
+  for (const event of events) if (event.seq > newest) newest = event.seq
+  return newest
+}
+
+export interface PageBridgeOptions {
+  panel: { id: string; title: string }
   nonce: string
   locale: string
-  theme: Record<string, string>
-  /** The authenticated peer: the mounted iframe's contentWindow. */
+  theme: string
+  /** The authenticated peer: the mounted frame's `contentWindow`. */
   getSource: () => unknown
-  postToPanel: (message: Record<string, unknown>) => void
-  sendIntent: (frame: PanelIntentFrame) => void
-  getSnapshot: () => PanelStateSnapshot | null
-  /** Fires once, when the panel completes the handshake — the only proof that
-   * its document loaded AND its script ran. The host uses it to tell a live
-   * panel from a blank box (a sandbox/asset failure the iframe swallows). */
+  /** Post to the frame (target `"*"`: an opaque origin matches no other). */
+  post: (message: Record<string, unknown>) => void
+  /** Who is viewing: the welcome's member. */
+  member: () => PageMember | null
+  /** The page's views now ({@link pageViews}). */
+  views: () => Record<string, unknown>
+  /** The session's log window and head. */
+  log: () => { events: readonly EventFrame[]; head: number }
+  /** The `commands` view's list; null while it is not held. */
+  commands: () => readonly ViewCommand[] | null
+  /** `command.run` as this member, through the connection owner. */
+  run: (id: string, args: Record<string, unknown>) => Promise<Result>
+  /** The host's own confirmation for a `danger` command; `signal` aborts when the page goes. */
+  confirm: (command: ViewCommand, signal: AbortSignal) => Promise<boolean>
+  /** A local refusal's message, in the member's language. */
+  refusalText: (code: LocalRefusal, params: Record<string, string>) => string
+  now?: () => number
+  /** The page called `ready()`: it loaded, and its script runs. */
   onReady?: () => void
-  /** The panel's own bootstrap caught the first uncaught error or rejection
-   * inside the iframe. It arrives long before the handshake deadline, so a
-   * panel that dies on load stops being a blank box the player stares at.
-   * Authenticated exactly like every other inbound message — version, nonce
-   * and the mounted iframe's window — so nothing else can forge a crash. */
+  /** The page's bootstrap caught an uncaught error (first one only). */
   onPanelError?: (message: string) => void
+  /** The page speaks the 2.x bridge. */
+  onLegacy?: () => void
+  /** A dropped message, for the console. */
+  warn?: (text: string) => void
 }
 
-export class PanelBridge {
-  private ready = false
-  private queuedEvents: unknown[] = []
+/** The host side of one mounted page. */
+export class PageBridge {
+  readonly #opts: PageBridgeOptions
+  #ready = false
+  #disposed = false
+  #legacy = false
+  /** The newest log `seq` the page has been handed (or that existed when it became ready). */
+  #cursor = 0
+  #lastViews: Record<string, unknown> | null = null
+  #tokens = PAGE_RUN_BURST
+  #refilledAt: number
+  #confirming = false
+  readonly #abort = new AbortController()
 
-  constructor(private readonly opts: PanelBridgeOptions) {}
+  constructor(options: PageBridgeOptions) {
+    this.#opts = options
+    this.#refilledAt = this.#now()
+  }
 
   isReady(): boolean {
-    return this.ready
+    return this.#ready
   }
 
-  private post(message: Record<string, unknown>): void {
-    this.opts.postToPanel({ lw: BRIDGE_VERSION, nonce: this.opts.nonce, ...message })
+  #now(): number {
+    return (this.#opts.now ?? Date.now)()
   }
 
-  /**
-   * Window `message` listener. Every message must carry the panel's nonce AND
-   * originate from the mounted iframe's own window — a message from anywhere
-   * else (other panels, the app itself, a devtools console) is dropped.
-   */
+  #post(message: Record<string, unknown>): void {
+    if (this.#disposed) return
+    this.#opts.post({ lw: BRIDGE_VERSION, nonce: this.#opts.nonce, ...message })
+  }
+
+  /** The window `message` listener. */
   handleMessage(event: MessageEvent): void {
-    const envelope = parseEnvelope(event.data)
-    if (!envelope || envelope.nonce !== this.opts.nonce) return
-    const source = this.opts.getSource()
+    if (this.#disposed) return
+    const source = this.#opts.getSource()
     if (!source || event.source !== source) return
-
-    if (envelope.type === "ready") {
-      const first = !this.ready
-      this.ready = true
-      if (first) this.opts.onReady?.()
-      this.post({
-        type: "ready_ack",
-        panel: this.opts.panelId,
-        locale: this.opts.locale,
-        theme: this.opts.theme,
-      })
-      const snapshot = this.opts.getSnapshot()
-      if (snapshot) this.post({ type: "state", state: snapshot })
-      for (const payload of this.queuedEvents.splice(0)) {
-        this.post({ type: "event", payload })
+    const data: unknown = event.data
+    if (!isRecord(data) || data.nonce !== this.#opts.nonce) return
+    const size = jsonBytes(data)
+    if (size === null || size > MAX_PAGE_MESSAGE_BYTES) {
+      this.#opts.warn?.(
+        `panel ${this.#opts.panel.id}: a message of ${size ?? "?"} bytes was dropped (the cap is ${MAX_PAGE_MESSAGE_BYTES})`,
+      )
+      return
+    }
+    if (data.lw === LEGACY_BRIDGE_VERSION) {
+      if (!this.#legacy) {
+        this.#legacy = true
+        this.#opts.onLegacy?.()
       }
       return
     }
-    if (envelope.type === "panel_error") {
-      const message = typeof envelope.message === "string" ? envelope.message : ""
-      this.opts.onPanelError?.(message.slice(0, MAX_PANEL_ERROR_CHARS))
-      return
-    }
-    if (envelope.type === "intent") {
-      const kind = envelope.kind
-      const value = envelope.value
-      if (!INTENT_KINDS.includes(kind as PanelIntentKind)) return
-      if (typeof value !== "string" || value.length === 0) return
-      if (value.length > MAX_INTENT_VALUE_CHARS) return
-      this.opts.sendIntent({
-        type: "panel_intent",
-        panel: this.opts.panelId,
-        kind: kind as PanelIntentKind,
-        value,
-      })
+    if (data.lw !== BRIDGE_VERSION) return
+    switch (data.type) {
+      case "ready":
+        this.#onReady()
+        return
+      case "panel_error": {
+        const message = typeof data.message === "string" ? data.message : ""
+        this.#opts.onPanelError?.(message.slice(0, MAX_PANEL_ERROR_CHARS))
+        return
+      }
+      case "run":
+        void this.#onRun(data)
+        return
     }
   }
 
-  /** Push a fresh state projection (no-op until the panel said ready). */
-  pushState(snapshot: PanelStateSnapshot | null): void {
-    if (!this.ready || !snapshot) return
-    this.post({ type: "state", state: snapshot })
+  #onReady(): void {
+    if (this.#ready || this.#legacy) return
+    const member = this.#opts.member()
+    if (member === null) return
+    this.#ready = true
+    const { events, head } = this.#opts.log()
+    this.#cursor = newestSeq(events, head)
+    this.#lastViews = this.#opts.views()
+    const info: PageReadyInfo = {
+      panel: this.#opts.panel,
+      locale: this.#opts.locale,
+      theme: this.#opts.theme,
+      member,
+    }
+    this.#post({ type: "ready_ack", ...info, views: this.#lastViews })
+    this.#opts.onReady?.()
   }
 
-  /** Forward one `panel_event` payload, queueing (bounded) before ready. */
-  pushEvent(payload: unknown): void {
-    if (this.ready) {
-      this.post({ type: "event", payload })
-      return
+  /** The views may have changed: post them if they did (and the page is ready). */
+  syncViews(): void {
+    if (!this.#ready || this.#disposed) return
+    const next = this.#opts.views()
+    const last = this.#lastViews ?? {}
+    const keys = new Set([...Object.keys(last), ...Object.keys(next)])
+    let changed = false
+    for (const key of keys) {
+      if (JSON.stringify(last[key]) !== JSON.stringify(next[key])) changed = true
     }
-    this.queuedEvents.push(payload)
-    if (this.queuedEvents.length > MAX_QUEUED_EVENTS) this.queuedEvents.shift()
+    if (!changed) return
+    this.#lastViews = next
+    this.#post({ type: "views", views: next })
+  }
+
+  /** The log may have grown: hand the page every event newer than the last it got. */
+  syncEvents(): void {
+    if (!this.#ready || this.#disposed) return
+    const { events } = this.#opts.log()
+    for (const event of events) {
+      if (event.seq <= this.#cursor) continue
+      this.#cursor = event.seq
+      this.#post({ type: "event", event: toPageEvent(event) })
+    }
+  }
+
+  #take(): boolean {
+    const now = this.#now()
+    const refills = Math.floor((now - this.#refilledAt) / PAGE_RUN_REFILL_MS)
+    if (refills > 0) {
+      this.#tokens = Math.min(PAGE_RUN_BURST, this.#tokens + refills)
+      this.#refilledAt += refills * PAGE_RUN_REFILL_MS
+    }
+    if (this.#tokens <= 0) return false
+    if (this.#tokens === PAGE_RUN_BURST) this.#refilledAt = now
+    this.#tokens -= 1
+    return true
+  }
+
+  #refuse(code: LocalRefusal, params: Record<string, string> = {}, reason?: string): PageRunResult {
+    return {
+      ok: false,
+      code,
+      message: this.#opts.refusalText(code, params),
+      ...(reason === undefined ? {} : { reason }),
+    }
+  }
+
+  async #onRun(data: Record<string, unknown>): Promise<void> {
+    const call = data.call
+    if (typeof call !== "number" || !Number.isSafeInteger(call)) return
+    const result = await this.#decide(data)
+    if (this.#disposed) return
+    this.#post({ type: "run_result", call, result })
+  }
+
+  async #decide(data: Record<string, unknown>): Promise<PageRunResult> {
+    if (!this.#ready) return this.#refuse("not_ready")
+    const command = data.command
+    const args = data.args === undefined ? {} : data.args
+    if (
+      typeof command !== "string" ||
+      command.length === 0 ||
+      [...command].length > MAX_COMMAND_ID_CHARS ||
+      !isRecord(args)
+    ) {
+      return this.#refuse("invalid_params")
+    }
+    const size = jsonBytes(args)
+    if (size === null) return this.#refuse("invalid_params")
+    if (size > MAX_RUN_ARGS_BYTES) return this.#refuse("too_large", { max: String(MAX_RUN_ARGS_BYTES) })
+    if (!this.#take()) return this.#refuse("rate_limited")
+
+    const entry = this.#opts.commands()?.find((candidate) => candidate.id === command)
+    if (entry === undefined) return this.#refuse("unavailable", { command, reason: "unknown" }, "unknown")
+    if (!entry.available) {
+      const reason = entry.reason ?? "unavailable"
+      return this.#refuse("unavailable", { command, reason }, reason)
+    }
+    if (entry.danger === true) {
+      if (this.#confirming) return this.#refuse("busy")
+      this.#confirming = true
+      const agreed = await this.#opts.confirm(entry, this.#abort.signal).then(
+        (answer) => answer,
+        () => false,
+      )
+      this.#confirming = false
+      if (!agreed || this.#disposed) return this.#refuse("cancelled")
+    }
+
+    try {
+      const outcome = await this.#opts.run(
+        command,
+        JSON.parse(JSON.stringify(args)) as Record<string, unknown>,
+      )
+      if (!outcome.ok) return { ok: false, code: outcome.error.code, message: outcome.error.message }
+      return {
+        ok: true,
+        ...(outcome.text === undefined ? {} : { text: outcome.text }),
+        ...(outcome.data === undefined ? {} : { data: outcome.data }),
+      }
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error ? String(error.code) : "failed"
+      return this.#refuse("not_sent", { code })
+    }
+  }
+
+  /** The page is unmounted: nothing more is posted, and an open confirmation is withdrawn. */
+  dispose(): void {
+    this.#disposed = true
+    this.#abort.abort()
   }
 }
 
-// ---- Host-injected panel assets -------------------------------------------
+// ---- Host-injected page head ----------------------------------------------------------
 
-/** App CSS custom properties re-exported to panels under a stable --lw-* contract. */
+/** App CSS custom properties re-exported to pages under a stable --lw-* contract. */
 const THEME_VARS: ReadonlyArray<readonly [string, string]> = [
   ["--bg", "--lw-bg"],
   ["--bg-raised", "--lw-bg-raised"],
@@ -242,62 +410,76 @@ export function collectPanelTheme(): Record<string, string> {
   const theme: Record<string, string> = {}
   for (const [appVar, panelVar] of THEME_VARS) {
     const value = styles.getPropertyValue(appVar).trim()
-    if (value) theme[panelVar] = value
+    // Spliced into a <style> element: a value that could close it is left out.
+    if (value && !value.includes("<")) theme[panelVar] = value
   }
   return theme
 }
 
-/** The `__loreweaver__/theme.css` body: app theme as CSS custom properties. */
+/** The theme variables as one `:root` rule (the scheme puts it in a `<style>` element). */
 export function buildThemeCss(theme: Record<string, string>): string {
   const lines = Object.entries(theme).map(([name, value]) => `  ${name}: ${value};`)
   return `:root {\n${lines.join("\n")}\n}\n`
 }
 
 /**
- * The `__loreweaver__/bootstrap.js` body: defines `window.loreweaver` (bridge
- * contract v1 — ready/onState/onEvent/send) with the mount's nonce baked in.
- * Runs before any author script (injected first in head), frameworks-agnostic,
- * ES5-safe.
+ * The bootstrap the scheme splices into the page's `<head>` as an inline script: it defines
+ * `window.loreweaver` (bridge version 2) with the mount's nonce baked in, before any author
+ * script runs. ES5, no dependencies. Only the nonce (hex) is interpolated: the panel's id and
+ * title reach the page in the `ready` answer, never inside this script.
  */
-export function buildBootstrapJs(nonce: string, panelId: string, parentOrigin: string): string {
-  const NONCE = JSON.stringify(nonce)
-  const PANEL = JSON.stringify(panelId)
-  const PARENT = JSON.stringify(parentOrigin)
-  return `// Loreweaver panel bridge bootstrap (host-injected; contract v1).
+export function buildBootstrapJs(nonce: string): string {
+  if (!/^[0-9a-f]{32}$/.test(nonce)) throw new Error("bad nonce")
+  return `// Loreweaver page bridge (host-injected, version ${BRIDGE_VERSION}; docs/PAGE-BRIDGE.md).
 (function () {
   "use strict";
-  var NONCE = ${NONCE};
-  var PANEL = ${PANEL};
-  var PARENT = ${PARENT};
-  var stateCbs = [];
+  var NONCE = "${nonce}";
+  var VERSION = "${BRIDGE_VERSION}";
+  var HOST = window.parent;
+  var views = {};
+  var isReady = false;
+  var announced = false;
+  var viewCbs = [];
   var eventCbs = [];
-  var lastState;
-  var hasState = false;
-  var pendingEvents = [];
+  var queued = [];
+  var calls = {};
+  var nextCall = 1;
   var readyResolve;
   var readyPromise = new Promise(function (resolve) { readyResolve = resolve; });
-  var announced = false;
 
-  function post(message) {
-    message.lw = "${BRIDGE_VERSION}";
+  function post(message, version) {
+    message.lw = version || VERSION;
     message.nonce = NONCE;
-    window.parent.postMessage(message, PARENT || "*");
+    // An opaque origin matches no target origin: "*" is the only one that delivers.
+    HOST.postMessage(message, "*");
+  }
+  function copyViews() {
+    var out = {};
+    for (var key in views) if (Object.prototype.hasOwnProperty.call(views, key)) out[key] = views[key];
+    return out;
+  }
+  function call(cb, value) {
+    try { cb(value); } catch (err) { setTimeout(function () { throw err; }, 0); }
+  }
+  function remover(list, cb) {
+    return function () {
+      var at = list.indexOf(cb);
+      if (at >= 0) list.splice(at, 1);
+    };
   }
 
-  // A panel that throws before ready() would otherwise be a silent blank box
-  // until the host's handshake deadline. Report the FIRST failure only — a
-  // broken render loop must not turn into a postMessage flood — as one line.
+  // A page that throws before ready() would otherwise be a blank box until the host's
+  // deadline. Report the FIRST failure only, as one line.
   var crashed = false;
   function reportCrash(text) {
     if (crashed) return;
     crashed = true;
     try {
       post({ type: "panel_error", message: String(text).replace(/\\s+/g, " ").slice(0, ${MAX_PANEL_ERROR_CHARS}) });
-    } catch (err) { /* the host is gone; nothing left to tell */ }
+    } catch (err) { /* the host is gone */ }
   }
   window.addEventListener("error", function (event) {
-    var detail = (event && event.message) || (event && event.error && event.error.message);
-    reportCrash(detail || "uncaught error");
+    reportCrash((event && event.message) || (event && event.error && event.error.message) || "uncaught error");
   });
   window.addEventListener("unhandledrejection", function (event) {
     var reason = event && event.reason;
@@ -305,54 +487,76 @@ export function buildBootstrapJs(nonce: string, panelId: string, parentOrigin: s
   });
 
   window.addEventListener("message", function (event) {
+    if (event.source !== HOST) return;
     var data = event.data;
-    if (!data || data.lw !== "${BRIDGE_VERSION}" || data.nonce !== NONCE) return;
-    if (event.source !== window.parent) return;
+    if (!data || data.lw !== VERSION || data.nonce !== NONCE) return;
+    var i;
     if (data.type === "ready_ack") {
-      readyResolve({ panel: data.panel, locale: data.locale, theme: data.theme });
-      return;
-    }
-    if (data.type === "state") {
-      lastState = data.state;
-      hasState = true;
-      for (var i = 0; i < stateCbs.length; i++) {
-        try { stateCbs[i](data.state); } catch (err) { /* author callback */ }
-      }
-      return;
-    }
-    if (data.type === "event") {
+      if (isReady) return;
+      isReady = true;
+      views = data.views || {};
+      readyResolve({ panel: data.panel, locale: data.locale, theme: data.theme, member: data.member });
+      var first = viewCbs.slice();
+      for (i = 0; i < first.length; i++) call(first[i], copyViews());
+    } else if (data.type === "views") {
+      views = data.views || {};
+      var listeners = viewCbs.slice();
+      for (i = 0; i < listeners.length; i++) call(listeners[i], copyViews());
+    } else if (data.type === "event") {
       if (eventCbs.length === 0) {
-        pendingEvents.push(data.payload);
-        if (pendingEvents.length > ${MAX_QUEUED_EVENTS}) pendingEvents.shift();
+        queued.push(data.event);
+        if (queued.length > ${MAX_QUEUED_EVENTS}) queued.shift();
         return;
       }
-      for (var j = 0; j < eventCbs.length; j++) {
-        try { eventCbs[j](data.payload); } catch (err) { /* author callback */ }
-      }
+      var hearers = eventCbs.slice();
+      for (i = 0; i < hearers.length; i++) call(hearers[i], data.event);
+    } else if (data.type === "run_result") {
+      var resolve = calls[data.call];
+      if (!resolve) return;
+      delete calls[data.call];
+      resolve(data.result);
     }
   });
 
-  window.loreweaver = {
-    version: "${BRIDGE_VERSION}",
+  // The 2.x bridge's methods: a page written for them is told it needs a newer client.
+  function legacy() {
+    try { post({ type: "legacy" }, "1"); } catch (err) { /* the host is gone */ }
+  }
+
+  var api = {
+    version: VERSION,
     ready: function () {
-      if (!announced) { announced = true; post({ type: "ready", panel: PANEL }); }
+      if (!announced) { announced = true; post({ type: "ready" }); }
       return readyPromise;
     },
-    onState: function (cb) {
-      stateCbs.push(cb);
-      if (hasState) { try { cb(lastState); } catch (err) { /* author callback */ } }
+    views: function () { return copyViews(); },
+    onViews: function (cb) {
+      viewCbs.push(cb);
+      if (isReady) call(cb, copyViews());
+      return remover(viewCbs, cb);
     },
     onEvent: function (cb) {
       eventCbs.push(cb);
-      var backlog = pendingEvents.splice(0, pendingEvents.length);
-      for (var i = 0; i < backlog.length; i++) {
-        try { cb(backlog[i]); } catch (err) { /* author callback */ }
-      }
+      var backlog = queued.splice(0, queued.length);
+      for (var i = 0; i < backlog.length; i++) call(cb, backlog[i]);
+      return remover(eventCbs, cb);
     },
-    send: function (kind, value) {
-      post({ type: "intent", kind: String(kind), value: String(value) });
+    run: function (command, args) {
+      return new Promise(function (resolve) {
+        var id = nextCall++;
+        calls[id] = resolve;
+        try {
+          post({ type: "run", call: id, command: command, args: args === undefined ? {} : args });
+        } catch (err) {
+          delete calls[id];
+          resolve({ ok: false, code: "invalid_params", message: String((err && err.message) || err) });
+        }
+      });
     },
+    onState: legacy,
+    send: legacy
   };
+  Object.defineProperty(window, "loreweaver", { value: Object.freeze(api), enumerable: true });
 })();
 `
 }

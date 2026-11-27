@@ -3,18 +3,19 @@
 // closed whatever the pack wants, and closing never leaves the list (reopen lives in the
 // panels menu).
 //
-// A page panel (`kind: "page"`) shows its `fallback` blocks: running pages is a later
-// step, and the 2.x page host (`Tier2Frame`) is parked, not rendered.
+// A page panel (`kind: "page"`) runs in its sandboxed frame (`Tier2Frame`), showing its
+// `fallback` blocks while it loads and whenever it cannot run.
 
 import { useTranslation } from "react-i18next"
 import type { PanelEntry } from "loreweaver-protocol/v3"
 import { usePanelsStore } from "../../../store/panels"
 import { panelTitle } from "./panelList"
 import Tier1Blocks from "./Tier1Blocks"
+import Tier2Frame from "./Tier2Frame"
 
-/** The panel body: the evaluated template, or a page's fallback. */
+/** The panel body: the evaluated template, or the page (with its fallback). */
 export function PanelBody({ panel }: { panel: PanelEntry }) {
-  return <Tier1Blocks panel={panel} />
+  return panel.kind === "page" ? <Tier2Frame panel={panel} /> : <Tier1Blocks panel={panel} />
 }
 
 export default function PanelCard({ panel }: { panel: PanelEntry }) {

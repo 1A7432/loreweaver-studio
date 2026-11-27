@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Quick roll</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 12px;
+        font: 14px/1.5 var(--lw-font-ui, sans-serif);
+        color: var(--lw-ink, #222);
+        background: transparent;
+      }
+      button {
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="who">…</p>
+    <button id="roll" type="button" disabled>Roll 1d20</button>
+    <p id="answer" role="status"></p>
+    <script>
+      const lw = window.loreweaver
+      const who = document.getElementById("who")
+      const button = document.getElementById("roll")
+      const answer = document.getElementById("answer")
+
+      lw.ready().then(({ member }) => {
+        // `me` is the handle this panel declared: `views: { me: me }`.
+        lw.onViews((views) => {
+          const character = views.me && views.me.character
+          who.textContent = character ? character.name : member.name
+        })
+        button.disabled = false
+        button.addEventListener("click", async () => {
+          button.disabled = true
+          const result = await lw.run("roll", { expr: "1d20" })
+          answer.textContent = result.ok ? result.text || "Rolled." : result.message
+          button.disabled = false
+        })
+      })
+    </script>
+  </body>
+</html>

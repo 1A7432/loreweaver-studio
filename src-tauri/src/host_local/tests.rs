@@ -60,6 +60,20 @@ fn a_refusal_is_read_with_its_code_and_problems() {
     };
     assert_eq!(bare.code, "review_wordlist_missing");
     assert!(bare.problems.is_empty());
+    assert_eq!(bare.detail, None);
+    let Some(ServerLine::Refusal(in_use)) =
+        parse_server_line(r#"{"ok":false,"code":"data_dir_in_use"}"#)
+    else {
+        panic!("not read as a refusal")
+    };
+    assert_eq!(in_use.code, "data_dir_in_use");
+    let Some(ServerLine::Refusal(failed)) = parse_server_line(
+        r#"{"ok":false,"code":"startup_failed","detail":"EADDRINUSE: \u001b[31maddress in use"}"#,
+    ) else {
+        panic!("not read as a refusal")
+    };
+    assert_eq!(failed.code, "startup_failed");
+    assert_eq!(failed.detail.as_deref(), Some("EADDRINUSE: address in use"));
 }
 
 #[test]
@@ -161,8 +175,17 @@ fn a_failure_serializes_as_its_code_with_camel_case_fields() {
                     variable: "TRPG_LLM__CHAT_MODEL".to_owned(),
                     problem: "missing".to_owned(),
                 }],
+                detail: None,
             },
-            json!({"code": "refused", "refusal": "bad_settings", "problems": [{"variable": "TRPG_LLM__CHAT_MODEL", "problem": "missing"}]}),
+            json!({"code": "refused", "refusal": "bad_settings", "problems": [{"variable": "TRPG_LLM__CHAT_MODEL", "problem": "missing"}], "detail": null}),
+        ),
+        (
+            HostFailure::Refused {
+                refusal: "startup_failed".to_owned(),
+                problems: vec![],
+                detail: Some("bind failed".to_owned()),
+            },
+            json!({"code": "refused", "refusal": "startup_failed", "problems": [], "detail": "bind failed"}),
         ),
         (
             HostFailure::Exited {
@@ -307,7 +330,15 @@ fn the_command_line_carries_no_value_and_the_callers_trpg_settings_are_dropped()
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    assert_eq!(args, ["/engine/server/src/cli/main.ts", "serve", "--local"]);
+    assert_eq!(
+        args,
+        [
+            "/engine/server/src/cli/main.ts",
+            "serve",
+            "--local",
+            "--until-stdin-closes"
+        ]
+    );
     assert!(!args.iter().any(|arg| arg.contains("sk-sentinel-secret")));
     assert_eq!(std.get_current_dir(), Some(Path::new("/run")));
     let envs: Vec<(String, Option<String>)> = std
@@ -377,7 +408,7 @@ if [ "$1" = "key" ]; then
   printf '{"ok":true,"key":"minted-key-0123456789","id":"k1"}\n'
   exit 0
 fi
-[ "$1 $2" = "serve --local" ] || { echo "bad args: $*" >&2; exit 9; }
+[ "$1 $2 $3" = "serve --local --until-stdin-closes" ] || { echo "bad args: $*" >&2; exit 9; }
 first() {
   if [ -f "$TRPG_DATA_DIR/keys.json" ]; then echo ""; else
     echo '{}' > "$TRPG_DATA_DIR/keys.json"
@@ -392,6 +423,15 @@ case "$FAKE_MODE" in
   refuse)
     printf '{"ok":false,"code":"bad_settings","problems":[{"variable":"TRPG_LLM__API_KEY","problem":"missing"}]}\n' >&2
     exit 2 ;;
+  in_use)
+    printf '{"ok":false,"code":"data_dir_in_use"}\n' >&2
+    exit 2 ;;
+  stdin)
+    # What `--until-stdin-closes` does: run until standard input ends, then stop.
+    printf '{"ok":true,"version":"3.0.0","ticket":"endpointfake","notes":[]%s}\n' "$(first)"
+    cat > /dev/null
+    echo closed > "$TRPG_DATA_DIR/stdin-closed"
+    exit 0 ;;
   crash)
     echo "boom while holding kept-key-0123456789" >&2
     echo "second line" >&2
@@ -554,8 +594,65 @@ esac
                     variable: "TRPG_LLM__API_KEY".to_owned(),
                     problem: "missing".to_owned()
                 }],
+                detail: None,
             }
         );
+        assert!(rig.host.running().is_none());
+        let in_use = rig.start("in_use").await.unwrap_err();
+        assert_eq!(
+            in_use,
+            HostFailure::Refused {
+                refusal: "data_dir_in_use".to_owned(),
+                problems: vec![],
+                detail: None,
+            }
+        );
+    }
+
+    async fn gone(pid: u32) -> bool {
+        for _ in 0..100 {
+            if !alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn the_input_pipe_is_held_while_hosting_and_closes_with_the_host() {
+        let rig = Rig::new("stdin");
+        let marker = rig.paths("home").data_dir.join("stdin-closed");
+        // A host of its own, so this test holds its only strong reference.
+        let host = Arc::new(LocalHost::default());
+        let engine = rig.engine.clone();
+        host.start(
+            rig.config("stdin", "home", Duration::from_secs(10)),
+            async move { Ok(engine) },
+            |_| {},
+        )
+        .await
+        .expect("ready");
+        let pid = host.pid().expect("a pid");
+        // Held: the server is still reading its input a while later.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(alive(pid), "the server must keep running while hosted");
+        assert!(!marker.exists(), "its input must not have ended");
+
+        // The host goes away without stopping anything (what a crash does to
+        // the app): its end of the pipe closes, and the server stops by itself.
+        drop(host);
+        assert!(gone(pid).await, "the server must stop when the pipe ends");
+        assert!(marker.exists(), "it stopped because its input ended");
+    }
+
+    #[tokio::test]
+    async fn stopping_a_server_that_waits_on_its_input_leaves_no_process() {
+        let rig = Rig::new("stdin-stop");
+        rig.start("stdin").await.expect("ready");
+        let pid = rig.host.pid().expect("a pid");
+        assert!(rig.host.stop().await);
+        assert!(gone(pid).await);
         assert!(rig.host.running().is_none());
     }
 

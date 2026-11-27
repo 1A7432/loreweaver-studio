@@ -37,7 +37,10 @@ at it as its room admin.
 
 One press starts a protocol 3.0 server on this machine (`serve --local`: loopback only, no
 relay, no network needed) and connects you to it as the room admin; you are also the operator
-of that server. Leaving the table, pressing **Stop the server**, or quitting the app stops it.
+of that server. Leaving the table, pressing **Stop the server**, or quitting the app stops it —
+and so does the app crashing or being killed: the server is started with
+`--until-stdin-closes` and stops when the app's end of its input goes away. A folder another
+live server holds (a terminal client's, say) is refused, in so many words.
 
 What it needs — there is **no published 3.0 server to download yet**, so the app does not
 download one:
@@ -64,9 +67,10 @@ Two modes, one app:
 - **Play** (default), on protocol 3.0: the narrative log with dice drawn from the event's own
   fields, streaming drafts, character / party / scene / variables cards fed by views, the
   claimable characters, a pack's template panels (evaluated by the protocol package's
-  `panelBlocks`, the one evaluation every client shares), media, audio, the session report and
-  the admin screens (access keys, models, content and packs, the room), and hosting a server
-  locally. **Not yet on 3.0:** running page panels (a page panel shows its fallback).
+  `panelBlocks`, the one evaluation every client shares) and page panels (one HTML file each,
+  run in a sandboxed frame with no network, through the page bridge —
+  [docs/PAGE-BRIDGE.md](docs/PAGE-BRIDGE.md)), media, audio, the session report and the admin
+  screens (access keys, models, content and packs, the room), and hosting a server locally.
 - **Studio**: a local-first authoring bench:
   - **Forge** — typed module variables and worldbook entries, exported as a native
     `*.lorecard.json` or a SillyTavern card (JSON or PNG). Hook scripts and a pregenerated
@@ -109,7 +113,8 @@ The formats themselves are the engine's, specified in its
 
 ## Status
 
-- **Play mode**: on protocol 3.0, except page panels (above).
+- **Play mode**: on protocol 3.0, page panels included ([docs/PAGE-BRIDGE.md](docs/PAGE-BRIDGE.md)
+  — read its list of what the WebView cannot stop, and the Windows IPC check still to make).
 - **Studio**: writes 3.0 packs; the round-trip gate builds and installs one with the real
   engine on every CI run.
 - **Desktop (macOS)**: release build + `.app` bundle verified. **Windows / Linux**: CI compiles
@@ -155,13 +160,17 @@ own code writes, and fails on any mismatch:
   `panelBlocks` over sample views, compared with Studio's checks and preview
   (`scripts/roundtrip_check.ts`);
 - **f. live connect** — a real 3.0 server (`serve --local`) dialled through the real Rust link
-  (`scripts/check_live_connect.sh`);
+  (`scripts/check_live_connect.sh`); the room admin installs the pack of a. (`pack install`),
+  subscribes `panels`, and fetches the page panel's HTML over the byte channel by the hash the
+  view gives: it must be the sha256 of, and byte for byte, the file Studio wrote;
 - **g. host locally** — the app's own host-local code (`src-tauri/tests/host_local_live.rs`)
   finds the engine checkout with the app's probe and starts the real server three times over
   one data directory (its first key, the key the app kept, a key made after the app lost it),
   each time connecting through the real link as the room admin, stopping it and checking the
-  process is gone; a `TRPG_*` model setting the server would refuse is exported to prove none
-  reaches it. `LIVE_CONNECT=0` skips f and g.
+  process is gone; then a second instance over the same folder is refused with
+  `data_dir_in_use`, and the first is dropped without being stopped — its server must stop by
+  itself when its input pipe ends (`--until-stdin-closes`); a `TRPG_*` model setting the server
+  would refuse is exported to prove none reaches it. `LIVE_CONNECT=0` skips f and g.
 
 It needs the engine checkout (default `../trpg_kp`, override with `TRPG_KP_REPO`), on its `v3`
 branch, with `bun install` run at its root:

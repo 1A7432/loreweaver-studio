@@ -9,8 +9,7 @@ import pkg from "./package.json" with { type: "json" }
 // `clients/protocol`, installed from the path `../trpg_kp/clients/protocol` (package.json; CI
 // clones the engine's `v3` branch there). Its `./v3` export points at a `dist/` nobody builds
 // unless asked, and only Bun's own `bun` condition points at the source — so the one entry is
-// aliased here (vite, vitest) and in tsconfig.json `paths` (tsc). The 2.x package stays the
-// root `@loreweaver/protocol` import until the rest of the UI moves.
+// aliased here (vite, vitest) and in tsconfig.json `paths` (tsc).
 const PROTOCOL_V3 = fileURLToPath(
   new URL("./node_modules/loreweaver-protocol/src/v3/index.ts", import.meta.url),
 )

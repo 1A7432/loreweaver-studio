@@ -11,7 +11,7 @@
 // Studio believes about the pack — each card's kind as Studio's own detection decided it, the
 // counts the engine's trust card must show — for the gate to assert against.
 
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { exportNativeBundle, exportSillyTavernCard } from "../src/features/studio/exporters"
 import { embedCardIntoPng } from "../src/features/studio/pngCard"
@@ -250,7 +250,9 @@ export default defineModule({
 `
 
 // Panels 3.0: a template panel with a `repeat`, a `visible_when`, a picture, a module view
-// and a choice that runs the module's command; and a page with a fallback.
+// and a choice that runs the module's command; and a page with a fallback. The page is the
+// example of docs/PAGE-BRIDGE.md (it reads `me` and runs `roll`), so stage f fetches the very
+// page the bridge's own tests run.
 const PANELS_YAML = `panels:
   - id: handouts
     title: {en: Handouts, zh: 手边物}
@@ -277,24 +279,16 @@ const PANELS_YAML = `panels:
     title: {en: Case Board, zh: 案情板}
     slot: modal
     audience: admin
-    views: {tide: corridor/tide}
+    views: {tide: corridor/tide, me: me}
     entry: ui/case-board/index.html
     fallback:
       - {kind: letter, body: {$view: tide.level}, from: {en: "Case board", zh: 案情板}}
 `
 
-const CASE_BOARD_HTML = `<!doctype html>
-<html lang="zh">
-  <head>
-    <meta charset="utf-8" />
-    <title>案情板</title>
-  </head>
-  <body>
-    <main id="board">案情板</main>
-    <script>document.getElementById("board").textContent = "案情板（富客户端）"</script>
-  </body>
-</html>
-`
+const CASE_BOARD_HTML = readFileSync(
+  join(import.meta.dir, "..", "docs", "examples", "page-bridge-example.html"),
+  "utf8",
+)
 
 const cards = [
   {

@@ -1,10 +1,10 @@
-//! Verified, content-addressed panel-asset cache (protocol v1.8, spec S-UI).
+//! Verified, content-addressed asset cache (pages, pictures, sounds; protocol 3.0 §11.3).
 //!
 //! Disk layout: `<app_cache_dir>/panel-assets/<sha256-hex>`. Files are
 //! immutable once written — the name IS the content hash, so cross-room and
 //! cross-pack dedup fall out for free. Bytes never enter the cache without
 //! passing sha256 verification, and the `panel://` scheme handler serves
-//! panels exclusively from here. Eviction is LRU by file mtime under a byte
+//! page panels exclusively from here. Eviction is LRU by file mtime under a byte
 //! budget; a lookup hit refreshes the mtime.
 
 use std::fmt::Write as _;
@@ -139,7 +139,7 @@ pub async fn asset_cache_status(app: AppHandle, hashes: Vec<String>) -> Result<V
 
 /// Ensure one content-addressed blob is in the verified cache, pulling it over
 /// the live link's byte channel (a GET, protocol 3.0 §11.3) on a miss. Returns the byte size.
-/// The WebView never receives the bytes — the `panel://` handler serves them.
+/// The WebView never receives a page's bytes — the `panel://` handler serves them.
 /// A server refusal (`media_not_found`, …) comes back in the server's own words.
 #[tauri::command]
 pub async fn asset_fetch(
@@ -170,8 +170,8 @@ pub async fn asset_fetch(
     Ok(fetched.bytes.len() as u64)
 }
 
-/// Read one verified cache entry back as base64. Tier-1 `image`/`map_pin`
-/// blocks are INERT pictures — unlike tier-2 code they may enter the WebView,
+/// Read one verified cache entry back as base64. `image`/`map_pin` blocks
+/// are INERT pictures — unlike a page's code they may enter the WebView,
 /// which wraps them in a `data:` URL its CSP already allows. Only content
 /// that passed sha256 verification is ever returned, and only by its hash.
 pub fn read_cached_base64(dir: &Path, hash: &str) -> Result<String, String> {

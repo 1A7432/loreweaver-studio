@@ -1,8 +1,8 @@
 // A panel's body: its blocks evaluated against the views it reads, with the protocol
 // package's `panelBlocks` — the ONE evaluation of panel templates every client shares
 // (bindings, `visible_when`, `repeat`; protocol 3.0 §10.6). A template panel draws its
-// blocks; a page panel draws its `fallback` (pages do not run in this client yet); a page
-// with no fallback says it needs a rich client. Choices run as commands.
+// blocks; a page panel draws its `fallback` (while its page loads, or when it cannot run);
+// a page with no fallback says it needs a rich client. Choices run as commands.
 
 import { useMemo } from "react"
 import { panelBlocks, type PanelEntry } from "loreweaver-protocol/v3"

@@ -43,7 +43,7 @@ export interface EngineProblem {
 export type HostFailure =
   | { code: "no_engine"; engines: EngineProblem[] }
   | { code: "already_running"; dataDir: string }
-  | { code: "refused"; refusal: string; problems: ConfigProblem[] }
+  | { code: "refused"; refusal: string; problems: ConfigProblem[]; detail?: string | null }
   | { code: "exited"; exitCode: number | null; stderr: string[] }
   | { code: "timeout"; stderr: string[] }
   | { code: "cancelled" }

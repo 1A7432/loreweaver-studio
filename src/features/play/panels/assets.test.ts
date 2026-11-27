@@ -1,9 +1,8 @@
-// The panel URL shape is a CONTRACT with the Rust scheme handler
-// (`panel_serve::split_token_path`): real `/` separators, one segment per path
-// element. It broke in the real WKWebView shell — `convertFileSrc` percent-
-// encodes the whole path, so `<token>/__entry__.html` arrived as a single
-// `%2F`-joined segment, the handler 404'd, and every Tier-2 panel silently
-// stayed blank. This test pins the shape.
+// The page URL shape is a CONTRACT with the Rust scheme handler
+// (`panel_serve::split_token_path`): `/<token>/page.html`, two real segments. It broke
+// once in the real WKWebView shell — `convertFileSrc` percent-encodes the whole path, so
+// `<token>/<file>` arrived as a single `%2F`-joined segment, the handler 404'd, and every
+// page silently stayed blank. This test pins the shape.
 
 import { describe, expect, it, vi } from "vitest"
 
@@ -22,18 +21,10 @@ describe("panelEntryUrl", () => {
   it("keeps the token and the entry file in separate path segments", () => {
     const url = panelEntryUrl(TOKEN)
     expect(url).toBe(`panel://localhost/${TOKEN}/${PANEL_ENTRY_FILE}`)
+    expect(PANEL_ENTRY_FILE).toBe("page.html")
     expect(url).not.toContain("%2F")
     // The handler splits on "/" and expects exactly [token, ...file segments].
     expect(new URL(url).pathname.split("/").slice(1)).toEqual([TOKEN, PANEL_ENTRY_FILE])
-  })
-
-  it("gives relative subresources the panel's own namespace as their base", () => {
-    // `style.css` inside the document must resolve under the token, or the
-    // per-panel CSP (`script-src <origin>/<token>/`) blocks it.
-    const resolved = new URL("style.css", panelEntryUrl(TOKEN)).href
-    expect(resolved).toBe(`panel://localhost/${TOKEN}/style.css`)
-    const nested = new URL("__loreweaver__/bootstrap.js", panelEntryUrl(TOKEN)).href
-    expect(nested).toBe(`panel://localhost/${TOKEN}/__loreweaver__/bootstrap.js`)
   })
 })
 
