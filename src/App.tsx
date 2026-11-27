@@ -28,8 +28,8 @@ export default function App() {
     }
   }, [])
 
-  // A gesture anywhere in the window starts the sound that is waiting for one;
-  // armed at the root so a click on the mode tab or the connect form counts too.
+  // A gesture anywhere in the window starts the sound the WebView refused to start;
+  // armed at the root so a click on the mode tab or the menu counts too.
   useEffect(() => armGestureUnlock(), [])
 
   return (

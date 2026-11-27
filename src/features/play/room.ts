@@ -10,7 +10,7 @@
 // arguments the action passes (§6.5). The ids and argument names themselves are the
 // protocol's (§6.8).
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   builtInView,
   panelViewNames,
@@ -137,33 +137,21 @@ export function panelViews(panels: readonly PanelEntry[]): string[] {
 }
 
 /**
- * Keep the session subscribed to the views the listed panels read while the caller is
- * mounted: subscribe the new ones, unsubscribe those no panel reads any more, and drop
- * them all on unmount. Only the NAMES are held here; the values live in the snapshot, and
- * the session re-subscribes every wanted name on each welcome, so a reconnect needs
- * nothing from here.
+ * Hold `names` subscribed while the caller is mounted (and while it asks for the same names).
+ * Only the names are held, through the connection's counted `want`; the values live in the
+ * snapshot, and the session re-subscribes every wanted name on each welcome, so a reconnect
+ * needs nothing from here.
  */
-export function usePanelViews(panels: readonly PanelEntry[]): void {
+export function useViews(names: readonly string[]): void {
   const connection = useConnection()
-  const held = useRef<ReadonlySet<string>>(new Set())
-  const wanted = panelViews(panels)
-  const key = wanted.join("\n")
+  const key = [...new Set(names)].sort().join("\n")
   useEffect(() => {
-    if (connection === null) return
-    const names = key === "" ? [] : key.split("\n")
-    const next = new Set(names)
-    const added = names.filter((name) => !held.current.has(name))
-    const dropped = [...held.current].filter((name) => !next.has(name))
-    held.current = next
-    if (added.length > 0) void connection.session.viewSubscribe(added).catch(() => undefined)
-    if (dropped.length > 0) void connection.session.viewUnsubscribe(dropped).catch(() => undefined)
+    if (connection === null || key === "") return
+    return connection.want(key.split("\n"))
   }, [connection, key])
-  useEffect(() => {
-    if (connection === null) return
-    return () => {
-      const names = [...held.current]
-      held.current = new Set()
-      if (names.length > 0) void connection.session.viewUnsubscribe(names).catch(() => undefined)
-    }
-  }, [connection])
+}
+
+/** Keep the session subscribed to the views the listed panels read while the caller is mounted. */
+export function usePanelViews(panels: readonly PanelEntry[]): void {
+  useViews(panelViews(panels))
 }

@@ -1,125 +1,129 @@
-import { render, screen } from "@testing-library/react"
+// The room's lifecycle: a save file out and in (an import ends every connection — said before
+// it is sent), a reset armed then confirmed within the server's window, and an undo — each
+// asked for before it acts. Results are the engine's own (`fixtures/actions.json`).
+
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import "../../../i18n"
-import { useAdminStore } from "../../../store/admin"
-import { useLegacyConnectionStore } from "../../../store/legacyConnection"
-import RoomLifecycle from "./RoomLifecycle"
 
-const WELCOME = {
-  type: "welcome" as const,
-  protocol: "2.1",
-  room: "table",
-  you: { id: "u1", name: "keeper", role: "keeper" as const },
-  locale: "en",
-  server: "loreweaver/1",
-}
+const files = vi.hoisted(() => ({ saveSecretTextFile: vi.fn(), pickJsonFile: vi.fn() }))
+vi.mock("../../../lib/files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/files")>()),
+  saveSecretTextFile: files.saveSecretTextFile,
+}))
+vi.mock("../../../lib/native", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/native")>()),
+  pickJsonFile: files.pickJsonFile,
+}))
 
-function connected(features: string[] = []) {
-  useLegacyConnectionStore.setState({ status: "online", welcome: { ...WELCOME, features } })
-}
+import { flush } from "../../../lib/connection.testkit"
+import { ACTION_FIXTURE, TestRoom, resultBody } from "../room.testkit"
+import RoomLifecycle, { RESET_CONFIRM_MS } from "./RoomLifecycle"
 
-/** The four destructive actions, in DOM order — each owns one confirm field. */
-const DANGER = { restore: 0, reset: 1, deleteData: 2, deleteKeys: 3 } as const
+/** A bundle of the shape the engine's export answered (its top-level fields; the contents are
+ * opaque to this client and pass through untouched). */
+const BUNDLE = Object.fromEntries(
+  ACTION_FIXTURE.results.saveExport.dataKeys.map((key, index) => [key, index]),
+)
 
-async function confirmAction(which: keyof typeof DANGER, label: string) {
-  await userEvent.type(screen.getAllByLabelText("Type “table” to confirm")[DANGER[which]], "table")
-  await userEvent.click(screen.getByRole("button", { name: label }))
+let room: TestRoom | null = null
+beforeEach(() => {
+  files.saveSecretTextFile.mockReset().mockResolvedValue("saved")
+  files.pickJsonFile.mockReset()
+})
+afterEach(() => {
+  vi.useRealTimers()
+  room?.close()
+  room = null
+})
+
+async function open() {
+  room = await TestRoom.open("admin")
+  await room.actionViews("admin")
+  render(<RoomLifecycle onBack={() => {}} />)
+  return room
 }
 
 describe("RoomLifecycle", () => {
-  beforeEach(() => {
-    useAdminStore.getState().reset()
-    connected()
+  it("writes an export to a file the admin picks, and nowhere else", async () => {
+    const r = await open()
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save to a file…" }))
+    expect(r.commands()).toEqual([{ id: "save", args: { op: "export" } }])
+    const bundle = BUNDLE
+    await r.answer({ ok: true, text: ACTION_FIXTURE.results.saveExport.text, data: bundle })
+    await act(async () => flush(10))
+    expect(files.saveSecretTextFile).toHaveBeenCalledWith(
+      expect.stringMatching(/^loreweaver-main-.*\.json$/),
+      JSON.stringify(bundle, null, 2),
+    )
+    expect(screen.getByText("Saved.")).toBeInTheDocument()
   })
 
-  it("exports with the server's own default path when none is given", async () => {
-    const exportRoom = vi.fn()
-    useAdminStore.setState({ exportRoom })
-    render(<RoomLifecycle />)
-    await userEvent.click(screen.getByRole("button", { name: "Write a backup" }))
-    // `undefined`, not "": the protocol says an omitted path lets the server
-    // choose, under <data_dir>/room_backups/.
-    expect(exportRoom).toHaveBeenCalledWith("table", undefined)
-  })
-
-  it("arms a destructive action only once the room's name is typed", async () => {
-    const deleteRoom = vi.fn()
-    useAdminStore.setState({ deleteRoom })
-    render(<RoomLifecycle />)
-
-    const button = screen.getByRole("button", { name: "Delete the keys" })
-    expect(button).toBeDisabled()
-
-    const field = screen.getAllByLabelText("Type “table” to confirm")[DANGER.deleteKeys]
-    await userEvent.type(field, "tabl")
-    expect(button).toBeDisabled()
-    await userEvent.type(field, "e")
-    expect(button).toBeEnabled()
-    await userEvent.click(button)
-    expect(deleteRoom).toHaveBeenCalledWith("table")
-  })
-
-  it("sends the chosen reset scope, and says what that scope keeps", async () => {
-    const resetRoom = vi.fn()
-    useAdminStore.setState({ resetRoom })
-    render(<RoomLifecycle />)
-
-    expect(screen.getByText(/Characters, module, lore and media stay/)).toBeInTheDocument()
-    await userEvent.selectOptions(screen.getByLabelText("How much"), "all")
-    expect(screen.getByText(/Erases everything/)).toBeInTheDocument()
-
-    await confirmAction("reset", "Reset")
-    expect(resetRoom).toHaveBeenCalledWith("table", "all")
-  })
-
-  it("defaults the pre-delete backup on, and warns when it is turned off", async () => {
-    const deleteRoomData = vi.fn()
-    useAdminStore.setState({ deleteRoomData })
-    render(<RoomLifecycle />)
-
-    const backup = screen.getByRole("checkbox")
-    expect(backup).toBeChecked()
-    await userEvent.click(backup)
-    expect(screen.getByText(/nothing to restore from afterwards/)).toBeInTheDocument()
-
-    await confirmAction("deleteData", "Delete the data")
-    expect(deleteRoomData).toHaveBeenCalledWith("table", false)
-  })
-
-  it("gates the self-update on the welcome's own feature list", async () => {
-    render(<RoomLifecycle />)
-    expect(screen.getByRole("button", { name: "Update and restart" })).toBeDisabled()
-    expect(screen.getByText(/advertises no update command/)).toBeInTheDocument()
-
-    useAdminStore.getState().reset()
-    connected(["update"])
-    render(<RoomLifecycle />)
-    expect(screen.getAllByRole("button", { name: "Update and restart" }).at(-1)).toBeEnabled()
-  })
-
-  it("reports what an operation actually did, with the server's counts", () => {
-    useAdminStore.setState({
-      roomOp: {
-        type: "admin_room_op",
-        action: "export",
-        room: "table",
-        path: "/data/room_backups/table.json",
-        keys: 3,
-        store_rows: 41,
-        vector_points: 12,
-      },
+  it("says an import ends everyone's connection before it sends it", async () => {
+    const r = await open()
+    const bundle = BUNDLE
+    files.pickJsonFile.mockResolvedValue({
+      name: "night.json",
+      bytes: new TextEncoder().encode(JSON.stringify(bundle)),
+      path: "/x/night.json",
     })
-    render(<RoomLifecycle />)
-    expect(screen.getByRole("status")).toHaveTextContent("/data/room_backups/table.json")
-    expect(screen.getByRole("status")).toHaveTextContent("3 key(s), 41 state row(s), 12 vector(s)")
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Load a save file…" }))
+    expect(screen.getByRole("alert")).toHaveTextContent("disconnects everyone in it — you too")
+    expect(r.commands()).toEqual([])
+    await user.click(screen.getByRole("button", { name: "Replace the room" }))
+    expect(r.commands()).toEqual([{ id: "save", args: { op: "import", bundle } }])
   })
 
-  it("treats a restarting server as success, not as a failure", () => {
-    useAdminStore.setState({ serverUpdate: { type: "admin_update", status: "restarting" } })
-    render(<RoomLifecycle />)
-    const notice = screen.getByRole("status")
-    expect(notice).toHaveTextContent(/connection will drop and come back/)
-    expect(notice).not.toHaveClass("split-error")
+  it("refuses a file that is not a save file without sending anything", async () => {
+    const r = await open()
+    files.pickJsonFile.mockResolvedValue({
+      name: "list.json",
+      bytes: new TextEncoder().encode("[1,2]"),
+      path: "/x/list.json",
+    })
+    await userEvent.setup().click(screen.getByRole("button", { name: "Load a save file…" }))
+    expect(screen.getByRole("alert")).toHaveTextContent("list.json is not a save file.")
+    expect(r.commands()).toEqual([])
+  })
+
+  it("arms a reset, then confirms it within the window; the server's words both times", async () => {
+    const r = await open()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Reset…" }))
+    expect(r.commands()).toEqual([{ id: "reset", args: { scope: "story" } }])
+    await r.answer(resultBody("resetArm"))
+    expect(screen.getByRole("status")).toHaveTextContent("Send .reset confirm within 60s")
+    await user.click(screen.getByRole("button", { name: /Confirm the reset \(60 s\)/ }))
+    expect(r.commands().at(-1)).toEqual({ id: "reset", args: { confirm: true } })
+    await r.answer(resultBody("resetConfirm"))
+    expect(screen.getByRole("status")).toHaveTextContent("Reset complete")
+  })
+
+  it("stops offering the confirmation once the window has passed", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] })
+    const r = await open()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await user.click(screen.getByRole("button", { name: "Reset…" }))
+    await r.answer(resultBody("resetArm"))
+    expect(screen.getByRole("button", { name: /Confirm the reset/ })).toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(RESET_CONFIRM_MS + 1000))
+    expect(screen.queryByRole("button", { name: /Confirm the reset/ })).toBeNull()
+    expect(screen.getByRole("button", { name: "Reset…" })).toBeInTheDocument()
+  })
+
+  it("asks before an undo, and shows its refusal", async () => {
+    const r = await open()
+    const user = userEvent.setup()
+    const turns = screen.getByLabelText("Turns")
+    await user.clear(turns)
+    await user.type(turns, "5")
+    await user.click(screen.getByRole("button", { name: "Undo…" }))
+    expect(r.commands()).toEqual([])
+    await user.click(screen.getByRole("button", { name: "Undo 5 turn(s)" }))
+    expect(r.commands()).toEqual([{ id: "undo", args: { turns: 5 } }])
+    await r.answer(resultBody("undoOutOfRange"))
+    expect(screen.getByRole("alert")).toHaveTextContent("There is no earlier turn to go back to.")
   })
 })

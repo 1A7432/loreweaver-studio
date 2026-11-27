@@ -1,0 +1,2144 @@
+{
+  "commands": {
+    "player": {
+      "commands": [
+        {
+          "id": "sheet",
+          "source": "engine",
+          "title": "Character sheet",
+          "description": "Show your sheet, or set values on it: NAME=VALUE (also += and -=), or the dice-bot form NAME VALUE. A value may be dice. clear deletes your character; finalize resets its current pools for its final characteristics.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "set", "clear", "finalize"]
+              },
+              "writes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["=", "+=", "-="]
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "required": ["name", "op", "value"],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["sheet", "st"],
+            "usage": ".st [show] | .st STR=60 HP-=2 | .st 力量60 敏捷50 | .st clear | .st finalize"
+          }
+        },
+        {
+          "id": "new_character",
+          "source": "engine",
+          "title": "New character",
+          "description": "Make a new character in a rule system with its creation word (.coc, .dnd) and play it.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["system"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["coc", "coc7", "dnd", "dnd5e"],
+            "usage": ".coc [name] | .dnd [name]"
+          }
+        },
+        {
+          "id": "genchar",
+          "source": "engine",
+          "title": "Character from a description",
+          "description": "Describe a character in words and get a rule-legal sheet in the room's rule system (or the one you name), as your character. The model proposes an occupation, the attributes to favour and a few skills; the numbers are rolled and placed by the rules.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["description"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["genchar"],
+            "usage": ".genchar [system] [name] | <description> | .genchar [system] <description>"
+          }
+        },
+        {
+          "id": "rule",
+          "source": "engine",
+          "title": "House rule",
+          "description": "Show the room's rule system and house-rule ladder, or (room admin) choose another.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "variant": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "system": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["rule"],
+            "usage": ".rule [<variant>|0] | .rule system <system>|default"
+          }
+        },
+        {
+          "id": "uploads",
+          "source": "engine",
+          "title": "Uploads on/off",
+          "description": "Show whether members may upload files to this room, or (room admin) allow or stop uploads.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "on": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["uploads"],
+            "usage": ".uploads [on|off]"
+          }
+        },
+        {
+          "id": "import",
+          "source": "engine",
+          "title": "Import a card",
+          "description": "Bring in a card — a file you uploaded for import, or one a pack enabled here ships: as the room's world (room admin), or as your character.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "pack": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "card": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "as": {
+                "type": "string",
+                "enum": ["world", "character"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["as"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["import"],
+            "usage": ".import world <file hash> | .import character <file hash> [name] | .import world <pack> <card path> | .import character <pack> <card path> [name]"
+          }
+        },
+        {
+          "id": "pack",
+          "source": "engine",
+          "title": "Packs",
+          "description": "See the content packs this room plays with; the room admin sees every installed pack, installs one on the server (it is enabled here at once), and enables or disables them here.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "enable", "disable", "install"]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["pack", "packs"],
+            "usage": ".pack [list] | .pack enable <id> | .pack disable <id> | .pack install <path|https-url|gh:owner/repo[@tag]>"
+          }
+        },
+        {
+          "id": "report",
+          "source": "engine",
+          "title": "Session report",
+          "description": "The session so far as a keepsake: a short scoreboard, or the whole session as one HTML page to save. A room admin may ask for the reveal edition, which also prints what was hidden from the players.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": ["text", "html"]
+              },
+              "reveal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["report"],
+            "usage": ".report | .report html | .report html reveal"
+          }
+        },
+        {
+          "id": "model",
+          "source": "engine",
+          "title": "Model settings",
+          "description": "See which provider and model each lane of the Keeper uses; the room admin switches them, sets a key, asks a provider for its models, or goes back to the server's own settings. Server-wide: every room follows.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "list", "set", "key", "reset"]
+              },
+              "lane": {
+                "type": "string",
+                "enum": ["keeper", "npc", "scribe", "director", "memory"]
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "baseUrl": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "wire": {
+                "type": "string",
+                "enum": ["openai-compatible", "anthropic", "openai-responses"]
+              },
+              "effort": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "xhigh", "max"]
+              },
+              "contextWindow": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000000
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3600000
+              },
+              "promptCacheKey": {
+                "type": "boolean"
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["model", "models"],
+            "usage": ".model [show] | .model list [provider] | .model set <provider> [model] [key=…] [base_url=…] [wire=…] [effort=…] [context=N] [lane=npc|scribe|director|memory] | .model key <key> [lane=…] | .model reset [lane]"
+          }
+        }
+      ]
+    },
+    "admin": {
+      "commands": [
+        {
+          "id": "sheet",
+          "source": "engine",
+          "title": "Character sheet",
+          "description": "Show your sheet, or set values on it: NAME=VALUE (also += and -=), or the dice-bot form NAME VALUE. A value may be dice. clear deletes your character; finalize resets its current pools for its final characteristics.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "set", "clear", "finalize"]
+              },
+              "writes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["=", "+=", "-="]
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "required": ["name", "op", "value"],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["sheet", "st"],
+            "usage": ".st [show] | .st STR=60 HP-=2 | .st 力量60 敏捷50 | .st clear | .st finalize"
+          }
+        },
+        {
+          "id": "new_character",
+          "source": "engine",
+          "title": "New character",
+          "description": "Make a new character in a rule system with its creation word (.coc, .dnd) and play it.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["system"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["coc", "coc7", "dnd", "dnd5e"],
+            "usage": ".coc [name] | .dnd [name]"
+          }
+        },
+        {
+          "id": "genchar",
+          "source": "engine",
+          "title": "Character from a description",
+          "description": "Describe a character in words and get a rule-legal sheet in the room's rule system (or the one you name), as your character. The model proposes an occupation, the attributes to favour and a few skills; the numbers are rolled and placed by the rules.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["description"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["genchar"],
+            "usage": ".genchar [system] [name] | <description> | .genchar [system] <description>"
+          }
+        },
+        {
+          "id": "rule",
+          "source": "engine",
+          "title": "House rule",
+          "description": "Show the room's rule system and house-rule ladder, or (room admin) choose another.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "variant": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "system": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["rule"],
+            "usage": ".rule [<variant>|0] | .rule system <system>|default"
+          }
+        },
+        {
+          "id": "undo",
+          "source": "engine",
+          "title": "Undo",
+          "description": "Rewind the room by one or more turns.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "turns": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["undo"],
+            "usage": ".undo [turns]"
+          },
+          "danger": true
+        },
+        {
+          "id": "reset",
+          "source": "engine",
+          "title": "Reset",
+          "description": "Restart the campaign in place: story only (default), also the characters, or everything. Then confirm.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "enum": ["story", "chars", "all"]
+              },
+              "confirm": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["reset"],
+            "usage": ".reset [story|chars|all], then .reset confirm"
+          },
+          "danger": true
+        },
+        {
+          "id": "save",
+          "source": "engine",
+          "title": "Save",
+          "description": "Export the whole room as a bundle, or replace the room with one.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["export", "import"]
+              },
+              "bundle": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["save"],
+            "usage": ".save [export] | .save import <bundle>"
+          },
+          "danger": true
+        },
+        {
+          "id": "uploads",
+          "source": "engine",
+          "title": "Uploads on/off",
+          "description": "Show whether members may upload files to this room, or (room admin) allow or stop uploads.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "on": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["uploads"],
+            "usage": ".uploads [on|off]"
+          }
+        },
+        {
+          "id": "import",
+          "source": "engine",
+          "title": "Import a card",
+          "description": "Bring in a card — a file you uploaded for import, or one a pack enabled here ships: as the room's world (room admin), or as your character.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "pack": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "card": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "as": {
+                "type": "string",
+                "enum": ["world", "character"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["as"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["import"],
+            "usage": ".import world <file hash> | .import character <file hash> [name] | .import world <pack> <card path> | .import character <pack> <card path> [name]"
+          }
+        },
+        {
+          "id": "pack",
+          "source": "engine",
+          "title": "Packs",
+          "description": "See the content packs this room plays with; the room admin sees every installed pack, installs one on the server (it is enabled here at once), and enables or disables them here.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "enable", "disable", "install"]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["pack", "packs"],
+            "usage": ".pack [list] | .pack enable <id> | .pack disable <id> | .pack install <path|https-url|gh:owner/repo[@tag]>"
+          }
+        },
+        {
+          "id": "skill",
+          "source": "engine",
+          "title": "Keeper skills",
+          "description": "List the Keeper skills this room can enable — the built-in ones and those of its enabled packs — and switch them on or off.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "enable", "disable"]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["skill", "skills"],
+            "usage": ".skill [list] | .skill enable <id> | .skill disable <id>"
+          }
+        },
+        {
+          "id": "audio",
+          "source": "engine",
+          "title": "Audio library",
+          "description": "Room admin: list the sounds of the room's audio library (uploaded with purpose audio, and the cues of the packs enabled here), set an uploaded sound's title, layer and tags, or remove one.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "set", "remove"]
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              },
+              "layer": {
+                "type": ["string", "null"],
+                "enum": ["bgm", "ambience", "sfx"]
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                },
+                "maxItems": 16
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["audio"],
+            "usage": ".audio [list] | .audio set <sound> title=<title> layer=<bgm|ambience|sfx|none> tags=a,b | .audio remove <sound>"
+          }
+        },
+        {
+          "id": "bgm",
+          "source": "engine",
+          "title": "Background music",
+          "description": "Room admin: play a sound of the audio library as background music (it loops unless told otherwise), or stop, pause, resume it or change its volume.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["play", "stop", "pause", "resume", "volume"]
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              },
+              "loop": {
+                "type": "boolean"
+              },
+              "volume": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "fadeMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 60000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["bgm"],
+            "usage": ".bgm [play] <sound> [--loop|--once] [--volume 0.7] [--fade 2000] | .bgm stop|pause|resume [--fade 2000] | .bgm volume <0-1|70%>"
+          }
+        },
+        {
+          "id": "ambience",
+          "source": "engine",
+          "title": "Ambience",
+          "description": "Room admin: play a sound of the audio library as the room's ambience (it loops unless told otherwise), or stop, pause, resume it or change its volume.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["play", "stop", "pause", "resume", "volume"]
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              },
+              "loop": {
+                "type": "boolean"
+              },
+              "volume": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "fadeMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 60000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["ambience", "amb"],
+            "usage": ".ambience [play] <sound> [--loop|--once] [--volume 0.7] [--fade 2000] | .ambience stop|pause|resume [--fade 2000] | .ambience volume <0-1|70%>"
+          }
+        },
+        {
+          "id": "sfx",
+          "source": "engine",
+          "title": "Sound effect",
+          "description": "Room admin: play a sound of the audio library once, as a sound effect.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["play", "stop", "pause", "resume", "volume"]
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              },
+              "loop": {
+                "type": "boolean"
+              },
+              "volume": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "fadeMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 60000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["sfx"],
+            "usage": ".sfx [play] <sound> [--volume 0.8] | .sfx stop"
+          }
+        },
+        {
+          "id": "report",
+          "source": "engine",
+          "title": "Session report",
+          "description": "The session so far as a keepsake: a short scoreboard, or the whole session as one HTML page to save. A room admin may ask for the reveal edition, which also prints what was hidden from the players.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": ["text", "html"]
+              },
+              "reveal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["report"],
+            "usage": ".report | .report html | .report html reveal"
+          }
+        },
+        {
+          "id": "model",
+          "source": "engine",
+          "title": "Model settings",
+          "description": "See which provider and model each lane of the Keeper uses; the room admin switches them, sets a key, asks a provider for its models, or goes back to the server's own settings. Server-wide: every room follows.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "list", "set", "key", "reset"]
+              },
+              "lane": {
+                "type": "string",
+                "enum": ["keeper", "npc", "scribe", "director", "memory"]
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "baseUrl": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "wire": {
+                "type": "string",
+                "enum": ["openai-compatible", "anthropic", "openai-responses"]
+              },
+              "effort": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "xhigh", "max"]
+              },
+              "contextWindow": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000000
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3600000
+              },
+              "promptCacheKey": {
+                "type": "boolean"
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["model", "models"],
+            "usage": ".model [show] | .model list [provider] | .model set <provider> [model] [key=…] [base_url=…] [wire=…] [effort=…] [context=N] [lane=npc|scribe|director|memory] | .model key <key> [lane=…] | .model reset [lane]"
+          }
+        },
+        {
+          "id": "imagegen",
+          "source": "engine",
+          "title": "Image generation",
+          "description": "Room admin: see which provider makes pictures, switch it, or turn pictures off. Server-wide: every room follows.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "set", "off"]
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "size": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "baseUrl": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["imagegen"],
+            "usage": ".imagegen [show] | .imagegen set <provider> [model] [size] [key=…] [base_url=…] | .imagegen off"
+          }
+        },
+        {
+          "id": "key",
+          "source": "engine",
+          "title": "Access keys",
+          "description": "Room admin: this room's access keys — list them, mint a new one, rename one, change its role, or revoke it (whoever holds it is disconnected).",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "mint", "rename", "role", "revoke"]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "role": {
+                "type": "string",
+                "enum": ["player", "admin", "observer"]
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "admin",
+          "available": true,
+          "text": {
+            "forms": ["key", "keys"],
+            "usage": ".key [list] | .key mint [player|admin|observer] <name> | .key rename <id> <name> | .key role <id> <player|admin|observer> | .key revoke <id>"
+          }
+        }
+      ]
+    },
+    "observer": {
+      "commands": [
+        {
+          "id": "sheet",
+          "source": "engine",
+          "title": "Character sheet",
+          "description": "Show your sheet, or set values on it: NAME=VALUE (also += and -=), or the dice-bot form NAME VALUE. A value may be dice. clear deletes your character; finalize resets its current pools for its final characteristics.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "set", "clear", "finalize"]
+              },
+              "writes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["=", "+=", "-="]
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "required": ["name", "op", "value"],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["sheet", "st"],
+            "usage": ".st [show] | .st STR=60 HP-=2 | .st 力量60 敏捷50 | .st clear | .st finalize"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "new_character",
+          "source": "engine",
+          "title": "New character",
+          "description": "Make a new character in a rule system with its creation word (.coc, .dnd) and play it.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["system"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["coc", "coc7", "dnd", "dnd5e"],
+            "usage": ".coc [name] | .dnd [name]"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "genchar",
+          "source": "engine",
+          "title": "Character from a description",
+          "description": "Describe a character in words and get a rule-legal sheet in the room's rule system (or the one you name), as your character. The model proposes an occupation, the attributes to favour and a few skills; the numbers are rolled and placed by the rules.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["description"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["genchar"],
+            "usage": ".genchar [system] [name] | <description> | .genchar [system] <description>"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "rule",
+          "source": "engine",
+          "title": "House rule",
+          "description": "Show the room's rule system and house-rule ladder, or (room admin) choose another.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "variant": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "system": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["rule"],
+            "usage": ".rule [<variant>|0] | .rule system <system>|default"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "uploads",
+          "source": "engine",
+          "title": "Uploads on/off",
+          "description": "Show whether members may upload files to this room, or (room admin) allow or stop uploads.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "on": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["uploads"],
+            "usage": ".uploads [on|off]"
+          }
+        },
+        {
+          "id": "import",
+          "source": "engine",
+          "title": "Import a card",
+          "description": "Bring in a card — a file you uploaded for import, or one a pack enabled here ships: as the room's world (room admin), or as your character.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "pack": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "card": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "as": {
+                "type": "string",
+                "enum": ["world", "character"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["as"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["import"],
+            "usage": ".import world <file hash> | .import character <file hash> [name] | .import world <pack> <card path> | .import character <pack> <card path> [name]"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "pack",
+          "source": "engine",
+          "title": "Packs",
+          "description": "See the content packs this room plays with; the room admin sees every installed pack, installs one on the server (it is enabled here at once), and enables or disables them here.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["list", "enable", "disable", "install"]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": false,
+          "text": {
+            "forms": ["pack", "packs"],
+            "usage": ".pack [list] | .pack enable <id> | .pack disable <id> | .pack install <path|https-url|gh:owner/repo[@tag]>"
+          },
+          "reason": "observer"
+        },
+        {
+          "id": "report",
+          "source": "engine",
+          "title": "Session report",
+          "description": "The session so far as a keepsake: a short scoreboard, or the whole session as one HTML page to save. A room admin may ask for the reveal edition, which also prints what was hidden from the players.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": ["text", "html"]
+              },
+              "reveal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["report"],
+            "usage": ".report | .report html | .report html reveal"
+          }
+        },
+        {
+          "id": "model",
+          "source": "engine",
+          "title": "Model settings",
+          "description": "See which provider and model each lane of the Keeper uses; the room admin switches them, sets a key, asks a provider for its models, or goes back to the server's own settings. Server-wide: every room follows.",
+          "params": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["show", "list", "set", "key", "reset"]
+              },
+              "lane": {
+                "type": "string",
+                "enum": ["keeper", "npc", "scribe", "director", "memory"]
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "baseUrl": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "wire": {
+                "type": "string",
+                "enum": ["openai-compatible", "anthropic", "openai-responses"]
+              },
+              "effort": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "xhigh", "max"]
+              },
+              "contextWindow": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000000
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3600000
+              },
+              "promptCacheKey": {
+                "type": "boolean"
+              }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+          },
+          "role": "player",
+          "available": true,
+          "text": {
+            "forms": ["model", "models"],
+            "usage": ".model [show] | .model list [provider] | .model set <provider> [model] [key=…] [base_url=…] [wire=…] [effort=…] [context=N] [lane=npc|scribe|director|memory] | .model key <key> [lane=…] | .model reset [lane]"
+          }
+        }
+      ]
+    }
+  },
+  "room": {
+    "player": {
+      "locale": "en",
+      "localeLabel": "English",
+      "system": {
+        "id": "coc7",
+        "label": "CoC"
+      },
+      "variant": null,
+      "keeperMuted": false,
+      "uploads": true
+    },
+    "admin": {
+      "locale": "en",
+      "localeLabel": "English",
+      "system": {
+        "id": "coc7",
+        "label": "CoC"
+      },
+      "variant": null,
+      "keeperMuted": false,
+      "uploads": true
+    }
+  },
+  "audioPlaying": {
+    "player": {
+      "library": [
+        {
+          "hash": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "mime": "audio/ogg",
+          "size": 18
+        },
+        {
+          "hash": "6a2cdabc36d467d6de8fa43b5c5460a457c80ae65779e795247cb0720cd887ad",
+          "mime": "audio/ogg",
+          "size": 14
+        }
+      ],
+      "playing": {
+        "bgm": {
+          "id": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "title": "Rain Night",
+          "hash": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "mime": "audio/ogg",
+          "size": 18,
+          "loop": true,
+          "volume": 0.6,
+          "paused": false
+        }
+      }
+    },
+    "admin": {
+      "library": [
+        {
+          "hash": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "mime": "audio/ogg",
+          "size": 18,
+          "id": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "title": "Rain Night",
+          "layer": null,
+          "tags": [],
+          "source": {
+            "kind": "upload",
+            "id": null
+          }
+        },
+        {
+          "hash": "6a2cdabc36d467d6de8fa43b5c5460a457c80ae65779e795247cb0720cd887ad",
+          "mime": "audio/ogg",
+          "size": 14,
+          "id": "6a2cdabc36d467d6de8fa43b5c5460a457c80ae65779e795247cb0720cd887ad",
+          "title": "Tavern",
+          "layer": null,
+          "tags": [],
+          "source": {
+            "kind": "upload",
+            "id": null
+          }
+        }
+      ],
+      "playing": {
+        "bgm": {
+          "id": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "title": "Rain Night",
+          "hash": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "mime": "audio/ogg",
+          "size": 18,
+          "loop": true,
+          "volume": 0.6,
+          "paused": false
+        }
+      }
+    }
+  },
+  "audioIdle": {
+    "admin": {
+      "library": [
+        {
+          "hash": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "mime": "audio/ogg",
+          "size": 18,
+          "id": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "title": "Rain Night",
+          "layer": null,
+          "tags": [],
+          "source": {
+            "kind": "upload",
+            "id": null
+          }
+        },
+        {
+          "hash": "6a2cdabc36d467d6de8fa43b5c5460a457c80ae65779e795247cb0720cd887ad",
+          "mime": "audio/ogg",
+          "size": 14,
+          "id": "6a2cdabc36d467d6de8fa43b5c5460a457c80ae65779e795247cb0720cd887ad",
+          "title": "Tavern Night",
+          "layer": "ambience",
+          "tags": ["inn"],
+          "source": {
+            "kind": "upload",
+            "id": null
+          }
+        }
+      ],
+      "playing": {}
+    }
+  },
+  "adminKeys": {
+    "keys": [
+      {
+        "id": "k:1e5aee6f3830",
+        "name": "Root",
+        "role": "admin",
+        "masked": "root...cdef",
+        "online": false
+      },
+      {
+        "id": "k:f63b64bc4757",
+        "name": "Ada",
+        "role": "player",
+        "masked": "ada-...cdef",
+        "online": false
+      }
+    ]
+  },
+  "adminKeysAfterMint": {
+    "keys": [
+      {
+        "id": "k:1e5aee6f3830",
+        "name": "Root",
+        "role": "admin",
+        "masked": "root...cdef",
+        "online": false
+      },
+      {
+        "id": "k:f63b64bc4757",
+        "name": "Ada",
+        "role": "player",
+        "masked": "ada-...cdef",
+        "online": false
+      },
+      {
+        "id": "k:9b87ff3900bb",
+        "name": "Bao",
+        "role": "player",
+        "masked": "c9lR...aF98",
+        "online": false,
+        "created": 1700000000000
+      }
+    ]
+  },
+  "adminModel": {
+    "lanes": [
+      {
+        "lane": "keeper",
+        "source": "environment",
+        "sameAsKeeper": false,
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "baseUrl": "https://api.openai.com/v1",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-e...6789"
+        }
+      },
+      {
+        "lane": "npc",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "baseUrl": "https://api.openai.com/v1",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-e...6789"
+        }
+      },
+      {
+        "lane": "scribe",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "baseUrl": "https://api.openai.com/v1",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-e...6789"
+        }
+      },
+      {
+        "lane": "director",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "baseUrl": "https://api.openai.com/v1",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-e...6789"
+        }
+      },
+      {
+        "lane": "memory",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "baseUrl": "https://api.openai.com/v1",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-e...6789"
+        }
+      }
+    ],
+    "providers": [
+      {
+        "id": "openai",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://api.openai.com/v1",
+        "credential": true
+      },
+      {
+        "id": "anthropic",
+        "preset": true,
+        "wire": "anthropic",
+        "baseUrl": "https://api.anthropic.com",
+        "credential": false
+      },
+      {
+        "id": "deepseek",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://api.deepseek.com",
+        "credential": false
+      },
+      {
+        "id": "openrouter",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "credential": false
+      },
+      {
+        "id": "moonshot",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://api.moonshot.ai/v1",
+        "credential": false
+      }
+    ],
+    "imagegen": {
+      "source": "default",
+      "enabled": false,
+      "provider": null,
+      "model": null,
+      "size": null,
+      "baseUrl": null,
+      "key": {
+        "set": false,
+        "masked": null
+      }
+    },
+    "imageProviders": [
+      {
+        "id": "openai",
+        "credential": false
+      },
+      {
+        "id": "xai",
+        "credential": false
+      }
+    ]
+  },
+  "adminModelAfterSet": {
+    "lanes": [
+      {
+        "lane": "keeper",
+        "source": "override",
+        "sameAsKeeper": false,
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "baseUrl": "https://api.deepseek.com",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-t...cdef"
+        }
+      },
+      {
+        "lane": "npc",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "baseUrl": "https://api.deepseek.com",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-t...cdef"
+        }
+      },
+      {
+        "lane": "scribe",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "baseUrl": "https://api.deepseek.com",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-t...cdef"
+        }
+      },
+      {
+        "lane": "director",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "baseUrl": "https://api.deepseek.com",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-t...cdef"
+        }
+      },
+      {
+        "lane": "memory",
+        "source": "default",
+        "sameAsKeeper": true,
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "baseUrl": "https://api.deepseek.com",
+        "wire": "openai-compatible",
+        "effort": null,
+        "contextWindow": null,
+        "key": {
+          "set": true,
+          "masked": "sk-t...cdef"
+        }
+      }
+    ],
+    "providers": [
+      {
+        "id": "openai",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://api.openai.com/v1",
+        "credential": true
+      },
+      {
+        "id": "anthropic",
+        "preset": true,
+        "wire": "anthropic",
+        "baseUrl": "https://api.anthropic.com",
+        "credential": false
+      },
+      {
+        "id": "deepseek",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://api.deepseek.com",
+        "credential": true
+      },
+      {
+        "id": "openrouter",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "credential": false
+      },
+      {
+        "id": "moonshot",
+        "preset": true,
+        "wire": "openai-compatible",
+        "baseUrl": "https://api.moonshot.ai/v1",
+        "credential": false
+      }
+    ],
+    "imagegen": {
+      "source": "default",
+      "enabled": false,
+      "provider": null,
+      "model": null,
+      "size": null,
+      "baseUrl": null,
+      "key": {
+        "set": false,
+        "masked": null
+      }
+    },
+    "imageProviders": [
+      {
+        "id": "openai",
+        "credential": false
+      },
+      {
+        "id": "xai",
+        "credential": false
+      }
+    ]
+  },
+  "adminContent": {
+    "skills": [],
+    "ruleSystems": [
+      {
+        "id": "coc7",
+        "title": "CoC",
+        "enabled": true,
+        "source": {
+          "kind": "builtin",
+          "id": null
+        }
+      },
+      {
+        "id": "dnd5e",
+        "title": "DnD5e",
+        "enabled": false,
+        "source": {
+          "kind": "builtin",
+          "id": null
+        }
+      },
+      {
+        "id": "wod",
+        "title": "wod",
+        "enabled": false,
+        "source": {
+          "kind": "builtin",
+          "id": null
+        }
+      }
+    ],
+    "packs": []
+  },
+  "roomUploadsOff": {
+    "locale": "en",
+    "localeLabel": "English",
+    "system": {
+      "id": "coc7",
+      "label": "CoC"
+    },
+    "variant": null,
+    "keeperMuted": false,
+    "uploads": false
+  },
+  "results": {
+    "bgmPlay": {
+      "ok": true,
+      "text": "BGM: playing Rain Night.",
+      "data": {
+        "layer": "bgm",
+        "action": "play",
+        "sound": {
+          "id": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "title": "Rain Night",
+          "layer": null,
+          "tags": [],
+          "source": {
+            "kind": "upload",
+            "id": null
+          }
+        }
+      },
+      "signals": [
+        {
+          "id": "id-1",
+          "action": "play",
+          "layer": "bgm",
+          "sound": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "hash": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84",
+          "mime": "audio/ogg",
+          "size": 18,
+          "title": "Rain Night",
+          "loop": true,
+          "volume": 0.6,
+          "fadeMs": 1200
+        }
+      ]
+    },
+    "bgmPause": {
+      "ok": true,
+      "text": "BGM: paused.",
+      "data": {
+        "layer": "bgm",
+        "action": "pause"
+      },
+      "signals": [
+        {
+          "id": "id-2",
+          "action": "pause",
+          "layer": "bgm",
+          "sound": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84"
+        }
+      ]
+    },
+    "bgmStop": {
+      "ok": true,
+      "text": "BGM: stopped.",
+      "data": {
+        "layer": "bgm",
+        "action": "stop"
+      },
+      "signals": [
+        {
+          "id": "id-3",
+          "action": "stop",
+          "layer": "bgm",
+          "sound": "51d921b4e9d117046b2239c8272d934b6487941c836a352a3387b8e47f6a5a84"
+        }
+      ]
+    },
+    "audioSet": {
+      "ok": true,
+      "text": "Updated: Tavern Night.",
+      "data": {
+        "id": "6a2cdabc36d467d6de8fa43b5c5460a457c80ae65779e795247cb0720cd887ad",
+        "title": "Tavern Night",
+        "layer": "ambience",
+        "tags": ["inn"]
+      },
+      "signals": []
+    },
+    "audioNotFound": {
+      "ok": false,
+      "error": {
+        "code": "audio_not_found",
+        "message": "No sound in the audio library matches nothing-like-it."
+      }
+    },
+    "keyMint": {
+      "ok": true,
+      "text": "New player key for Bao (k:9b87ff3900bb):\nc9lR_V3J2oC8dnim46IXX2LBNK4HaF98\nIt is shown this once: hand it to them now, it cannot be shown again.",
+      "data": {
+        "id": "k:9b87ff3900bb",
+        "name": "Bao",
+        "role": "player",
+        "key": "c9lR_V3J2oC8dnim46IXX2LBNK4HaF98"
+      },
+      "signals": []
+    },
+    "keyRevokeLast": {
+      "ok": false,
+      "error": {
+        "code": "last_admin",
+        "message": "That is this room's last admin key: mint another admin key first."
+      }
+    },
+    "modelSet": {
+      "ok": true,
+      "text": "keeper now uses deepseek / deepseek-chat.\nKey: sk-t...cdef",
+      "data": {
+        "lane": {
+          "lane": "keeper",
+          "source": "override",
+          "sameAsKeeper": false,
+          "provider": "deepseek",
+          "model": "deepseek-chat",
+          "baseUrl": "https://api.deepseek.com",
+          "wire": "openai-compatible",
+          "effort": null,
+          "contextWindow": null,
+          "key": {
+            "set": true,
+            "masked": "sk-t...cdef"
+          }
+        },
+        "keySaved": true
+      },
+      "signals": []
+    },
+    "modelBadKey": {
+      "ok": false,
+      "error": {
+        "code": "unknown_provider",
+        "message": "No provider nope-not-a-preset is known here: give its address with base_url=<url>."
+      }
+    },
+    "skillEnable": {
+      "ok": false,
+      "error": {
+        "code": "skill_not_available",
+        "message": "This room has no skill x to enable."
+      }
+    },
+    "packInstallBad": {
+      "ok": false,
+      "error": {
+        "code": "install_unavailable",
+        "message": "This server does not install packs from chat."
+      }
+    },
+    "reportText": {
+      "ok": true,
+      "text": "📊 Session report\n📜 0 lines over 0 turns\nNobody rolled a die this session.\nFor the whole session as a page to keep, ask for the HTML edition (.report html).",
+      "data": {
+        "format": "text",
+        "players": [],
+        "turns": 0,
+        "lines": 0
+      },
+      "signals": []
+    },
+    "reportHtml": {
+      "ok": true,
+      "text": "The session report is ready: session-report-table-20231115-0613.html",
+      "data": {
+        "format": "html",
+        "edition": "player",
+        "media": {
+          "hash": "a224993bf7358bc24f8e9366311f57a4caaac28f12d0f72f5a1ec5250cc44847",
+          "mime": "text/html",
+          "size": 17057,
+          "name": "session-report-table-20231115-0613.html"
+        }
+      },
+      "signals": []
+    },
+    "reportReveal": {
+      "ok": true,
+      "text": "The reveal edition is ready: session-report-reveal-table-20231115-0613.html. It prints what the players could not see — read it after the campaign, not before.",
+      "data": {
+        "format": "html",
+        "edition": "reveal",
+        "media": {
+          "hash": "659fc0f8df13bcfe991f8931186e64db48382f07cbbbddb493dc5d3d7b3c734f",
+          "mime": "text/html",
+          "size": 17951,
+          "name": "session-report-reveal-table-20231115-0613.html"
+        }
+      },
+      "signals": []
+    },
+    "uploadsOff": {
+      "ok": true,
+      "data": {
+        "on": false
+      },
+      "signals": []
+    },
+    "uploadsOn": {
+      "ok": true,
+      "data": {
+        "on": true
+      },
+      "signals": []
+    },
+    "resetArm": {
+      "ok": true,
+      "text": "This will permanently clear the story and progress (your characters, the world and its lore stay). Room settings stay. Send .reset confirm within 60s to proceed.",
+      "data": {
+        "armed": "story"
+      },
+      "signals": []
+    },
+    "resetConfirm": {
+      "ok": true,
+      "text": "Reset complete: cleared the story and progress (your characters, the world and its lore stay).",
+      "data": {
+        "scope": "story",
+        "epoch": 2
+      },
+      "signals": []
+    },
+    "resetNotArmed": {
+      "ok": false,
+      "error": {
+        "code": "reset_not_armed",
+        "message": "No reset is waiting for your confirmation: send .reset first."
+      }
+    },
+    "undoOutOfRange": {
+      "ok": false,
+      "error": {
+        "code": "undo_out_of_range",
+        "message": "There is no earlier turn to go back to."
+      }
+    },
+    "gencharNoModel": {
+      "ok": false,
+      "error": {
+        "code": "genchar_failed",
+        "message": "The model's answer could not be used (model_failed). Try again, or roll a character (.coc, .dnd)."
+      }
+    },
+    "gencharEmpty": {
+      "ok": false,
+      "error": {
+        "code": "genchar_empty",
+        "message": "Describe the character: .genchar <description>."
+      }
+    },
+    "importNotUploaded": {
+      "ok": false,
+      "error": {
+        "code": "not_uploaded",
+        "message": "You have not uploaded a file with that hash for import. Upload the card first."
+      }
+    },
+    "saveExport": {
+      "ok": true,
+      "text": "Exported the room: 0 documents, 0 log entries.",
+      "dataKeys": ["format", "version", "turn", "documents", "state", "modules", "events"]
+    },
+    "gencharOk": {
+      "ok": true,
+      "text": "You now play Ada Lin (CoC): STR 55, DEX 50, CON 90, SIZ 45, APP 30, INT 65, POW 50, EDU 70, Luck 30, DB 0, Build 0, MOV 9, Sanity 50, HP 13, MP 10\nBackground: Thirty years at sea.",
+      "data": {
+        "id": "ch-id-1",
+        "name": "Ada Lin",
+        "system": "coc7",
+        "method": "rolled",
+        "violations": [],
+        "dropped": 0
+      }
+    }
+  }
+}

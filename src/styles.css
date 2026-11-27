@@ -3666,13 +3666,27 @@ button.npc-line-toggle {
   width: 72px;
 }
 
-.member-avatar {
+/* A thumbnail is a button that opens the picture above the list. */
+.media-open {
   flex: none;
-  width: 20px;
-  height: 20px;
-  object-fit: cover;
-  border-radius: 50%;
-  border: 1px solid var(--border-soft);
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.media-preview {
+  margin: 8px 0;
+}
+
+.audio-admin {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.audio-sound {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 /* --- keeper variable writes ----------------------------------------------- */

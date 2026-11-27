@@ -1,455 +1,213 @@
+// The sound card: what plays for everyone, the library for the room admin only, every control a
+// command the `commands` view offers, and a sound added by an upload with purpose `audio`. View
+// values, results and signals are the engine's own (`fixtures/actions.json`).
+
 import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-
-const transport = vi.hoisted(() => ({
-  isTauri: vi.fn(() => true),
-  transportSend: vi.fn(async () => undefined),
-}))
-
-vi.mock("../../lib/transport", () => ({
-  ...transport,
-  TRANSPORT_EVENT: "loreweaver://transport",
-}))
-
-vi.mock("./panels/assets", () => ({
-  assetFetch: vi.fn(),
-  assetReadBase64: vi.fn(),
-}))
-
 import "../../i18n"
-import { assetFetch, assetReadBase64 } from "./panels/assets"
-import { armGestureUnlock, PLAY_GRACE_MS, useAudioStore } from "../../store/audio"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
+
+const native = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke, convertFileSrc: (path: string) => path }))
+vi.mock("../../lib/native", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/native")>()),
+  pickUploadPath: vi.fn(async () => "/sounds/Harbor Bell.ogg"),
+}))
+
+import { flush } from "../../lib/connection.testkit"
+import { useAudioMixStore, useAudioSlot } from "../../store/audio"
+import { AudioController, type AudioElement } from "./audio"
 import AudioDeck, { AudioUnlockNotice } from "./AudioDeck"
+import { ACTION_FIXTURE, TestRoom, resultBody } from "./room.testkit"
 
-const HASH_BGM = "a".repeat(64)
-const HASH_AMB = "b".repeat(64)
+const RAIN = ACTION_FIXTURE.audioPlaying.admin.library[0]
+const TAVERN = ACTION_FIXTURE.audioPlaying.admin.library[1]
 
-function play(layer: "bgm" | "ambience" | "sfx", hash: string, title: string) {
-  useAudioStore.getState().ingest({
-    type: "audio_control",
-    id: `c-${layer}`,
-    action: "play",
-    layer,
-    hash,
-    mime: "audio/mpeg",
-    title,
-  })
+let room: TestRoom | null = null
+beforeEach(() => {
+  native.invoke.mockReset()
+  useAudioMixStore.setState({ muted: false, gain: { bgm: 1, ambience: 1, sfx: 1 } })
+})
+afterEach(() => {
+  useAudioSlot.getState().controller?.dispose()
+  useAudioSlot.setState({ controller: null })
+  room?.close()
+  room = null
+})
+
+/** The room, the card rendered (it holds the `audio` view), then the view's value arriving. */
+async function open(role: "player" | "admin") {
+  room = await TestRoom.open(role)
+  await room.actionViews(role)
+  render(<AudioDeck />)
+  await room.view("audio", structuredClone(ACTION_FIXTURE.audioPlaying[role]))
+  return room
 }
 
-describe("AudioDeck load errors", () => {
-  beforeEach(() => {
-    useAudioStore.getState().reset()
-    useAudioStore.setState({ unlocked: true })
-    useLegacyConnectionStore.setState({
-      status: "online",
-      attempt: 0,
-      lastError: null,
-      welcome: {
-        type: "welcome",
-        protocol: "2.3",
-        room: "r1",
-        you: { id: "u1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver/1",
+describe("AudioDeck — everyone", () => {
+  it("shows a player what plays, and never the library's names", async () => {
+    await open("player")
+    const music = screen.getByText("Music").closest(".audio-row") as HTMLElement
+    expect(music).toHaveTextContent("Rain Night")
+    expect(screen.queryByText("Library")).toBeNull()
+    expect(screen.queryByText("Tavern")).toBeNull()
+    expect(screen.queryByRole("button", { name: "Play" })).toBeNull()
+  })
+
+  it("keeps the listener's mute and per-layer volume in local state, sending nothing", async () => {
+    const r = await open("player")
+    const before = r.requests().length
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Mute" }))
+    fireEvent.change(screen.getByRole("slider", { name: "Music volume (this computer)" }), {
+      target: { value: "0.4" },
+    })
+    expect(useAudioMixStore.getState().muted).toBe(true)
+    expect(useAudioMixStore.getState().gain.bgm).toBe(0.4)
+    expect(r.requests()).toHaveLength(before)
+  })
+
+  it("offers the unlock while the WebView refuses to start sound, and asks again from the click", async () => {
+    const r = await open("player")
+    const elements: AudioElement[] = []
+    let allow = false
+    const controller = new AudioController({
+      session: r.connection.session,
+      load: async () => "blob:rain",
+      createElement: () => {
+        const element: AudioElement = {
+          src: "",
+          loop: false,
+          volume: 1,
+          paused: true,
+          ended: false,
+          error: null,
+          play: vi.fn(() =>
+            allow
+              ? Promise.resolve()
+              : Promise.reject(Object.assign(new Error("no"), { name: "NotAllowedError" })),
+          ),
+          pause: vi.fn(),
+          load: vi.fn(),
+          removeAttribute: vi.fn(),
+          addEventListener: vi.fn(),
+        }
+        elements.push(element)
+        return element
       },
+      timers: r.timers,
+      want: (names) => r.connection.want(names),
     })
-    vi.mocked(assetFetch).mockReset()
-    vi.mocked(assetReadBase64).mockReset().mockResolvedValue("aGVsbG8=")
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/audio")
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
-    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue()
-    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined)
-    vi.spyOn(console, "warn").mockImplementation(() => undefined)
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it("shows a localized layer error instead of failing silently, and retry recovers", async () => {
-    const user = userEvent.setup()
-    vi.mocked(assetFetch).mockRejectedValueOnce(new Error("blob exceeds the client cap"))
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    render(<AudioDeck />)
-
-    const bgm = screen.getByText("Music").closest(".audio-row") as HTMLElement
-    expect(await within(bgm).findByRole("alert")).toHaveTextContent("Could not load this layer.")
-    // The tooltip is a translated sentence, never the raw cause: this row is
-    // read by a listener whose locale may not be English.
-    expect(within(bgm).getByRole("alert")).toHaveAttribute(
-      "title",
-      "The track never arrived — the room's media store handed back no usable bytes for it.",
-    )
-    // The cause is not thrown away, it just does not go on screen.
-    expect(console.warn).toHaveBeenCalledWith("audio bgm: blob exceeds the client cap")
-    expect(screen.queryByText("Could not load this layer.")).toBe(within(bgm).getByRole("alert"))
-
-    vi.mocked(assetFetch).mockResolvedValue(5)
-    await user.click(within(bgm).getByRole("button", { name: "Retry" }))
-    await vi.waitFor(() => {
-      expect(within(bgm).queryByRole("alert")).toBeNull()
+    act(() => useAudioSlot.setState({ controller }))
+    render(<AudioUnlockNotice />)
+    // The controller arrives after the view did: a fresh value (a reconnect's) is what it starts from.
+    await act(async () => {
+      await r.view("audio", structuredClone(ACTION_FIXTURE.audioPlaying.player))
+      await flush(10)
     })
-    expect(assetFetch).toHaveBeenLastCalledWith(HASH_BGM)
-  })
-
-  it("does not paint a bgm failure onto ambience", async () => {
-    vi.mocked(assetFetch).mockImplementation(async (hash: string) => {
-      if (hash === HASH_BGM) throw new Error("not cached")
-      return 5
-    })
-    act(() => {
-      play("bgm", HASH_BGM, "Tide")
-      play("ambience", HASH_AMB, "Rain")
-    })
-    render(<AudioDeck />)
-
-    const bgm = screen.getByText("Music").closest(".audio-row") as HTMLElement
-    const ambience = screen.getByText("Ambience").closest(".audio-row") as HTMLElement
-    expect(await within(bgm).findByRole("alert")).toBeInTheDocument()
-    expect(within(ambience).queryByRole("alert")).toBeNull()
-    expect(within(ambience).getByText("Rain")).toBeInTheDocument()
-  })
-
-  it("clears the error when the hash changes and the next load succeeds", async () => {
-    vi.mocked(assetFetch).mockRejectedValueOnce(new Error("transport offline"))
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    render(<AudioDeck />)
-    const bgm = screen.getByText("Music").closest(".audio-row") as HTMLElement
-    expect(await within(bgm).findByRole("alert")).toBeInTheDocument()
-
-    vi.mocked(assetFetch).mockResolvedValue(5)
-    act(() => play("bgm", HASH_AMB, "New tide"))
-    await vi.waitFor(() => {
-      expect(within(bgm).queryByRole("alert")).toBeNull()
-    })
-    expect(within(bgm).getByText("New tide")).toBeInTheDocument()
-  })
-
-  it("does not let the error of a replaced load bury the load that replaced it", async () => {
-    // Cleanup revoked the blob URL while the mounted element was still pointing
-    // at it, so the element raised `error` for a source pulled out from under
-    // it. That callback is asynchronous: by the time it ran, the NEXT load had
-    // already succeeded — and the handler, which asks no questions about which
-    // load it belongs to, wrote `decode` over it and dropped the src. A hash
-    // change or a Retry click could therefore silence a layer that had just
-    // loaded perfectly well.
-    let minted = 0
-    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:audio-${++minted}`)
-    vi.mocked(assetFetch).mockResolvedValue(5)
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    const { container } = render(<AudioDeck />)
-
-    const replaced = await vi.waitFor(() => {
-      const element = container.querySelector("audio")
-      if (element?.getAttribute("src") !== "blob:audio-1") throw new Error("first load not mounted")
-      return element
-    })
-
-    act(() => play("bgm", HASH_AMB, "New tide"))
-    await vi.waitFor(() => {
-      const element = container.querySelector("audio")
-      if (element?.getAttribute("src") !== "blob:audio-2") throw new Error("second load not mounted")
-    })
-
-    // The first load's element finally reports the source it lost.
-    act(() => {
-      fireEvent.error(replaced)
-    })
-
-    const bgm = screen.getByText("Music").closest(".audio-row") as HTMLElement
-    expect(within(bgm).queryByRole("alert")).toBeNull()
-    expect(useAudioStore.getState().layers.bgm.loadError).toBeNull()
-    expect(container.querySelector("audio")?.getAttribute("src")).toBe("blob:audio-2")
-    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith("blob:audio-2")
-  })
-
-  it("never revokes a URL the mounted element is still pointing at", async () => {
-    // The other half: the element must never be left naming a URL that has
-    // already been revoked. Revocation waits until the DOM has moved on.
-    let mounted: HTMLElement | null = null
-    const revokedWhileShown: string[] = []
-    let minted = 0
-    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:audio-${++minted}`)
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => {
-      if (mounted?.querySelector("audio")?.getAttribute("src") === url) revokedWhileShown.push(url)
-    })
-    vi.mocked(assetFetch).mockResolvedValue(5)
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    const { container } = render(<AudioDeck />)
-    mounted = container
-
-    await vi.waitFor(() => {
-      if (container.querySelector("audio")?.getAttribute("src") !== "blob:audio-1") {
-        throw new Error("first load not mounted")
-      }
-    })
-    act(() => play("bgm", HASH_AMB, "New tide"))
-    await vi.waitFor(() => {
-      if (container.querySelector("audio")?.getAttribute("src") !== "blob:audio-2") {
-        throw new Error("second load not mounted")
-      }
-    })
-
-    expect(revokedWhileShown).toEqual([])
-    // …and the URL nothing points at any more is still let go.
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:audio-1")
-  })
-
-  it("translates a decode failure instead of showing the reason code", async () => {
-    vi.mocked(assetFetch).mockResolvedValue(5)
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    const { container } = render(<AudioDeck />)
-
-    const audio = await vi.waitFor(() => {
-      const element = container.querySelector("audio")
-      if (element === null) throw new Error("the player has not mounted yet")
-      return element
-    })
-    act(() => {
-      fireEvent.error(audio)
-    })
-
-    const bgm = screen.getByText("Music").closest(".audio-row") as HTMLElement
-    expect(await within(bgm).findByRole("alert")).toHaveAttribute(
-      "title",
-      "The bytes arrived, but this window could not decode them as playable audio.",
-    )
+    expect(screen.getByText(/this window has not allowed sound yet/)).toBeInTheDocument()
+    allow = true
+    await userEvent.setup().click(screen.getAllByRole("button", { name: "Turn sound on" })[0])
+    expect(elements[0].play).toHaveBeenCalledTimes(2)
+    expect(screen.queryAllByRole("button", { name: "Turn sound on" })).toEqual([])
   })
 })
 
-describe("AudioDeck autoplay", () => {
-  let playSpy: ReturnType<typeof vi.spyOn>
-  let disarm: () => void = () => undefined
-
-  const refused = () => new DOMException("play() failed: no user gesture", "NotAllowedError")
-  const unlockButton = () => screen.queryAllByRole("button", { name: "Turn sound on" })
-
-  beforeEach(() => {
-    useAudioStore.getState().reset()
-    // The state of a window nobody has clicked yet.
-    useAudioStore.setState({ unlocked: false })
-    useLegacyConnectionStore.setState({
-      status: "online",
-      attempt: 0,
-      lastError: null,
-      welcome: {
-        type: "welcome",
-        protocol: "2.4",
-        room: "r1",
-        you: { id: "u1", name: "Nyx", role: "player" },
-        locale: "en",
-        server: "loreweaver/1",
-      },
-    })
-    vi.mocked(assetFetch).mockReset().mockResolvedValue(5)
-    vi.mocked(assetReadBase64).mockReset().mockResolvedValue("aGVsbG8=")
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test/audio")
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
-    playSpy = vi.spyOn(HTMLMediaElement.prototype, "play")
-    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined)
-    vi.spyOn(console, "warn").mockImplementation(() => undefined)
-  })
-
-  afterEach(() => {
-    disarm()
-    vi.restoreAllMocks()
-  })
-
-  it("plays a cue with no gesture at all when the webview allows it, and never shows the hint", async () => {
-    playSpy.mockResolvedValue(undefined)
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    render(
-      <>
-        <AudioUnlockNotice />
-        <AudioDeck />
-      </>,
-    )
-
-    await vi.waitFor(() => expect(playSpy).toHaveBeenCalled())
-    // Let the (resolved) attempt settle before looking for a hint that must not be there.
-    await act(async () => undefined)
-    expect(unlockButton()).toHaveLength(0)
-    expect(screen.queryByRole("status")).toBeNull()
-    expect(useAudioStore.getState().unlocked).toBe(false)
-    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
-  })
-
-  it("shows the hint, in the deck and above the chronicle, when the webview refuses", async () => {
-    playSpy.mockRejectedValue(refused())
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    render(
-      <>
-        <AudioUnlockNotice />
-        <AudioDeck />
-      </>,
-    )
-
-    await vi.waitFor(() => expect(unlockButton()).toHaveLength(2))
-    // The cue is remembered, not dropped, and the row still names it.
-    expect(useAudioStore.getState().layers.bgm).toMatchObject({ playing: true, waitingForUnlock: true })
-    const bgm = screen.getByText("Music").closest(".audio-row") as HTMLElement
-    expect(within(bgm).getByText("Tide")).toBeInTheDocument()
-  })
-
-  it("starts a refused layer on the first gesture anywhere in the window", async () => {
-    playSpy.mockRejectedValueOnce(refused()).mockResolvedValue(undefined)
-    disarm = armGestureUnlock()
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    render(<AudioDeck />)
-    await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
-    expect(playSpy).toHaveBeenCalledTimes(1)
-
-    // Not the deck's button — a click on the page body.
-    act(() => {
-      fireEvent.click(document.body)
-    })
-
-    await vi.waitFor(() => expect(unlockButton()).toHaveLength(0))
-    expect(playSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
-    expect(useAudioStore.getState().unlocked).toBe(true)
-    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
-  })
-
-  it("calls play() inside the gesture itself — a click anywhere, and the button — not in an effect after it", async () => {
-    // WebKit blocks a play() made after the event; only one made in it counts.
-    playSpy.mockRejectedValueOnce(refused()).mockResolvedValue(undefined)
-    let playsAtEndOfEvent = -1
-    const observe = () => {
-      playsAtEndOfEvent = playSpy.mock.calls.length
-    }
-    window.addEventListener("click", observe)
-    try {
-      disarm = armGestureUnlock()
-      act(() => play("bgm", HASH_BGM, "Tide"))
-      render(<AudioDeck />)
-      await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
-      expect(playSpy).toHaveBeenCalledTimes(1)
-
-      // Dispatched bare: no act(), so React has not re-rendered when it returns.
-      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }))
-      expect(playsAtEndOfEvent).toBe(2)
-    } finally {
-      window.removeEventListener("click", observe)
-    }
-  })
-
-  it("calls play() inside the button's own click handler too", async () => {
-    playSpy.mockRejectedValueOnce(refused()).mockResolvedValue(undefined)
-    let playsAtEndOfEvent = -1
-    const observe = () => {
-      playsAtEndOfEvent = playSpy.mock.calls.length
-    }
-    window.addEventListener("click", observe)
-    try {
-      act(() => play("bgm", HASH_BGM, "Tide"))
-      render(<AudioDeck />)
-      await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
-      expect(playSpy).toHaveBeenCalledTimes(1)
-
-      // Our button only: the window listener is not armed in this test.
-      unlockButton()[0].dispatchEvent(new MouseEvent("click", { bubbles: true }))
-      expect(playsAtEndOfEvent).toBe(2)
-    } finally {
-      window.removeEventListener("click", observe)
-    }
-  })
-
-  it("shows the hint when play() never settles and the element stays paused, as in WebKit", async () => {
-    // WKWebView does not reject a blocked play(): the promise just never
-    // settles. The refusal is only visible as a paused element after a grace.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
-    try {
-      playSpy.mockImplementation(() => new Promise<void>(() => undefined))
-      act(() => play("bgm", HASH_BGM, "Tide"))
-      render(
-        <>
-          <AudioUnlockNotice />
-          <AudioDeck />
-        </>,
-      )
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(PLAY_GRACE_MS - 100)
-      })
-      expect(playSpy).toHaveBeenCalled()
-      expect(unlockButton()).toHaveLength(0)
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(200)
-      })
-      expect(unlockButton()).toHaveLength(2)
-      expect(useAudioStore.getState().layers.bgm).toMatchObject({ playing: true, waitingForUnlock: true })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it("does not pause a playing layer because ANOTHER layer changed", async () => {
-    // The ref callback used to be a new function every render, and React ran
-    // the old one's cleanup — which pauses its element — whenever the deck
-    // re-rendered for a different layer's change. Nothing started it again.
-    playSpy.mockResolvedValue(undefined)
-    const pause = vi.mocked(HTMLMediaElement.prototype.pause)
-    act(() => play("ambience", HASH_AMB, "Rain"))
-    const { container } = render(<AudioDeck />)
-    await vi.waitFor(() => expect(container.querySelector("audio")).not.toBeNull())
-    const rain = container.querySelector("audio") as HTMLAudioElement
-    Object.defineProperty(rain, "paused", { value: false, configurable: true })
-    pause.mockClear()
-
-    act(() => useAudioStore.getState().setLayerMuted("bgm", true))
-    act(() => play("sfx", HASH_BGM, "Bell"))
-
-    expect(pause.mock.contexts).not.toContain(rain)
-    // jsdom's own cleanup pause is not implemented; leave the element as it found it.
-    Object.defineProperty(rain, "paused", { value: true, configurable: true })
-  })
-
-  it("starts it from the notice's own button too", async () => {
+describe("AudioDeck — the room admin", () => {
+  it("lists the library by its titles and plays a sound on the chosen layer by its id", async () => {
+    const r = await open("admin")
     const user = userEvent.setup()
-    playSpy.mockRejectedValue(refused())
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    // The player lives in the deck, so it is mounted beside the notice.
-    render(
-      <>
-        <AudioUnlockNotice />
-        <AudioDeck />
-      </>,
+    const tavern = screen.getByText("Tavern").closest("li") as HTMLElement
+    await user.selectOptions(within(tavern).getByRole("combobox"), "ambience")
+    await user.click(within(tavern).getByRole("button", { name: "Play" }))
+    expect(r.commands().at(-1)).toEqual({ id: "ambience", args: { op: "play", query: TAVERN.id } })
+    await r.answer(resultBody("audioNotFound"))
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No sound in the audio library matches nothing-like-it.",
     )
-    await vi.waitFor(() => expect(screen.getAllByRole("button", { name: "Turn sound on" })).toHaveLength(2))
-
-    playSpy.mockResolvedValue(undefined)
-    await user.click(screen.getAllByRole("button", { name: "Turn sound on" })[0])
-    await vi.waitFor(() => expect(unlockButton()).toHaveLength(0))
-    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
   })
 
-  it("does not call an interrupted play a refusal", async () => {
-    // An AbortError is a pause or a newer source cutting the attempt short,
-    // not the webview's policy — no hint for it.
-    playSpy.mockRejectedValue(new DOMException("interrupted by pause()", "AbortError"))
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    render(<AudioDeck />)
-
-    await vi.waitFor(() => expect(playSpy).toHaveBeenCalled())
-    await act(async () => undefined)
-    expect(unlockButton()).toHaveLength(0)
-    expect(useAudioStore.getState().layers.bgm.waitingForUnlock).toBe(false)
+  it("pauses, stops and sets the table's volume of what plays (the volume once, on release)", async () => {
+    const r = await open("admin")
+    const user = userEvent.setup()
+    const controls = document.querySelector('[data-controls="bgm"]') as HTMLElement
+    await user.click(within(controls).getByRole("button", { name: "Pause" }))
+    expect(r.commands().at(-1)).toEqual({ id: "bgm", args: { op: "pause" } })
+    await r.answer(resultBody("bgmPause"))
+    const slider = within(controls).getByRole("slider", { name: "Music volume for the table" })
+    fireEvent.change(slider, { target: { value: "0.3" } })
+    fireEvent.change(slider, { target: { value: "0.2" } })
+    fireEvent.pointerUp(slider)
+    await r.feed()
+    expect(r.commands().filter((command) => command.id === "bgm")).toEqual([
+      { id: "bgm", args: { op: "pause" } },
+      { id: "bgm", args: { op: "volume", volume: 0.2 } },
+    ])
+    await user.click(within(controls).getByRole("button", { name: "Stop" }))
+    expect(r.commands().at(-1)).toEqual({ id: "bgm", args: { op: "stop" } })
   })
 
-  it("treats a synchronous throw from play() as a refusal", async () => {
-    playSpy.mockImplementation(() => {
-      throw refused()
+  it("sets an upload's title, layer and tags, and removes it only after asking", async () => {
+    const r = await open("admin")
+    const user = userEvent.setup()
+    const tavern = screen.getByText("Tavern").closest("li") as HTMLElement
+    await user.click(within(tavern).getByRole("button", { name: "Edit" }))
+    const title = within(tavern).getByLabelText("Title")
+    await user.clear(title)
+    await user.type(title, "Tavern Night")
+    await user.selectOptions(within(tavern).getByLabelText("Meant for"), "ambience")
+    await user.type(within(tavern).getByLabelText("Tags"), "inn")
+    await user.click(within(tavern).getByRole("button", { name: "Save" }))
+    expect(r.commands().at(-1)).toEqual({
+      id: "audio",
+      args: { op: "set", query: TAVERN.id, title: "Tavern Night", layer: "ambience", tags: ["inn"] },
     })
-    act(() => play("bgm", HASH_BGM, "Tide"))
-    render(<AudioDeck />)
+    await r.answer(resultBody("audioSet"))
+    expect(screen.getByRole("status")).toHaveTextContent("Updated: Tavern Night.")
 
-    await vi.waitFor(() => expect(unlockButton()).toHaveLength(1))
+    const rain = screen.getByText("Rain Night", { selector: "li *" }).closest("li") as HTMLElement
+    await user.click(within(rain).getByRole("button", { name: "Remove" }))
+    expect(r.commands().at(-1)?.id).toBe("audio")
+    await user.click(within(rain).getByRole("button", { name: "Remove for good" }))
+    expect(r.commands().at(-1)).toEqual({ id: "audio", args: { op: "remove", query: RAIN.id } })
   })
 
-  it("shows no notice when nothing is waiting", () => {
-    const { container } = render(<AudioUnlockNotice />)
-    expect(container).toBeEmptyDOMElement()
+  it("adds a sound by uploading it with purpose audio, and says so", async () => {
+    const r = await open("admin")
+    const offer = { name: "Harbor Bell.ogg", mime: "audio/ogg", size: 4, sha256: "b".repeat(64) }
+    native.invoke.mockImplementation(async (command: string) => {
+      if (command === "media_prepare") return offer
+      if (command === "media_upload")
+        return { hash: offer.sha256, size: 4, mime: "audio/ogg", name: offer.name }
+      throw new Error(`unexpected ${command}`)
+    })
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add a sound…" }))
+    await r.feed()
+    expect(native.invoke).toHaveBeenCalledWith("media_prepare", {
+      path: "/sounds/Harbor Bell.ogg",
+      purpose: "audio",
+    })
+    expect(r.lastRequest()).toMatchObject({ method: "media.offer", params: { ...offer, purpose: "audio" } })
+    await r.answer({ ok: true, data: { upload_id: "u-1" } })
+    await act(async () => flush(10))
+    expect(native.invoke).toHaveBeenCalledWith("media_upload", {
+      path: "/sounds/Harbor Bell.ogg",
+      uploadId: "u-1",
+      expectedSha256: offer.sha256,
+    })
+    expect(screen.getByText("Added Harbor Bell.ogg to the library.")).toBeInTheDocument()
+  })
+
+  it("shows a byte-channel refusal in the server's words", async () => {
+    const r = await open("admin")
+    native.invoke.mockImplementation(async (command: string) => {
+      if (command === "media_prepare")
+        return { name: "a.ogg", mime: "audio/ogg", size: 4, sha256: "c".repeat(64) }
+      throw { code: "audio_library_full", message: "The audio library is full.", server: true }
+    })
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add a sound…" }))
+    await r.feed()
+    await r.answer({ ok: true, data: { upload_id: "u-2" } })
+    await act(async () => flush(10))
+    expect(screen.getByRole("alert")).toHaveTextContent("The audio library is full.")
   })
 })

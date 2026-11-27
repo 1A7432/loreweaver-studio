@@ -1,24 +1,64 @@
-// The typed face of the native session-report path (`src-tauri/src/report.rs`,
-// protocol 2.4 `report` frame).
-//
-// The bytes ride the ordinary media GET and are sha256-verified natively, into
-// a cache of their own, before anything can save or open them. They never
-// enter the WebView: the protocol forbids a client from rendering report HTML
-// inside its own UI, so the only two ways out are a file the person saves and
-// the system browser.
+// The session report as a page (protocol 3.0 §6.8): `report {format: "html"}` answers with a
+// reference to the page — `data.media` `{hash, mime, size, name}` — not the page itself. The
+// native side (`src-tauri/src/report.rs`) fetches it by hash over the byte channel and
+// verifies it, into a cache of its own, before anything can save or open it. The bytes never
+// enter the WebView: the only two ways out are a file the person saves and the system browser.
+// A new page replaces the room's previous one of its edition, so a page is fetched at once.
 
 import { invoke } from "@tauri-apps/api/core"
+import { save } from "@tauri-apps/plugin-dialog"
+import { isContentHash, type Result } from "loreweaver-protocol/v3"
+import { toByteFailure } from "./media"
 
-/** Pull an announced report into the verified report cache; answers its size.
- * Rejects on a fetch failure (a reveal hash on a non-keeper connection is
- * `media_not_found`), a non-HTML reply, or a sha256 mismatch. */
-export function reportFetch(hash: string): Promise<number> {
-  return invoke<number>("report_fetch", { hash })
+export interface ReportOffer {
+  readonly hash: string
+  readonly name: string
+  readonly edition: "player" | "reveal"
+}
+
+/** The page a `report` result offers, or null when it is not a report page. */
+export function reportOffer(result: Result | null): ReportOffer | null {
+  if (result === null || !result.ok) return null
+  const data = result.data as
+    | { format?: unknown; edition?: unknown; media?: { hash?: unknown; mime?: unknown; name?: unknown } }
+    | null
+    | undefined
+  if (typeof data !== "object" || data === null || data.format !== "html") return null
+  const media = data.media
+  if (typeof media !== "object" || media === null || media.mime !== "text/html") return null
+  if (!isContentHash(media.hash)) return null
+  return {
+    hash: media.hash,
+    name: typeof media.name === "string" ? media.name : "",
+    edition: data.edition === "reveal" ? "reveal" : "player",
+  }
+}
+
+/** Pull an offered page into the verified report cache; answers its size. Rejects with a
+ * `ByteFailure`: the server's own words for a refusal (a replaced page, a reveal edition on a
+ * connection that is not an admin's: `media_not_found`), or `not_html`, `hash_mismatch`, … */
+export async function reportFetch(hash: string): Promise<number> {
+  try {
+    return await invoke<number>("report_fetch", { hash })
+  } catch (error) {
+    throw toByteFailure(error)
+  }
 }
 
 /** Copy a fetched report to the path the save dialog returned. */
 export function reportSave(hash: string, path: string): Promise<number> {
   return invoke<number>("report_save", { hash, path })
+}
+
+/** Ask where to save a fetched page and copy it there; the path written, or null when cancelled. */
+export async function saveReportAs(offer: ReportOffer): Promise<string | null> {
+  const path = await save({
+    defaultPath: safeReportName(offer.name, offer.hash),
+    filters: [{ name: "HTML", extensions: ["html"] }],
+  })
+  if (path === null) return null
+  await reportSave(offer.hash, path)
+  return path
 }
 
 /** Open a fetched report in the system browser under `name` (which must

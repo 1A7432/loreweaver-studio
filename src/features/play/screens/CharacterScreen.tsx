@@ -7,13 +7,15 @@
 // `characters` view, the attributes it edits from the live sheet (each with its label in
 // the viewer's language and the key the `sheet` command writes). There is no point-buy
 // mode for the same reason: its budgets live in a pack's constraints and no view carries
-// them. A card file of your own is imported through the byte channel, which this screen
-// does not offer yet; the cards a pack ships are importable below.
+// them. A character can also be described in words (`genchar`: the server's model proposes a
+// concept and the rule system rolls it), or brought in as a card file of your own (`ImportCard`);
+// the cards a pack ships are importable below.
 
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { stripControlChars, type ViewStat } from "loreweaver-protocol/v3"
 import CommandFeedback from "../CommandFeedback"
+import ImportCard from "../ImportCard"
 import { useCommand, useCommandRunner, useOnline, useView } from "../room"
 import { ClaimableCard, PackImportCard, ResourceRow } from "../StatePanel"
 import ScreenShell from "./ScreenShell"
@@ -68,6 +70,81 @@ function CreateCharacter() {
       <button type="button" className="primary-button" disabled={!online || pending} onClick={submit}>
         {t("play.character.create")}
       </button>
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
+    </div>
+  )
+}
+
+/** Describe a character in words: `genchar`. One model call on the server — it may take a while;
+ * its refusals (no model, the hourly cap, an answer it could not use) come back in its words. */
+function DescribeCharacter() {
+  const { t } = useTranslation()
+  const characters = useView("characters")
+  const online = useOnline()
+  const usable = useCommand("genchar", ["description", "name", "system"]) !== null
+  const { run, feedback, dismiss, pending } = useCommandRunner()
+  const [description, setDescription] = useState("")
+  const [name, setName] = useState("")
+  const [system, setSystem] = useState("")
+  const systems = characters?.systems ?? []
+  if (!usable) return null
+
+  const submit = () => {
+    const text = description.trim()
+    if (text === "") return
+    const args: Record<string, unknown> = { description: text }
+    if (name.trim() !== "") args.name = name.trim()
+    if (system !== "") args.system = system
+    void run("genchar", args)
+  }
+
+  return (
+    <div className="play-form">
+      <h4 className="play-form-title">{t("play.character.describeTitle")}</h4>
+      <p className="studio-hint">{t("play.character.describeHint")}</p>
+      <label className="field">
+        {t("play.character.description")}
+        <textarea
+          rows={4}
+          value={description}
+          placeholder={t("play.character.descriptionPlaceholder")}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </label>
+      <label className="field">
+        {t("play.character.name")}
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("play.character.namePlaceholder")}
+        />
+      </label>
+      {systems.length > 0 ? (
+        <label className="field">
+          {t("play.character.system")}
+          <select value={system} onChange={(e) => setSystem(e.target.value)}>
+            <option value="">{t("play.character.roomSystem")}</option>
+            {systems.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {stripControlChars(entry.label)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <button
+        type="button"
+        className="primary-button"
+        disabled={!online || pending || description.trim() === ""}
+        onClick={submit}
+      >
+        {pending ? t("play.character.describing") : t("play.character.describe")}
+      </button>
+      {pending ? (
+        <p className="play-busy" role="status">
+          {t("play.character.describingHint")}
+        </p>
+      ) : null}
       <CommandFeedback feedback={feedback} onDismiss={dismiss} />
     </div>
   )
@@ -175,6 +252,8 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
           <p className="placeholder">{t("play.character.none")}</p>
           <ClaimableCard />
           <CreateCharacter />
+          <DescribeCharacter />
+          <ImportCard as="character" />
           <PackImportCard only="character" />
         </>
       ) : (

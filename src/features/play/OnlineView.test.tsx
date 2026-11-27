@@ -35,15 +35,36 @@ describe("OnlineView", () => {
     expect(screen.getByText(/Table “main”/)).toBeInTheDocument()
   })
 
-  it("links only to screens that work, for the room admin too", async () => {
+  it("gives everyone the game, the character, the report and settings", async () => {
+    await open("player")
+    render(<OnlineView />)
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "⚄Enter game",
+      "⚄My character",
+      "⚄Session report",
+      "⚄Settings",
+    ])
+  })
+
+  it("gives the room admin the keys, the models, the content and the room's lifecycle too", async () => {
     await open("admin")
+    const user = userEvent.setup()
     render(<OnlineView />)
     expect(screen.getByText(/Table “main”/)).toHaveTextContent("Root · Room admin")
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
       "⚄Enter game",
       "⚄My character",
+      "⚄Session report",
       "⚄Settings",
+      "⚄Access keys",
+      "⚄Models",
+      "⚄Packs, rules & skills",
+      "⚄Save, undo & reset",
     ])
+    await user.click(screen.getByRole("menuitem", { name: /Access keys/ }))
+    expect(screen.getByRole("heading", { name: "Access keys" })).toBeInTheDocument()
+    await user.keyboard("{Escape}")
+    expect(screen.getByText(/Table “main”/)).toBeInTheDocument()
   })
 
   it("plays a line through the game screen and shows the story it comes back as", async () => {

@@ -281,6 +281,35 @@ describe("Connection", () => {
   })
 })
 
+describe("Connection.want", () => {
+  /** The view names each `view.subscribe` / `view.unsubscribe` call carried, in order. */
+  function viewCalls(driver: FakeDriver) {
+    return driver
+      .framesOn(driver.id)
+      .filter((frame) => frame.type === "call" && frame.method.startsWith("view."))
+      .map((frame) => {
+        const call = frame as unknown as { method: string; params: { names: string[] } }
+        return [call.method, call.params.names]
+      })
+  }
+
+  it("counts its holders: a view leaves only with the last one that wanted it", async () => {
+    const { driver, connection } = await online()
+    await flush()
+    const first = connection.want(["admin/keys", "audio"])
+    const second = connection.want(["audio"])
+    await flush()
+    expect(viewCalls(driver)).toEqual([["view.subscribe", ["admin/keys", "audio"]]])
+    first()
+    first()
+    await flush()
+    expect(viewCalls(driver).at(-1)).toEqual(["view.unsubscribe", ["admin/keys"]])
+    second()
+    await flush()
+    expect(viewCalls(driver).at(-1)).toEqual(["view.unsubscribe", ["audio"]])
+  })
+})
+
 describe("displayStatus", () => {
   const state = (patch: Partial<ConnectionState>): ConnectionState => ({
     phase: "idle",

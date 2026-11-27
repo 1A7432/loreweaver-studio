@@ -1,7 +1,9 @@
-//! Receiving a session report (protocol 2.4 `report` frame).
+//! Receiving a session report page (protocol 3.0 `report {format: "html"}`).
 //!
-//! The server announces a generated HTML report to the ONE connection that
-//! asked for it; the bytes ride the ordinary media GET. This module pulls them
+//! The command's result names the page by `data.media` `{hash, mime, size,
+//! name}` — to the caller alone — and the bytes ride the ordinary byte-channel
+//! GET (`docs/protocol.md` §6.8, "The session report as a page"). A new page
+//! replaces the room's previous one, so the WebView fetches it at once. This module pulls them
 //! through the same verified path panel assets use (a byte-channel GET +
 //! [`verify_and_store`]), then hands the file out in exactly two ways: copied
 //! to a path the person picked in the native save dialog, or copied under a
@@ -24,13 +26,14 @@ use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::asset_cache::{is_sha256_hex, lookup, verify_and_store};
+use crate::failure::Failure;
 use crate::transport_bridge::TransportState;
 
 /// Verified report blobs, content-addressed like the panel-asset cache.
 const BLOB_SUBDIR: &str = "reports";
 /// Named copies handed to the system browser: `<subdir>/<hash>/<name>.html`.
 const OPEN_SUBDIR: &str = "reports-open";
-/// The only MIME a `report` frame announces.
+/// The only MIME a report page has.
 const REPORT_MIME: &str = "text/html";
 /// Longest name accepted for the browser copy (bytes; every filesystem allows 255).
 const MAX_NAME_BYTES: usize = 240;
@@ -126,34 +129,39 @@ pub fn place_open_copy(
     Ok(path)
 }
 
-/// Pull one announced report over the live connection's media channel into the
-/// verified report cache. Returns its byte size. A bad hash, a non-HTML reply
-/// or bytes that do not hash to the announcement write nothing.
+/// Pull one offered report page over the live connection's byte channel into
+/// the verified report cache. Returns its byte size. A bad hash, a non-HTML
+/// reply or bytes that do not hash to the offer write nothing; a server
+/// refusal (`media_not_found` for a replaced page, or a reveal edition asked
+/// for by a non-admin) comes back in the server's own words.
 #[tauri::command]
 pub async fn report_fetch(
     app: AppHandle,
     state: State<'_, TransportState>,
     hash: String,
-) -> Result<u64, String> {
-    let hash = checked_hash(&hash)?;
-    let dir = cache_base(&app)?.join(BLOB_SUBDIR);
+) -> Result<u64, Failure> {
+    let hash = checked_hash(&hash).map_err(|err| Failure::local("bad_hash", err))?;
+    let dir = cache_base(&app)
+        .map_err(|err| Failure::local("cache_failed", err))?
+        .join(BLOB_SUBDIR);
     if let Some(path) = lookup(&dir, &hash) {
         return fs::metadata(&path)
             .map(|meta| meta.len())
-            .map_err(|err| format!("cache stat failed: {err}"));
+            .map_err(|err| Failure::local("cache_failed", format!("cache stat failed: {err}")));
     }
-    let handle = state.handle().await.ok_or("not connected")?;
-    let fetched = handle
-        .fetch(hash.clone())
+    let handle = state
+        .handle()
         .await
-        .map_err(|err| err.to_string())?;
+        .ok_or_else(|| Failure::local("not_connected", "no live link"))?;
+    let fetched = handle.fetch(hash.clone()).await?;
     if fetched.file.mime != REPORT_MIME {
-        return Err(format!(
-            "not a report: the server sent {:?}",
-            fetched.file.mime
+        return Err(Failure::local(
+            "not_html",
+            format!("not a report: the server sent {:?}", fetched.file.mime),
         ));
     }
-    verify_and_store(&dir, &hash, &fetched.bytes)?;
+    verify_and_store(&dir, &hash, &fetched.bytes)
+        .map_err(|err| Failure::local("hash_mismatch", err))?;
     Ok(fetched.bytes.len() as u64)
 }
 

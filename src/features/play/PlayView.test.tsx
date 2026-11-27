@@ -190,11 +190,12 @@ describe("PlayView: connected", () => {
     expect(screen.getByRole("menuitem", { name: /Enter game/ })).toBeInTheDocument()
     expect(screen.getByText("Online")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument()
-    // The views the room screen shows are wanted for the whole connection: asked for on the welcome.
+    // The views the room screen shows are wanted for the whole connection, and the room's sound
+    // (held by the connection's audio controller): asked for on the welcome.
     const subscribe = bridge.linkSend.mock.calls
       .map((call) => call[1] as { type: string; method?: string; params?: { names?: string[] } })
       .find((frame) => frame.type === "call" && frame.method === "view.subscribe")
-    expect(subscribe?.params?.names).toEqual(ROOM_VIEWS)
+    expect(subscribe?.params?.names).toEqual([...ROOM_VIEWS, "audio"])
   })
 
   it("keeps the room visible while reconnecting, with the attempt count", async () => {

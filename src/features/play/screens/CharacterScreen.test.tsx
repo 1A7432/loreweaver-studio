@@ -3,11 +3,20 @@
 // knows about a rule system it learned from the views — pinned here, because the failure
 // mode is a client quietly growing its own copy of CoC and D&D.
 
-import { render, screen, within } from "@testing-library/react"
+import { act, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import "../../../i18n"
-import { TestRoom, fixtureView } from "../room.testkit"
+
+const native = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke, convertFileSrc: (path: string) => path }))
+vi.mock("../../../lib/native", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/native")>()),
+  pickUploadPath: vi.fn(async () => "/cards/captain.png"),
+}))
+
+import { flush } from "../../../lib/connection.testkit"
+import { TestRoom, fixtureView, resultBody } from "../room.testkit"
 import CharacterScreen from "./CharacterScreen"
 import { sheetSetArgs } from "./sheetWrite"
 
@@ -164,5 +173,89 @@ describe("CharacterScreen — the sheet", () => {
       { id: "sheet", args: { op: "finalize" } },
       { id: "sheet", args: { op: "clear" } },
     ])
+  })
+})
+
+describe("CharacterScreen — a character from words or from a card file", () => {
+  /** An unseated player in the engine's file-keeping bench, whose command table offers `genchar` and `import`. */
+  async function bench() {
+    const r = await unseated()
+    await r.actionViews("player")
+    return r
+  }
+
+  function section(title: string): HTMLElement {
+    return screen.getByRole("heading", { name: title }).closest(".play-form") as HTMLElement
+  }
+
+  it("describes a character with genchar, says it is working, and shows the sheet it made", async () => {
+    const r = await bench()
+    const user = userEvent.setup()
+    render(<CharacterScreen onBack={() => {}} />)
+    const form = section("Describe a character")
+    await user.type(
+      within(form).getByLabelText("Description"),
+      "a retired sea captain, stubborn, good with knots and a rifle",
+    )
+    await user.type(within(form).getByLabelText("Name"), "Ada Lin")
+    await user.click(within(form).getByRole("button", { name: "Make this character" }))
+    expect(r.commands()).toEqual([
+      {
+        id: "genchar",
+        args: {
+          description: "a retired sea captain, stubborn, good with knots and a rifle",
+          name: "Ada Lin",
+        },
+      },
+    ])
+    expect(within(form).getByRole("button", { name: "Making…" })).toBeDisabled()
+    expect(within(form).getByRole("status")).toHaveTextContent("The model is working on it")
+    await r.answer(resultBody("gencharOk"))
+    expect(within(form).getByRole("status")).toHaveTextContent("You now play Ada Lin (CoC)")
+  })
+
+  it("shows genchar's refusal in the server's words", async () => {
+    const r = await bench()
+    const user = userEvent.setup()
+    render(<CharacterScreen onBack={() => {}} />)
+    const form = section("Describe a character")
+    await user.type(within(form).getByLabelText("Description"), "a tired harbour pilot who knows every reef")
+    await user.selectOptions(within(form).getByLabelText("Rule system"), "dnd5e")
+    await user.click(within(form).getByRole("button", { name: "Make this character" }))
+    expect(r.commands().at(-1)).toEqual({
+      id: "genchar",
+      args: { description: "a tired harbour pilot who knows every reef", system: "dnd5e" },
+    })
+    await r.answer(resultBody("gencharNoModel"))
+    expect(within(form).getByRole("alert")).toHaveTextContent(
+      "The model's answer could not be used (model_failed).",
+    )
+  })
+
+  it("imports a card of my own: uploaded for import, then imported as my character", async () => {
+    const r = await bench()
+    const card = { name: "captain.png", mime: "image/png", size: 2048, sha256: "d".repeat(64) }
+    native.invoke.mockReset().mockImplementation(async (command: string) => {
+      if (command === "media_prepare") return card
+      if (command === "media_upload")
+        return { hash: card.sha256, size: card.size, mime: card.mime, name: card.name }
+      throw new Error(command)
+    })
+    render(<CharacterScreen onBack={() => {}} />)
+    const form = section("My own card")
+    await userEvent.setup().click(within(form).getByRole("button", { name: "Pick a card file…" }))
+    await r.feed()
+    expect(native.invoke).toHaveBeenCalledWith("media_prepare", {
+      path: "/cards/captain.png",
+      purpose: "import",
+    })
+    expect(r.lastRequest()).toMatchObject({ method: "media.offer", params: { ...card, purpose: "import" } })
+    await r.answer({ ok: true, data: { upload_id: "u-card" } })
+    await act(async () => flush(10))
+    expect(r.commands()).toEqual([{ id: "import", args: { file: card.sha256, as: "character" } }])
+    await r.answer(resultBody("importNotUploaded"))
+    expect(within(form).getByRole("alert")).toHaveTextContent(
+      "You have not uploaded a file with that hash for import.",
+    )
   })
 })

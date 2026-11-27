@@ -16,6 +16,7 @@ use base64::Engine as _;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime, State};
 
+use crate::failure::Failure;
 use crate::transport_bridge::TransportState;
 
 const CACHE_SUBDIR: &str = "panel-assets";
@@ -139,28 +140,33 @@ pub async fn asset_cache_status(app: AppHandle, hashes: Vec<String>) -> Result<V
 /// Ensure one content-addressed blob is in the verified cache, pulling it over
 /// the live link's byte channel (a GET, protocol 3.0 §11.3) on a miss. Returns the byte size.
 /// The WebView never receives the bytes — the `panel://` handler serves them.
+/// A server refusal (`media_not_found`, …) comes back in the server's own words.
 #[tauri::command]
 pub async fn asset_fetch(
     app: AppHandle,
     state: State<'_, TransportState>,
     hash: String,
-) -> Result<u64, String> {
+) -> Result<u64, Failure> {
     let hash = hash.to_ascii_lowercase();
     if !is_sha256_hex(&hash) {
-        return Err(format!("not a sha256 hex hash: {hash:?}"));
+        return Err(Failure::local(
+            "bad_hash",
+            format!("not a sha256 hex hash: {hash:?}"),
+        ));
     }
-    let dir = cache_dir(&app)?;
+    let dir = cache_dir(&app).map_err(|err| Failure::local("cache_failed", err))?;
     if let Some(path) = lookup(&dir, &hash) {
         return fs::metadata(&path)
             .map(|meta| meta.len())
-            .map_err(|err| format!("cache stat failed: {err}"));
+            .map_err(|err| Failure::local("cache_failed", format!("cache stat failed: {err}")));
     }
-    let handle = state.handle().await.ok_or("not connected")?;
-    let fetched = handle
-        .fetch(hash.clone())
+    let handle = state
+        .handle()
         .await
-        .map_err(|err| err.to_string())?;
-    verify_and_store(&dir, &hash, &fetched.bytes)?;
+        .ok_or_else(|| Failure::local("not_connected", "no live link"))?;
+    let fetched = handle.fetch(hash.clone()).await?;
+    verify_and_store(&dir, &hash, &fetched.bytes)
+        .map_err(|err| Failure::local("hash_mismatch", err))?;
     Ok(fetched.bytes.len() as u64)
 }
 

@@ -49,9 +49,8 @@ vi.mock("../lib/hostLocal", () => ({
 vi.mock("../lib/transport", () => ({ ...transport, TRANSPORT_EVENT: "loreweaver://transport" }))
 
 import { useAppStore } from "./app"
-import { useLegacyConnectionStore } from "./legacyConnection"
 import { useHostLocalStore } from "./hostLocal"
-import { useTestDriveStore } from "./testDrive"
+import { useTestDriveStore, useTestDriveTableStore } from "./testDrive"
 
 const CANDIDATE = { kind: "python-module" as const, program: "python", args: ["-m", "app"], cwd: "/repo" }
 const REQUEST = {
@@ -74,7 +73,7 @@ const WELCOME = {
 /** The local server is up and joined — the state `hostLocal` reaches on ready. */
 function serving(role: "keeper" | "player" = "keeper") {
   useHostLocalStore.setState({ phase: "ready" })
-  useLegacyConnectionStore.setState({
+  useTestDriveTableStore.setState({
     status: "online",
     welcome: { ...WELCOME, you: { ...WELCOME.you, role } },
   })
@@ -85,7 +84,7 @@ describe("test-drive store", () => {
     vi.clearAllMocks()
     useTestDriveStore.getState().reset()
     useHostLocalStore.setState({ phase: "idle", error: null, homeOverride: "" })
-    useLegacyConnectionStore.setState({ status: "offline", welcome: null, lastError: null })
+    useTestDriveTableStore.setState({ status: "offline", welcome: null, lastError: null })
     useAppStore.setState({ mode: "studio" })
   })
 
@@ -172,7 +171,7 @@ describe("test-drive: the dev-room mode", () => {
     vi.clearAllMocks()
     useTestDriveStore.getState().reset()
     useHostLocalStore.setState({ phase: "idle", error: null, homeOverride: "", devSourceRoot: "" })
-    useLegacyConnectionStore.setState({ status: "offline", welcome: null, lastError: null })
+    useTestDriveTableStore.setState({ status: "offline", welcome: null, lastError: null })
     useAppStore.setState({ mode: "studio" })
   })
 
@@ -181,7 +180,7 @@ describe("test-drive: the dev-room mode", () => {
     // author's next mount is a sibling — so the root is the packs directory.
     const start = vi.fn(async (root?: string) => {
       useHostLocalStore.setState({ phase: "ready", devSourceRoot: root ?? "" })
-      useLegacyConnectionStore.setState({ status: "online", welcome: WELCOME })
+      useTestDriveTableStore.setState({ status: "online", welcome: WELCOME })
     })
     useHostLocalStore.setState({ start })
 
@@ -200,7 +199,7 @@ describe("test-drive: the dev-room mode", () => {
       phase: "ready",
       devSourceRoot: "/Users/nyx/packs",
     })
-    useLegacyConnectionStore.setState({ status: "online", welcome: WELCOME })
+    useTestDriveTableStore.setState({ status: "online", welcome: WELCOME })
     await useTestDriveStore.getState().run(MOUNT)
     expect(native.runEngineCli).not.toHaveBeenCalled()
     expect(native.readFileByPath).not.toHaveBeenCalled()
@@ -213,10 +212,10 @@ describe("test-drive: the dev-room mode", () => {
       useHostLocalStore.setState({ phase: "ready", devSourceRoot: root ?? "" })
       // disconnect() now invalidates the generation and goes offline; a
       // real restart dials again and a new welcome lands.
-      useLegacyConnectionStore.setState({ status: "online", welcome: WELCOME })
+      useTestDriveTableStore.setState({ status: "online", welcome: WELCOME })
     })
     useHostLocalStore.setState({ phase: "ready", devSourceRoot: "/somewhere/else", start, stop })
-    useLegacyConnectionStore.setState({ status: "online", welcome: WELCOME })
+    useTestDriveTableStore.setState({ status: "online", welcome: WELCOME })
 
     await useTestDriveStore.getState().run(MOUNT)
     expect(stop).toHaveBeenCalledTimes(1)

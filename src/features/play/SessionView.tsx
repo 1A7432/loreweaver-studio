@@ -1,12 +1,14 @@
 // The game screen: the story on the left (log, Keeper activity, notices, the tray panels
-// and the input line), the desk on the right (sidebar panels and the state cards), the
-// overlay panel above both. It also keeps the session subscribed to the views the room's
+// and the input line), the desk on the right (sidebar panels, the state cards, the room's
+// pictures and sound), the overlay panel above both. It also keeps the session subscribed to the views the room's
 // panels read, for as long as it is open.
 
 import { useTranslation } from "react-i18next"
 import { useSessionSnapshot } from "../../store/connection"
 import { quitTable } from "../../store/hostLocal"
+import AudioDeck, { AudioUnlockNotice } from "./AudioDeck"
 import InputBox from "./InputBox"
+import MediaDeck from "./MediaDeck"
 import NarrativeLog from "./NarrativeLog"
 import NoticeLines from "./NoticeLines"
 import { PanelSidebar, PanelTray } from "./panels/PanelDeck"
@@ -43,6 +45,7 @@ export default function SessionView({ onMenu }: { onMenu?: () => void }) {
           </button>
         </header>
         <PanelNotice />
+        <AudioUnlockNotice />
         <TurnStatus />
         <NarrativeLog />
         <NoticeLines />
@@ -52,6 +55,8 @@ export default function SessionView({ onMenu }: { onMenu?: () => void }) {
       <aside className="desk-pane">
         <PanelSidebar />
         <StatePanel />
+        <MediaDeck />
+        <AudioDeck />
       </aside>
       <PanelModalHost />
     </div>

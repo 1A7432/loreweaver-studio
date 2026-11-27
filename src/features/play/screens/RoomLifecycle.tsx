@@ -1,243 +1,268 @@
-// Room lifecycle: backup, restore, reset, delete — and the server's own
-// self-update.
+// The room admin's lifecycle controls (protocol 3.0 §6.7): keep the room in a file and bring it
+// back (`save`), wipe the campaign (`reset`: arm, then confirm within the server's window), and
+// take turns back (`undo`). All three are `danger` commands: each asks before it acts.
 //
-// `store/admin.ts` has ingested `admin_room_op` / `admin_update` replies since
-// the beginning; nothing ever SENT the requests, so the whole family lived only
-// in the TUI. These are the frames `docs/protocol.md` defines, consumed as
-// written:
-//   - `admin_export_room` writes a backup JSON server-side; omitting `path`
-//     lets the server choose, under `<data_dir>/room_backups/`.
-//   - `admin_import_room` restores one INTO THE CALLER'S OWN ROOM. There is no
-//     remap: `net/admin.py::_import_room` refuses a `room` that is not the
-//     caller's with `forbidden`, and `import_room` additionally requires the
-//     file to be a backup of that same room. So the request carries no room.
-//   - `admin_reset_room` restarts a campaign IN PLACE — keys, bindings, live
-//     connections and room settings survive, no backup is taken, nobody is
-//     evicted. `scope` decides how much of the campaign goes.
-//   - `admin_delete_room` deletes the room's KEYS and leaves its data alone;
-//     `admin_delete_room_data` is the other half, and takes a backup first
-//     unless told not to.
-//   - `admin_update_server` runs the OPERATOR's configured command and re-execs,
-//     so it is gated on the `"update"` feature the welcome advertises.
-//
-// Every destructive control makes the operator type the room name first. Not a
-// modal with an OK button: the thing being destroyed has a name, and typing it
-// is the cheapest way to be sure the right one is in front of you.
+// An export answers the whole room — every secret of it — to this admin alone; it is written
+// only to a file the admin picks, never anywhere else. An import replaces the room: the server
+// then ends every member's connection, this one too, and the connection redials by itself and
+// is handed the room as it now is.
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import type { AdminResetScope } from "@loreweaver/protocol"
-import { useAdminStore } from "../../../store/admin"
-import { useLegacyConnectionStore } from "../../../store/legacyConnection"
+import { saveSecretTextFile } from "../../../lib/files"
+import { pickJsonFile } from "../../../lib/native"
+import { useSessionSnapshot } from "../../../store/connection"
+import CommandFeedback from "../CommandFeedback"
+import { useCommand, useCommandRunner, useOnline } from "../room"
+import ScreenShell from "./ScreenShell"
 
-const RESET_SCOPES: AdminResetScope[] = ["story", "chars", "all"]
+/** How long an armed reset waits for its confirmation (`docs/protocol.md` §6.7, §12.4). The
+ * answer to the arming call does not carry it. */
+export const RESET_CONFIRM_MS = 60_000
 
-/** A destructive action behind the room's own name. */
-function DangerAction({
-  room,
-  label,
-  hint,
-  confirmLabel,
-  onConfirm,
-  children,
-}: {
-  room: string
-  label: string
-  hint: string
-  confirmLabel: string
-  onConfirm: () => void
-  children?: React.ReactNode
-}) {
+const SCOPES = ["story", "chars", "all"] as const
+type Scope = (typeof SCOPES)[number]
+
+function stamp(now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`
+}
+
+function SaveRoom() {
   const { t } = useTranslation()
-  const [typed, setTyped] = useState("")
-  const armed = typed.trim() === room && room !== ""
+  const online = useOnline()
+  const room = useSessionSnapshot()?.welcome?.room.id ?? "room"
+  const exporter = useCommandRunner()
+  const importer = useCommandRunner()
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [bundle, setBundle] = useState<{ name: string; value: Record<string, unknown> } | null>(null)
+
+  const exportRoom = async () => {
+    setNote(null)
+    const result = await exporter.run("save", { op: "export" })
+    if (!result?.ok || typeof result.data !== "object" || result.data === null) return
+    try {
+      const outcome = await saveSecretTextFile(
+        `loreweaver-${room}-${stamp(new Date())}.json`,
+        JSON.stringify(result.data, null, 2),
+      )
+      if (outcome === "saved") setNote({ ok: true, text: t("play.rooms.exported") })
+      else if (outcome === "unavailable") setNote({ ok: false, text: t("play.rooms.desktopOnly") })
+    } catch {
+      setNote({ ok: false, text: t("play.rooms.writeFailed") })
+    }
+  }
+
+  const pick = async () => {
+    setNote(null)
+    const file = await pickJsonFile()
+    if (file === null) return
+    try {
+      const value: unknown = JSON.parse(new TextDecoder("utf-8").decode(file.bytes))
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        throw new Error("not an object")
+      setBundle({ name: file.name, value: value as Record<string, unknown> })
+    } catch {
+      setNote({ ok: false, text: t("play.rooms.notABundle", { name: file.name }) })
+    }
+  }
+
+  const importRoom = () => {
+    if (bundle === null) return
+    const value = bundle.value
+    setBundle(null)
+    void importer.run("save", { op: "import", bundle: value })
+  }
 
   return (
-    <div className="room-danger">
-      <h4>{label}</h4>
-      <p className="studio-hint">{hint}</p>
-      {children}
-      <div className="dialog-row">
-        <label className="field">
-          {t("play.rooms.typeName", { room })}
-          <input
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            placeholder={room}
-            spellCheck={false}
-          />
-        </label>
+    <div className="room-op">
+      <h4>{t("play.rooms.saveTitle")}</h4>
+      <p className="studio-hint">{t("play.rooms.exportHint")}</p>
+      <button
+        type="button"
+        className="ghost-button"
+        disabled={!online || exporter.pending}
+        onClick={() => void exportRoom()}
+      >
+        {t("play.rooms.export")}
+      </button>
+      <CommandFeedback feedback={exporter.feedback} onDismiss={exporter.dismiss} />
+      <p className="studio-hint">{t("play.rooms.importHint")}</p>
+      {bundle === null ? (
         <button
           type="button"
-          className="primary-button"
-          disabled={!armed}
-          onClick={() => {
-            onConfirm()
-            setTyped("")
-          }}
+          className="ghost-button"
+          disabled={!online || importer.pending}
+          onClick={() => void pick()}
         >
-          {confirmLabel}
+          {t("play.rooms.import")}
         </button>
-      </div>
+      ) : (
+        <div className="room-danger" role="alert">
+          <p>{t("play.rooms.importWarning", { name: bundle.name })}</p>
+          <div className="chip-row">
+            <button type="button" className="primary-button" disabled={!online} onClick={importRoom}>
+              {t("play.rooms.importConfirm")}
+            </button>
+            <button type="button" className="ghost-button" onClick={() => setBundle(null)}>
+              {t("play.rooms.cancel")}
+            </button>
+          </div>
+        </div>
+      )}
+      <CommandFeedback feedback={importer.feedback} onDismiss={importer.dismiss} />
+      {note ? (
+        <p className={note.ok ? "studio-hint" : "connect-error"} role={note.ok ? "status" : "alert"}>
+          {note.text}
+        </p>
+      ) : null}
     </div>
   )
 }
 
-export default function RoomLifecycle() {
+function ResetRoom() {
   const { t } = useTranslation()
-  const welcome = useLegacyConnectionStore((s) => s.welcome)
-  const room = welcome?.room ?? ""
-  const admin = useAdminStore()
+  const online = useOnline()
+  const { run, feedback, dismiss, pending } = useCommandRunner()
+  const [scope, setScope] = useState<Scope>("story")
+  const [armed, setArmed] = useState<{ scope: Scope; until: number } | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
-  const [exportPath, setExportPath] = useState("")
-  const [importPath, setImportPath] = useState("")
-  const [scope, setScope] = useState<AdminResetScope>("story")
-  const [backupBeforeDelete, setBackupBeforeDelete] = useState(true)
+  useEffect(() => {
+    if (armed === null) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [armed])
 
-  const canUpdate = (welcome?.features ?? []).includes("update")
+  const left = armed === null ? 0 : Math.max(0, Math.ceil((armed.until - now) / 1000))
+  const live = armed !== null && left > 0
+
+  const arm = async () => {
+    setArmed(null)
+    const result = await run("reset", { scope })
+    const data = result?.ok ? (result.data as { armed?: unknown } | null) : null
+    if (data !== null && typeof data === "object" && data.armed === scope) {
+      const at = Date.now()
+      setNow(at)
+      setArmed({ scope, until: at + RESET_CONFIRM_MS })
+    }
+  }
+
+  const confirm = async () => {
+    setArmed(null)
+    await run("reset", { confirm: true })
+  }
 
   return (
-    <section className="play-room-lifecycle" aria-label={t("play.rooms.title")}>
-      <h3>{t("play.rooms.title")}</h3>
-      <p className="studio-hint">{t("play.rooms.hint", { room })}</p>
-
-      {admin.roomOp !== null ? (
-        <p className="studio-notice" role="status">
-          {t(`play.rooms.done.${admin.roomOp.action}`, {
-            room: admin.roomOp.room,
-            keys: admin.roomOp.keys,
-            rows: admin.roomOp.store_rows,
-            points: admin.roomOp.vector_points,
-            media: admin.roomOp.media_files ?? 0,
-            scope: admin.roomOp.scope ?? "",
-            path: admin.roomOp.path ?? "",
-          })}{" "}
-          <button type="button" className="ghost-button" onClick={() => admin.clearRoomOp()}>
-            {t("play.rooms.dismiss")}
-          </button>
-        </p>
-      ) : null}
-      {admin.serverUpdate !== null ? (
-        <p
-          className={
-            admin.serverUpdate.status === "restarting" ? "studio-notice" : "studio-notice split-error"
-          }
-          role="status"
-        >
-          {admin.serverUpdate.status === "restarting"
-            ? t("play.rooms.updateRestarting")
-            : t("play.rooms.updateFailed", { output: admin.serverUpdate.output ?? "" })}
-        </p>
-      ) : null}
-
-      <div className="room-op">
-        <h4>{t("play.rooms.backup")}</h4>
-        <p className="studio-hint">{t("play.rooms.backupHint")}</p>
-        <div className="dialog-row">
-          <label className="field">
-            {t("play.rooms.path")}
-            <input
-              value={exportPath}
-              onChange={(e) => setExportPath(e.target.value)}
-              placeholder={t("play.rooms.pathServerDefault")}
-              spellCheck={false}
-            />
-          </label>
+    <div className="room-danger">
+      <h4>{t("play.rooms.reset")}</h4>
+      <label className="field field-narrow">
+        {t("play.rooms.scope")}
+        <select value={scope} disabled={live} onChange={(e) => setScope(e.target.value as Scope)}>
+          {SCOPES.map((entry) => (
+            <option key={entry} value={entry}>
+              {t(`play.rooms.scopes.${entry}`)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="studio-hint">{t(`play.rooms.resetHint.${scope}`)}</p>
+      {live ? (
+        <div className="chip-row">
           <button
             type="button"
-            className="ghost-button"
-            disabled={admin.busy || !room}
-            onClick={() => admin.exportRoom(room, exportPath.trim() || undefined)}
+            className="primary-button"
+            disabled={!online || pending}
+            onClick={() => void confirm()}
           >
-            {t("play.rooms.export")}
+            {t("play.rooms.resetConfirm", { seconds: left })}
+          </button>
+          <button type="button" className="ghost-button" onClick={() => setArmed(null)}>
+            {t("play.rooms.cancel")}
           </button>
         </div>
-      </div>
-
-      <DangerAction
-        room={room}
-        label={t("play.rooms.restore")}
-        hint={t("play.rooms.restoreHint")}
-        confirmLabel={t("play.rooms.restoreConfirm")}
-        onConfirm={() => admin.importRoom(importPath.trim())}
-      >
-        <div className="dialog-row">
-          <label className="field">
-            {t("play.rooms.path")}
-            <input
-              value={importPath}
-              onChange={(e) => setImportPath(e.target.value)}
-              placeholder="/…/room_backups/table-2026-08-15.json"
-              spellCheck={false}
-            />
-          </label>
-        </div>
-      </DangerAction>
-
-      <DangerAction
-        room={room}
-        label={t("play.rooms.reset")}
-        hint={t(`play.rooms.resetHint.${scope}`)}
-        confirmLabel={t("play.rooms.resetConfirm")}
-        onConfirm={() => admin.resetRoom(room, scope)}
-      >
-        <label className="field field-narrow">
-          {t("play.rooms.scope")}
-          <select value={scope} onChange={(e) => setScope(e.target.value as AdminResetScope)}>
-            {RESET_SCOPES.map((value) => (
-              <option key={value} value={value}>
-                {t(`play.rooms.scopes.${value}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="studio-hint">{t("play.rooms.resetKeepsHint")}</p>
-      </DangerAction>
-
-      <DangerAction
-        room={room}
-        label={t("play.rooms.deleteData")}
-        hint={t("play.rooms.deleteDataHint")}
-        confirmLabel={t("play.rooms.deleteDataConfirm")}
-        onConfirm={() => admin.deleteRoomData(room, backupBeforeDelete)}
-      >
-        <label className="pack-checkbox">
-          <input
-            type="checkbox"
-            checked={backupBeforeDelete}
-            onChange={(e) => setBackupBeforeDelete(e.target.checked)}
-          />
-          {t("play.rooms.backupFirst")}
-        </label>
-        {!backupBeforeDelete ? (
-          <p className="studio-hint split-error">{t("play.rooms.noBackupWarning")}</p>
-        ) : null}
-      </DangerAction>
-
-      <DangerAction
-        room={room}
-        label={t("play.rooms.deleteKeys")}
-        hint={t("play.rooms.deleteKeysHint")}
-        confirmLabel={t("play.rooms.deleteKeysConfirm")}
-        onConfirm={() => admin.deleteRoom(room)}
-      />
-
-      <div className="room-op">
-        <h4>{t("play.rooms.selfUpdate")}</h4>
-        <p className="studio-hint">
-          {canUpdate ? t("play.rooms.selfUpdateHint") : t("play.rooms.selfUpdateUnavailable")}
-        </p>
+      ) : (
         <button
           type="button"
           className="ghost-button"
-          disabled={!canUpdate || admin.busy}
-          onClick={() => {
-            if (window.confirm(t("play.rooms.selfUpdateConfirm"))) admin.updateServer()
-          }}
+          disabled={!online || pending}
+          onClick={() => void arm()}
         >
-          {t("play.rooms.selfUpdateRun")}
+          {t("play.rooms.resetArm")}
         </button>
-      </div>
-    </section>
+      )}
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
+    </div>
+  )
+}
+
+function UndoTurns() {
+  const { t } = useTranslation()
+  const online = useOnline()
+  const { run, feedback, dismiss, pending } = useCommandRunner()
+  const [turns, setTurns] = useState("1")
+  const [asking, setAsking] = useState(false)
+  const count = Number(turns)
+  const valid = Number.isInteger(count) && count >= 1 && count <= 64
+  return (
+    <div className="room-danger">
+      <h4>{t("play.rooms.undo")}</h4>
+      <p className="studio-hint">{t("play.rooms.undoHint")}</p>
+      <label className="field field-narrow">
+        {t("play.rooms.turns")}
+        <input
+          type="text"
+          inputMode="numeric"
+          value={turns}
+          disabled={asking}
+          onChange={(e) => setTurns(e.target.value)}
+        />
+      </label>
+      {asking ? (
+        <div className="chip-row">
+          <button
+            type="button"
+            className="primary-button"
+            disabled={!online || pending}
+            onClick={() => {
+              setAsking(false)
+              void run("undo", { turns: count })
+            }}
+          >
+            {t("play.rooms.undoConfirm", { count })}
+          </button>
+          <button type="button" className="ghost-button" onClick={() => setAsking(false)}>
+            {t("play.rooms.cancel")}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="ghost-button"
+          disabled={!online || pending || !valid}
+          onClick={() => setAsking(true)}
+        >
+          {t("play.rooms.undoAsk")}
+        </button>
+      )}
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
+    </div>
+  )
+}
+
+export default function RoomLifecycle({ onBack }: { onBack: () => void }) {
+  const { t } = useTranslation()
+  const canSave = useCommand("save", ["op", "bundle"]) !== null
+  const canReset = useCommand("reset", ["scope", "confirm"]) !== null
+  const canUndo = useCommand("undo", ["turns"]) !== null
+  return (
+    <ScreenShell title={t("play.menu.room")} onBack={onBack}>
+      {!canSave && !canReset && !canUndo ? (
+        <p className="placeholder">{t("play.admin.unavailable")}</p>
+      ) : null}
+      {canSave ? <SaveRoom /> : null}
+      {canUndo ? <UndoTurns /> : null}
+      {canReset ? <ResetRoom /> : null}
+    </ScreenShell>
   )
 }

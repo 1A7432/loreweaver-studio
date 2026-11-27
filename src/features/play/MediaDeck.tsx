@@ -1,153 +1,165 @@
-// Pictures shared with the room: what has been shared, sharing one, the
-// keeper's upload switch, and binding one as your character's avatar.
-//
-// Bytes are fetched through the same content-addressed cache the panel assets
-// use — `media` frames carry metadata only, by design ("bytes are fetched on
-// demand"), and nothing renders from a URL the server chose.
+// The room's pictures on the desk: a gallery derived from the log the session holds (`gallery.ts`)
+// — shared files and the pictures the story showed — each fetched by hash through the verified
+// asset cache. Sharing a file is an upload with purpose `share`: the table then sees it arrive
+// as a `media` event. The room's upload switch is read from the `room` view; the room admin
+// turns it with the `uploads` command. Every refusal is shown in the server's words.
 
-import { useEffect, useState } from "react"
+import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
-import type { MediaFrame } from "@loreweaver/protocol"
-import { pickAnyFiles } from "../../lib/native"
-import { isTauri } from "../../lib/transport"
-import { useLegacyConnectionStore } from "../../store/legacyConnection"
-import { useMediaStore } from "../../store/media"
-import { assetFetch, assetReadBase64 } from "./panels/assets"
+import { stripControlChars } from "loreweaver-protocol/v3"
+import { uploadFile } from "../../lib/media"
+import { pickUploadPath } from "../../lib/native"
+import { useConnection, useSessionSnapshot } from "../../store/connection"
+import { useAssetDataUrl } from "./assetUrl"
+import CommandFeedback from "./CommandFeedback"
+import { galleryOf, isPicture, type GalleryItem } from "./gallery"
+import { useCommand, useCommandRunner, useOnline, useRole, useView } from "./room"
+import { transferErrorText, uploadBlocked } from "./transfer"
 
-/** A pending upload's `error` is either an i18n key under `play.media.err.`
- * (a refusal the SERVER named, which we can say properly) or a verbatim message
- * from the native side (which we cannot). Translate the first, show the second
- * as it came. */
-function uploadDetail(t: (key: string) => string, error: string | null): string {
-  if (error === null) return ""
-  if (!error.startsWith("play.media.err.")) return error
-  const translated = t(error)
-  return translated === error ? error : translated
-}
-
-function Thumb({ item }: { item: MediaFrame }) {
+function Thumb({ item, onOpen }: { item: GalleryItem; onOpen: () => void }) {
   const { t } = useTranslation()
-  const setAvatar = useMediaStore((s) => s.setAvatar)
-  const [src, setSrc] = useState<string | null>(null)
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    if (!isTauri()) return
-    let live = true
-    void assetFetch(item.hash)
-      .then(() => assetReadBase64(item.hash))
-      .then((base64) => {
-        if (live) setSrc(`data:${item.mime};base64,${base64}`)
-      })
-      .catch(() => {
-        if (live) setFailed(true)
-      })
-    return () => {
-      live = false
-    }
-  }, [item.hash, item.mime])
-
+  const { phase, url } = useAssetDataUrl(item.hash, item.mime)
+  const label = stripControlChars(item.label)
   return (
     <li className="media-item">
-      {src !== null ? (
-        <img className="media-thumb" src={src} alt={item.name ?? ""} />
-      ) : (
-        <span className="media-thumb media-thumb-empty" aria-hidden="true">
-          {failed ? "!" : "…"}
-        </span>
-      )}
-      <span className="media-name" title={item.name}>
-        {item.name || item.hash.slice(0, 8)}
-      </span>
-      <span className="media-from">{item.from}</span>
-      <button type="button" className="ghost-button" onClick={() => setAvatar(item.hash)}>
-        {t("play.media.useAsAvatar")}
+      <button type="button" className="ghost-button media-open" onClick={onOpen} title={label || undefined}>
+        {url !== null ? (
+          <img className="media-thumb" src={url} alt={label} />
+        ) : (
+          <span className="media-thumb media-thumb-empty" aria-hidden="true">
+            {phase === "failed" ? "×" : "…"}
+          </span>
+        )}
       </button>
+      <span className="media-name">{label || t("play.media.untitled")}</span>
+      {phase === "failed" ? <span className="media-from">{t("panels.imageUnavailable")}</span> : null}
     </li>
+  )
+}
+
+function Preview({ item, onClose }: { item: GalleryItem; onClose: () => void }) {
+  const { t } = useTranslation()
+  const { phase, url } = useAssetDataUrl(item.hash, item.mime)
+  const label = stripControlChars(item.label)
+  return (
+    <figure className="ui-image media-preview">
+      {url !== null ? (
+        <img className="ui-image-img" src={url} alt={label} />
+      ) : (
+        <p className="ui-image-fallback">
+          {phase === "failed" ? t("panels.imageUnavailable") : t("panels.imageLoading")}
+        </p>
+      )}
+      <figcaption className="ui-image-caption">
+        {label}{" "}
+        <button type="button" className="ghost-button" onClick={onClose}>
+          {t("play.media.close")}
+        </button>
+      </figcaption>
+    </figure>
+  )
+}
+
+/** Share a file with the table. */
+function ShareButton() {
+  const { t } = useTranslation()
+  const connection = useConnection()
+  const online = useOnline()
+  const [busy, setBusy] = useState(false)
+  const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null)
+  const share = async () => {
+    if (connection === null) return
+    const path = await pickUploadPath("share", t("play.media.fileFilter"))
+    if (path === null) return
+    setBusy(true)
+    setOutcome(null)
+    try {
+      const stored = await uploadFile(connection, path, "share")
+      setOutcome({ ok: true, text: t("play.media.shared", { name: stripControlChars(stored.name) }) })
+    } catch (error) {
+      setOutcome({ ok: false, text: transferErrorText(error, t) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <button type="button" className="ghost-button" disabled={!online || busy} onClick={() => void share()}>
+        {busy ? t("play.media.sharing") : t("play.media.share")}
+      </button>
+      {outcome ? (
+        <p className={outcome.ok ? "studio-hint" : "connect-error"} role={outcome.ok ? "status" : "alert"}>
+          {outcome.text}
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+/** The room admin's upload switch. */
+function UploadSwitch() {
+  const { t } = useTranslation()
+  const uploads = useView("room")?.uploads ?? false
+  const online = useOnline()
+  const usable = useCommand("uploads", ["on"]) !== null
+  const { run, feedback, dismiss, pending } = useCommandRunner()
+  if (!usable) return null
+  return (
+    <>
+      <label className="audio-mute">
+        <input
+          type="checkbox"
+          checked={uploads}
+          disabled={!online || pending}
+          onChange={(e) => void run("uploads", { on: e.target.checked })}
+        />
+        {t("play.media.allowUploads")}
+      </label>
+      <CommandFeedback feedback={feedback} onDismiss={dismiss} />
+    </>
   )
 }
 
 export default function MediaDeck() {
   const { t } = useTranslation()
-  const images = useMediaStore((s) => s.images)
-  const uploads = useMediaStore((s) => s.uploads)
-  const uploadsEnabled = useMediaStore((s) => s.uploadsEnabled)
-  const upload = useMediaStore((s) => s.upload)
-  const setUploadsEnabled = useMediaStore((s) => s.setUploadsEnabled)
-  const clearUpload = useMediaStore((s) => s.clearUpload)
-  const isKeeper = useLegacyConnectionStore((s) => s.welcome?.you.role === "keeper")
-  const [error, setError] = useState<string | null>(null)
-
-  const share = async () => {
-    setError(null)
-    const files = await pickAnyFiles()
-    for (const file of files) {
-      if (file.path === null) continue
-      try {
-        await upload(file.path)
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause))
-      }
-    }
-  }
-
-  const blocked = uploadsEnabled === false && !isKeeper
-  const pending = Object.entries(uploads)
-  if (images.length === 0 && pending.length === 0 && !isKeeper) return null
+  const snapshot = useSessionSnapshot()
+  const events = snapshot?.events
+  const items = useMemo(() => galleryOf(events ?? []), [events])
+  const admin = useRole() === "admin"
+  const blocked = uploadBlocked(snapshot)
+  const [open, setOpen] = useState<string | null>(null)
+  const pictures = items.filter((item) => isPicture(item.mime))
+  const sounds = items.filter((item) => !isPicture(item.mime))
+  const opened = pictures.find((item) => item.hash === open) ?? null
+  if (items.length === 0 && blocked === "observer") return null
 
   return (
-    <section className="desk-card" aria-label={t("play.media.title")}>
-      <header className="desk-title">
-        {t("play.media.title")}
-        {isKeeper ? (
-          <label className="audio-mute">
-            <input
-              type="checkbox"
-              checked={uploadsEnabled !== false}
-              aria-label={t("play.media.allowUploads")}
-              onChange={(e) => setUploadsEnabled(e.target.checked)}
-            />
-            {t("play.media.allowUploads")}
-          </label>
-        ) : null}
-      </header>
-      <div className="dialog-row">
-        {/* A keeper is never blocked by their own switch — `_handle_media_offer`
-            gates on the room flag for everyone, but a keeper who turned uploads
-            off can turn them back on, so the button stays live for them. For a
-            player it disables only once the SERVER has said so: `uploadsEnabled`
-            is null until then, and guessing would hide a control that works. */}
-        <button type="button" className="ghost-button" disabled={blocked} onClick={() => void share()}>
-          {t("play.media.share")}
-        </button>
-        {blocked ? <span className="studio-hint">{t("play.media.uploadsOff")}</span> : null}
-      </div>
-      {error !== null ? (
-        <p className="studio-notice split-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {pending.map(([sha256, item]) => (
-        <p key={sha256} className={item.phase === "error" ? "studio-hint split-error" : "studio-hint"}>
-          {item.phase === "error"
-            ? t("play.media.uploadFailed", { name: item.name, detail: uploadDetail(t, item.error) })
-            : t(`play.media.phase.${item.phase}`, { name: item.name })}{" "}
-          {item.phase === "done" || item.phase === "error" ? (
-            <button type="button" className="ghost-button" onClick={() => clearUpload(sha256)}>
-              {t("play.media.dismiss")}
-            </button>
-          ) : null}
-        </p>
-      ))}
-      {images.length > 0 ? (
+    <section className="desk-card media-deck" aria-label={t("play.media.title")}>
+      <header className="desk-title">{t("play.media.title")}</header>
+      {opened !== null ? <Preview item={opened} onClose={() => setOpen(null)} /> : null}
+      {items.length === 0 ? <p className="studio-hint">{t("play.media.empty")}</p> : null}
+      {pictures.length > 0 ? (
         <ul className="media-list">
-          {images.map((item) => (
-            <Thumb key={item.hash} item={item} />
+          {pictures.map((item) => (
+            <Thumb key={item.hash} item={item} onOpen={() => setOpen(item.hash)} />
           ))}
         </ul>
-      ) : (
-        <p className="placeholder">{t("play.media.empty")}</p>
-      )}
+      ) : null}
+      {sounds.length > 0 ? (
+        <ul className="media-list">
+          {sounds.map((item) => (
+            <li key={item.hash} className="media-item">
+              <span className="media-thumb media-thumb-empty" aria-hidden="true">
+                ♪
+              </span>
+              <span className="media-name">{stripControlChars(item.label) || t("play.media.untitled")}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {blocked === null ? <ShareButton /> : null}
+      {blocked === "off" ? <p className="studio-hint">{t("play.transfer.blocked.off")}</p> : null}
+      {admin ? <UploadSwitch /> : null}
     </section>
   )
 }

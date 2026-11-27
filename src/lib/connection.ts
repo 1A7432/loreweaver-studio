@@ -166,6 +166,8 @@ export class Connection {
   #redialTimer: unknown = undefined
   #pingTimer: unknown = undefined
   #welcomeTimer: unknown = undefined
+  /** How many holders want each view (`want`); a name leaves the session's wanted set with its last. */
+  readonly #held = new Map<string, number>()
 
   constructor(options: ConnectionOptions) {
     this.#options = options
@@ -186,8 +188,39 @@ export class Connection {
     this.session.subscribe(this.#onSession)
     // Wanted before the first attach: the session subscribes them on every welcome. The
     // call itself is refused now (`not_connected`) — the names stay wanted all the same.
-    if (options.views && options.views.length > 0) {
-      void this.session.viewSubscribe(options.views).catch(() => undefined)
+    // Held for the connection's whole life: nothing releases them.
+    if (options.views && options.views.length > 0) this.want(options.views)
+  }
+
+  /**
+   * Hold `names` subscribed until the returned release is called. Holders are counted per
+   * name, so two screens (or a screen and a panel) wanting one view share one subscription
+   * and the first to leave does not take it from the other. The session keeps the wanted set
+   * and re-subscribes it on every welcome; only the NAMES are held here, never a value.
+   */
+  want(names: readonly string[]): () => void {
+    const unique = [...new Set(names)]
+    const added: string[] = []
+    for (const name of unique) {
+      const count = this.#held.get(name) ?? 0
+      this.#held.set(name, count + 1)
+      if (count === 0) added.push(name)
+    }
+    if (added.length > 0) void this.session.viewSubscribe(added).catch(() => undefined)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const dropped: string[] = []
+      for (const name of unique) {
+        const count = (this.#held.get(name) ?? 1) - 1
+        if (count > 0) this.#held.set(name, count)
+        else {
+          this.#held.delete(name)
+          dropped.push(name)
+        }
+      }
+      if (dropped.length > 0) void this.session.viewUnsubscribe(dropped).catch(() => undefined)
     }
   }
 

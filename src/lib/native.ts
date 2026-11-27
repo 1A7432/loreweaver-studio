@@ -125,6 +125,29 @@ export async function pickAnyFiles(): Promise<PickedFile[]> {
   })
 }
 
+/** The kinds of file play mode uploads, each with the extensions the server takes for it
+ * (`docs/protocol.md` §11.2). */
+export type UploadKind = "share" | "sound" | "card"
+
+const PICTURE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "svg"]
+const SOUND_EXTENSIONS = ["mp3", "ogg", "oga", "wav", "flac", "m4a", "mp4", "aac"]
+const UPLOAD_EXTENSIONS: Record<UploadKind, string[]> = {
+  share: [...PICTURE_EXTENSIONS, ...SOUND_EXTENSIONS],
+  sound: SOUND_EXTENSIONS,
+  card: ["png", "json"],
+}
+
+/** Pick one file to upload and answer its PATH (native only: the bytes are read by the Rust
+ * side, never by the WebView). Null when cancelled or outside the app. */
+export async function pickUploadPath(kind: UploadKind, label: string): Promise<string | null> {
+  if (!isTauri()) return null
+  const path = await open({
+    multiple: false,
+    filters: [{ name: label, extensions: UPLOAD_EXTENSIONS[kind] }],
+  })
+  return typeof path === "string" ? path : null
+}
+
 /** Pick a directory (native only — the browser has no useful equivalent). */
 export async function pickDirectory(): Promise<string | null> {
   if (!isTauri()) return null

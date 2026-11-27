@@ -1,5 +1,6 @@
 mod asset_cache;
 mod engine;
+mod failure;
 mod files;
 mod host_local;
 mod llm;

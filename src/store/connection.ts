@@ -27,6 +27,7 @@ import {
 } from "../lib/transport"
 import { clearDataUrlCache } from "../lib/dataUrlCache"
 import { STUDIO_VERSION } from "../version"
+import { startAudio } from "./audio"
 import { useLastTableStore, type RememberedTable } from "./lastTable"
 import { usePanelsStore } from "./panels"
 
@@ -146,6 +147,9 @@ export const useConnectionStore = create<ConnectionSlot>((set, get) => ({
     })
     if (options?.remember) pendingRemember = { connection, table }
     set({ connection })
+    // The room's sound plays through this connection for its whole life (the menu included),
+    // and stops when it ends. Outside the app shell there is no byte channel to fetch it over.
+    if (isTauri()) startAudio(connection)
     connection.start()
   },
 

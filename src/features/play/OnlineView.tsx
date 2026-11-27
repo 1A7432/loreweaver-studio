@@ -1,21 +1,31 @@
 // The room, once welcomed (protocol 3.0): the main menu, and the screens behind it — the
-// game, my character, the client's settings (the TUI flow: the game is one menu item).
-// Esc anywhere below the menu returns to it.
-//
-// The room admin's screens (`KeysScreen`, `ModelScreen`, `ModuleScreen`, `RulesScreen`,
-// `SkillsScreen`, `RoomLifecycle`) still read the protocol 2.x stores and are not linked
-// from here until each one moves to the session.
+// game, my character, the session report, the client's settings, and the room admin's keys,
+// model, content and room lifecycle (the TUI flow: the game is one menu item). Esc anywhere
+// below the menu returns to it. An admin screen is reached only by an admin: anyone else who
+// lands on one (a role changed under them) is sent back to the menu.
 
 import { useEffect, useState } from "react"
 import CharacterScreen from "./screens/CharacterScreen"
+import ContentScreen from "./screens/ContentScreen"
+import KeysScreen from "./screens/KeysScreen"
 import MainMenuScreen from "./screens/MainMenuScreen"
+import ModelScreen from "./screens/ModelScreen"
+import ReportScreen from "./screens/ReportScreen"
+import RoomLifecycle from "./screens/RoomLifecycle"
 import SettingsScreen from "./screens/SettingsScreen"
 import SessionView from "./SessionView"
+import { useRole } from "./room"
 
-export type PlayScreen = "menu" | "game" | "character" | "settings"
+export type PlayScreen =
+  "menu" | "game" | "character" | "report" | "settings" | "keys" | "model" | "content" | "room"
+
+/** The screens only the room admin is shown. */
+const ADMIN_SCREENS: ReadonlySet<PlayScreen> = new Set(["keys", "model", "content", "room"])
 
 export default function OnlineView() {
-  const [screen, setScreen] = useState<PlayScreen>("menu")
+  const [chosen, setScreen] = useState<PlayScreen>("menu")
+  const admin = useRole() === "admin"
+  const screen = ADMIN_SCREENS.has(chosen) && !admin ? "menu" : chosen
 
   // Esc backs out of any screen to the menu — the TUI's navigation spine.
   useEffect(() => {
@@ -40,7 +50,17 @@ export default function OnlineView() {
       return <SessionView onMenu={back} />
     case "character":
       return <CharacterScreen onBack={back} />
+    case "report":
+      return <ReportScreen onBack={back} />
     case "settings":
       return <SettingsScreen onBack={back} />
+    case "keys":
+      return <KeysScreen onBack={back} />
+    case "model":
+      return <ModelScreen onBack={back} />
+    case "content":
+      return <ContentScreen onBack={back} />
+    case "room":
+      return <RoomLifecycle onBack={back} />
   }
 }

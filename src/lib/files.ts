@@ -65,3 +65,19 @@ export async function saveBinaryFile(
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
   return "saved"
 }
+
+/**
+ * Save text that must not leave by any other way (a room bundle holds every secret of the
+ * room): the native save dialog and a Rust write, or nothing at all — no clipboard, no download
+ * fallback. `unavailable` outside the app shell.
+ */
+export async function saveSecretTextFile(
+  defaultName: string,
+  contents: string,
+): Promise<"saved" | "cancelled" | "unavailable"> {
+  if (!isTauri()) return "unavailable"
+  const path = await save({ defaultPath: defaultName, filters: [{ name: "JSON", extensions: ["json"] }] })
+  if (path === null) return "cancelled"
+  await invoke("write_text_file", { path, contents })
+  return "saved"
+}

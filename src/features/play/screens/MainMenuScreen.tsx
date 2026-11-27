@@ -16,7 +16,15 @@ import type { PlayScreen } from "../OnlineView"
 const ROWS: readonly { key: string; screen: PlayScreen }[] = [
   { key: "enterGame", screen: "game" },
   { key: "character", screen: "character" },
+  { key: "report", screen: "report" },
   { key: "settings", screen: "settings" },
+]
+
+const ADMIN_ROWS: readonly { key: string; screen: PlayScreen }[] = [
+  { key: "keys", screen: "keys" },
+  { key: "model", screen: "model" },
+  { key: "content", screen: "content" },
+  { key: "room", screen: "room" },
 ]
 
 export default function MainMenuScreen({ onNavigate }: { onNavigate: (screen: PlayScreen) => void }) {
@@ -38,7 +46,7 @@ export default function MainMenuScreen({ onNavigate }: { onNavigate: (screen: Pl
           ) : null}{" "}
           <StatusPill />
         </p>
-        {ROWS.map((row) => (
+        {[...ROWS, ...(welcome?.you.role === "admin" ? ADMIN_ROWS : [])].map((row) => (
           <button
             key={row.key}
             type="button"
